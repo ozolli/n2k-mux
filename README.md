@@ -154,6 +154,19 @@ n2k-mux [config.ini] [--tx CHEMIN] [--tx-interval SEC]
 | `--ais-json` | mode filtre AIS (JSON→JSON dédupliqué) devant `n2kd` |
 | `-v` | journalise les décisions sur stderr |
 
+### Test manuel (avant installation)
+
+Pour valider la chaîne en réel sans rien installer (FIFO + log dans `/tmp`, pas
+de sudo si tu es dans le groupe `dialout`) :
+
+```sh
+scripts/n2k-mux-test.sh [config.ini]      # défaut : /tmp/n2kmux.ini
+```
+
+Le script monte tout le pipeline (NGX-1 en **Transfer** requis), expose qtVlm sur
+**TCP 127.0.0.1:10110**, journalise dans `/tmp/n2k-mux-test.log` et publie les
+sources vues dans `/tmp/n2k-mux-test-sources.json`. `Ctrl-C` arrête et nettoie.
+
 ### Lancement automatique (systemd)
 
 Le daemon tourne en service via `n2k-mux.service` (toute la chaîne :
