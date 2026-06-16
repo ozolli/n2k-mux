@@ -178,9 +178,25 @@ journalctl -u n2k-mux -f
 Réglages (port, baud, chemins des binaires) dans **`/etc/default/n2k-mux`**
 (voir `n2k-mux.env.example`). Le service crée `/run/n2k-mux/` (FIFO d'émission
 + `sources.json`) et **émet les ISO Request au démarrage puis périodiquement**
-(`--tx-interval`, défaut 30 s). `kplex.conf` doit lire **stdin**
-(`[file] filename=- direction=in`) pour les instruments et se connecter en
-**client TCP à `127.0.0.1:2599`** pour l'AIS de `n2kd`.
+(`--tx-interval`, défaut 30 s).
+
+**Prérequis NGX-1 : mode Transfer.** n2k-mux a besoin du N2K *brut* ; la
+passerelle Actisense doit être en mode **Transfer** (et non Convert), via
+Actisense Toolkit. En mode Convert, ne pas utiliser n2k-mux (kplex lit alors
+directement le 0183 du NGX-1).
+
+**kplex est intégré au pipeline** (dernier maillon de `n2k-mux.service`). Il faut
+donc désactiver l'ancien service kplex autonome et adapter sa config :
+
+```sh
+sudo systemctl disable --now kplex          # kplex est désormais lancé par n2k-mux
+sudo cp /etc/kplex.conf /etc/kplex.conf.bak # sauvegarde
+sudo cp kplex.conf.example /etc/kplex.conf  # voir kplex.conf.example
+```
+
+La config fournie (`kplex.conf.example`) met kplex en **`mode=foreground`**, lit
+les instruments sur **stdin** (`[file] filename=-`) et l'AIS de `n2kd` en
+**client TCP `127.0.0.1:2599`**, en conservant les sorties (TCP 10110, UDP, log).
 
 ---
 

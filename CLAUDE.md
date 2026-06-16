@@ -150,24 +150,35 @@ Modules prévus (ordre d'implémentation) :
 
 ## Chaîne de production
 
-NGX-1 (Transfer Receive All, 230400 baud)
-  → actisense-serial -r -s 230400 /dev/ttyNGX1
+NGX-1 en mode TRANSFER (N2K brut, 230400) — surtout PAS Convert
+  → actisense-serial -s 230400 /dev/ttyNGX1 < tx.fifo   (bidirectionnel pour --tx)
   → analyzer -json -nv          (-nv requis par n2kd ; notre parser le gère)
-  → tee ─┬→ n2k-mux conf.ini --sources /run/n2k-mux/sources.json → instr. 0183 ─┐
-         └→ n2k-mux --ais-json conf.ini → n2kd          → !AIVDM (TCP 2599) ─────┤
-                                                                                  ├→ kplex
-  → kplex (distribution TCP/UDP + logging polar_doctor) → qtVlm, tablettes
+  → tee ─┬→ n2k-mux conf --tx tx.fifo --sources sources.json ─┐ (instruments → stdin kplex)
+         └→ n2k-mux --ais-json conf → n2kd  (AIS → TCP 2599) ─┘
+  → kplex (mode=foreground : lit stdin + client tcp 2599) → TCP 10110 / UDP / log
+  → qtVlm, tablettes
 
-n2k-mux-gui lit /run/n2k-mux/sources.json (sources vues) et édite conf.ini.
+Tout est lancé par n2k-mux.service ; kplex est le DERNIER maillon du pipeline
+(plus de service kplex autonome → Conflicts=kplex.service). Voir n2k-mux.service,
+kplex.conf.example, n2k-mux.env.example. La GUI lit sources.json et édite conf.
+
+CONTEXTE (cf. /home/ozolli/CR-NMEA-O3.pdf) : l'archi d'origine était NGX-1 en
+mode Convert (N2K→0183 dans la passerelle) → kplex lisant /dev/ttyNGX1 en direct
+(115200), priorité position SCX>Veratron gérée par l'ADRESSE N2K, sans arbitrage
+logiciel. Le passage en Transfer + n2k-mux apporte : arbitrage par identité
+stable, conversion de l'attitude (127257→XDR) et de la pression (130314→MDA) que
+le NGX-1 Convert ne fait pas, et la dédup AIS.
+
+LACUNE connue à combler quand O3 aura le SCX-20 : le SCX-20 (famille SC-70) peut
+publier pression/temp via PGN 130311 (Environmental Parameters, déprécié). Le
+mapper gère 130312/130314 mais PAS 130311 → à ajouter (pas de SCX sur le banc
+pour valider).
 
 Notes câblage AIS :
-- n2kd lit le JSON sur stdin (EXIGE analyzer -json -nv), encode le VDM, et sert
-  le 0183 sur TCP port+2 (défaut 2599 ; port+1=2598 JSON ; 2601=AIS en JSON).
-- Le mode --ais-json filtre en AMONT : ne laisse passer que l'en-tête + les PGN
-  AIS de la source retenue par MMSI → la sortie n2kd est 100% AIS (kplex n'a pas
-  besoin de filtrer). Sans --ais-json (une seule source AIS), n2kd direct suffit.
-- kplex agrège les deux flux (entrée FIFO/série pour n2k-mux + entrée tcp client
-  vers n2kd:2599) en une sortie unique.
+- n2kd lit le JSON sur stdin (EXIGE analyzer -json -nv), encode le VDM, sert le
+  0183 sur TCP port+2 (défaut 2599 ; 2598 JSON ; 2601 AIS en JSON).
+- --ais-json filtre en AMONT (en-tête + AIS de la source retenue par MMSI) → la
+  sortie n2kd est 100% AIS. Avec une seule source AIS, n2kd direct suffit.
 
 ## Règles d'arbitrage
 

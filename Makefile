@@ -93,6 +93,7 @@ install: n2k-mux
 	install -m755 n2k-mux $(DESTDIR)$(PREFIX)/bin/n2k-mux
 	install -Dm644 n2k-mux.service $(DESTDIR)/etc/systemd/system/n2k-mux.service
 	install -Dm644 n2k-mux.ini.example $(DESTDIR)/etc/n2k-mux/n2k-mux.ini.example
+	install -Dm644 kplex.conf.example $(DESTDIR)/etc/n2k-mux/kplex.conf.example
 	install -Dm644 n2k-mux.env.example $(DESTDIR)/etc/default/n2k-mux.example
 ifeq ($(GUI),1)
 	install -m755 n2k-mux-gui $(DESTDIR)$(PREFIX)/bin/n2k-mux-gui

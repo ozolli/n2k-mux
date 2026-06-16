@@ -1,0 +1,41 @@
+# kplex.conf — kplex intégré comme dernier maillon du pipeline n2k-mux.service.
+#
+# Contexte : le NGX-1 est passé en mode TRANSFER (N2K brut). kplex ne peut donc
+# plus lire /dev/ttyNGX1 directement (c'était le cas en mode Convert, 115200) :
+# n2k-mux décode le N2K (actisense-serial + analyzer) et produit le 0183 que
+# kplex lit ici sur stdin. kplex n'est plus un service autonome — il est lancé
+# par n2k-mux.service (désactiver l'ancien kplex.service).
+
+[global]
+mode=foreground          ; lancé dans le pipeline (PAS de daemon/fork)
+
+# === Entrées ===
+# Instruments NMEA 0183 produits par n2k-mux (stdin du pipeline).
+[file]
+direction=in
+filename=-
+
+# AIS (VDM) encodé par n2kd, déjà dédupliqué par MMSI (n2k-mux --ais-json).
+[tcp]
+direction=in
+mode=client
+address=127.0.0.1
+port=2599
+
+# === Sorties (inchangées vs l'install d'origine) ===
+[tcp]
+mode=server
+port=10110
+direction=out
+
+[udp]
+address=255.255.255.255
+port=10110
+direction=out
+
+# Log filtré AIS pour polar_doctor (les diffusions LAN gardent l'AIS).
+[file]
+direction=out
+filename=/var/log/kplex/o3.log
+append=yes
+ofilter=-AIVDM:-AIVDO

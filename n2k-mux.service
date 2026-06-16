@@ -13,6 +13,9 @@
 Description=n2k-mux — multiplexeur NMEA 2000 vers NMEA 0183
 Documentation=https://github.com/ozolli/n2k-mux
 After=local-fs.target
+# kplex est intégré dans le pipeline (dernier maillon) : l'ancien service kplex
+# autonome ne doit pas tourner en parallèle (conflit port série + port 10110).
+Conflicts=kplex.service
 StartLimitIntervalSec=60
 StartLimitBurst=5
 
