@@ -265,54 +265,77 @@ static void on_validate(GtkWidget *w, gpointer ud)
     g_free(txt);
 }
 
-/* Valide puis écrit l'INI. Retourne true si enregistré. */
-static bool do_save(app_t *a)
+/* Lance `script` en root via pkexec (popup polkit).
+ * Retourne 0 = succès, 1 = exécuté mais échec (auth refusée…), -1 = non lançable. */
+static int run_pkexec(const char *script)
+{
+    gchar *argv[] = { "pkexec", "sh", "-c", (gchar *)script, NULL };
+    gint   status = 0;
+    GError *e = NULL;
+    if (!g_spawn_sync(NULL, argv, NULL, G_SPAWN_SEARCH_PATH,
+                      NULL, NULL, NULL, NULL, &status, &e)) {
+        if (e) g_error_free(e);
+        return -1;
+    }
+    return status == 0 ? 0 : 1;
+}
+
+/* Valide, écrit l'INI (élévation via pkexec si le fichier appartient à root),
+ * et redémarre éventuellement le service — le tout en une seule auth. */
+static bool save_config(app_t *a, bool restart)
 {
     char *txt = buffer_text(a);
     config_t c;
-    bool ok = false;
     if (!config_parse_string(&c, txt)) {
         set_status(a, "NON enregistré — erreur ligne %d : %s", c.err_line, c.err);
-    } else if (write_file(a->cfg_path, txt)) {
-        set_status(a, "enregistré : %s", a->cfg_path);
-        ok = true;
+        g_free(txt);
+        return false;
+    }
+
+    bool via_pkexec = false;
+
+    if (write_file(a->cfg_path, txt)) {
+        /* écriture directe possible (fichier accessible à l'utilisateur) */
+        if (restart && run_pkexec("systemctl restart " GUI_SERVICE_NAME) != 0) {
+            set_status(a, "enregistré : %s — mais redémarrage échoué (auth ?)", a->cfg_path);
+            g_free(txt);
+            return false;
+        }
     } else {
-        set_status(a, "échec d'écriture : %s", a->cfg_path);
+        /* droits insuffisants : copier via pkexec depuis un fichier temporaire */
+        char *tmp = g_build_filename(g_get_tmp_dir(), "n2k-mux-gui-save.ini", NULL);
+        if (!write_file(tmp, txt)) {
+            set_status(a, "échec d'écriture du fichier temporaire %s", tmp);
+            g_free(tmp); g_free(txt);
+            return false;
+        }
+        char *script = g_strdup_printf("cp '%s' '%s'%s", tmp, a->cfg_path,
+                                       restart ? " && systemctl restart " GUI_SERVICE_NAME : "");
+        int r = run_pkexec(script);
+        g_free(script); unlink(tmp); g_free(tmp);
+        if (r == -1) { set_status(a, "pkexec introuvable / non lançable"); g_free(txt); return false; }
+        if (r == 1)  { set_status(a, "non enregistré (authentification annulée ou refusée)"); g_free(txt); return false; }
+        via_pkexec = true;
     }
     g_free(txt);
-    return ok;
+
+    if (restart)
+        set_status(a, "enregistré%s et service redémarré.", via_pkexec ? " (pkexec)" : "");
+    else
+        set_status(a, "enregistré%s : %s", via_pkexec ? " (pkexec)" : "", a->cfg_path);
+    return true;
 }
 
 static void on_save(GtkWidget *w, gpointer ud)
 {
     (void)w;
-    do_save((app_t *)ud);
+    save_config((app_t *)ud, false);
 }
 
-/* Enregistre puis redémarre le service via pkexec (popup d'authentification).
- * Ne redémarre pas si la config est invalide ou l'écriture a échoué. */
 static void on_save_restart(GtkWidget *w, gpointer ud)
 {
     (void)w;
-    app_t *a = ud;
-    if (!do_save(a))
-        return;
-
-    gchar *out = NULL, *err = NULL;
-    gint   status = 0;
-    GError *gerr = NULL;
-    if (!g_spawn_command_line_sync("pkexec systemctl restart " GUI_SERVICE_NAME,
-                                   &out, &err, &status, &gerr)) {
-        set_status(a, "redémarrage impossible : %s", gerr ? gerr->message : "?");
-        if (gerr) g_error_free(gerr);
-        return;
-    }
-    if (status == 0)   /* wait status Unix : 0 = exit 0 (succès) */
-        set_status(a, "enregistré et service %s redémarré.", GUI_SERVICE_NAME);
-    else
-        set_status(a, "enregistré, mais le redémarrage a échoué (auth annulée ou refusée).");
-    g_free(out);
-    g_free(err);
+    save_config((app_t *)ud, true);
 }
 
 /* ---- construction de l'IHM ---- */

@@ -164,10 +164,12 @@ Modules prévus (ordre d'implémentation) :
                 % de 4800 bauds, débit par PGN et par type de phrase, rafraîchi
                 3 s) ; « Configuration » (éditeur INI texte brut → commentaires
                 préservés ; « Valider » réutilise config_parse_string ;
-                « Enregistrer » refuse si la config est invalide ; « Enregistrer
-                et redémarrer » relance le service via
-                `pkexec systemctl restart n2k-mux` — le daemon ne relit la config
-                qu'au démarrage, pas de SIGHUP).
+                « Enregistrer » refuse si la config est invalide. Si le fichier
+                appartient à root (ex. /etc/n2k-mux/n2k-mux.ini), l'écriture passe
+                par pkexec (copie depuis un tmp). « Enregistrer et redémarrer »
+                fait écriture + `systemctl restart n2k-mux` en une seule auth
+                pkexec — le daemon ne relit la config qu'au démarrage, pas de
+                SIGHUP).
                 usage GUI : n2k-mux-gui [config.ini] [--sources CHEMIN]
                 [--stats CHEMIN] [--tab sources|charge|config].
                 make all NE construit PAS la GUI (garde le build OK sans GTK) ;

@@ -252,9 +252,15 @@ les instruments sur **stdin** (`[file] filename=-`) et l'AIS de `n2kd` en
   throttler la sortie (section `[rate]`).
 - **Configuration** : éditeur du fichier INI. *Valider* vérifie la syntaxe,
   *Enregistrer* écrit le fichier (refuse une config invalide). *Enregistrer et
-  redémarrer* écrit puis relance le service via `pkexec` (popup d'authentification)
-  pour appliquer immédiatement les changements — sinon le daemon ne relit sa
-  config qu'au prochain redémarrage.
+  redémarrer* écrit puis relance le service pour appliquer immédiatement —
+  sinon le daemon ne relit sa config qu'au prochain redémarrage.
+
+  Si le fichier appartient à `root` (cas de `/etc/n2k-mux/n2k-mux.ini` installé
+  par le service), l'enregistrement passe automatiquement par `pkexec` (popup
+  d'authentification) ; « Enregistrer et redémarrer » fait écriture **et**
+  redémarrage en une seule authentification. Pour éviter le mot de passe à
+  chaque fois, rends le fichier éditable par ton utilisateur :
+  `sudo chown $USER /etc/n2k-mux/n2k-mux.ini`.
 
 À distance : `ssh -Y o3nav` puis lancer la GUI (forcer `GDK_BACKEND=x11` si le
 client est sous Wayland).
