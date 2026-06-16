@@ -169,11 +169,6 @@ logiciel. Le passage en Transfer + n2k-mux apporte : arbitrage par identité
 stable, conversion de l'attitude (127257→XDR) et de la pression (130314→MDA) que
 le NGX-1 Convert ne fait pas, et la dédup AIS.
 
-LACUNE connue à combler quand O3 aura le SCX-20 : le SCX-20 (famille SC-70) peut
-publier pression/temp via PGN 130311 (Environmental Parameters, déprécié). Le
-mapper gère 130312/130314 mais PAS 130311 → à ajouter (pas de SCX sur le banc
-pour valider).
-
 Notes câblage AIS :
 - n2kd lit le JSON sur stdin (EXIGE analyzer -json -nv), encode le VDM, sert le
   0183 sur TCP port+2 (défaut 2599 ; 2598 JSON ; 2601 AIS en JSON).
