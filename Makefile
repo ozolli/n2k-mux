@@ -8,6 +8,9 @@ CC      ?= cc
 CFLAGS  ?= -O2 -Wall -Wextra -std=c11 -D_GNU_SOURCE
 LDFLAGS ?=
 
+PREFIX  ?= /usr/local
+DESTDIR ?=
+
 SRCDIR  := src
 BUILD   := build
 
@@ -30,7 +33,7 @@ CORE_OBJ := $(JSONL_OBJ) $(REGISTRY_OBJ) $(CONFIG_OBJ) $(ARBITER_OBJ) $(NMEA_OBJ
 GTK_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 2>/dev/null)
 GTK_LIBS   := $(shell pkg-config --libs gtk+-3.0 2>/dev/null)
 
-.PHONY: all clean
+.PHONY: all clean install uninstall
 all: n2k-mux test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources
 
 $(BUILD):
@@ -81,6 +84,27 @@ $(BUILD)/gui.o: $(SRCDIR)/gui.c | $(BUILD)
 
 n2k-mux-gui: $(CONFIG_OBJ) $(SOURCES_OBJ) $(BUILD)/gui.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) $(GTK_LIBS)
+
+# --- Installation système (daemon + service systemd) ---
+# make install            installe le daemon, le service et les exemples
+# make install GUI=1      installe aussi la GUI (doit être construite : make n2k-mux-gui)
+install: n2k-mux
+	install -d $(DESTDIR)$(PREFIX)/bin
+	install -m755 n2k-mux $(DESTDIR)$(PREFIX)/bin/n2k-mux
+	install -Dm644 n2k-mux.service $(DESTDIR)/etc/systemd/system/n2k-mux.service
+	install -Dm644 n2k-mux.ini.example $(DESTDIR)/etc/n2k-mux/n2k-mux.ini.example
+	install -Dm644 n2k-mux.env.example $(DESTDIR)/etc/default/n2k-mux.example
+ifeq ($(GUI),1)
+	install -m755 n2k-mux-gui $(DESTDIR)$(PREFIX)/bin/n2k-mux-gui
+endif
+	@echo "Installé. Pense à : cp /etc/n2k-mux/n2k-mux.ini.example /etc/n2k-mux/n2k-mux.ini"
+	@echo "puis : systemctl daemon-reload && systemctl enable --now n2k-mux"
+
+uninstall:
+	rm -f $(DESTDIR)$(PREFIX)/bin/n2k-mux $(DESTDIR)$(PREFIX)/bin/n2k-mux-gui
+	rm -f $(DESTDIR)/etc/systemd/system/n2k-mux.service
+	rm -f $(DESTDIR)/etc/default/n2k-mux.example
+	rm -f $(DESTDIR)/etc/n2k-mux/n2k-mux.ini.example
 
 clean:
 	rm -rf $(BUILD) n2k-mux n2k-mux-gui test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources

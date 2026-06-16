@@ -154,6 +154,34 @@ n2k-mux [config.ini] [--tx CHEMIN] [--tx-interval SEC]
 | `--ais-json` | mode filtre AIS (JSON→JSON dédupliqué) devant `n2kd` |
 | `-v` | journalise les décisions sur stderr |
 
+### Lancement automatique (systemd)
+
+Le daemon tourne en service via `n2k-mux.service` (toute la chaîne :
+`actisense → analyzer -nv → tee → n2k-mux + n2kd → kplex`).
+
+```sh
+# 1. installer binaires + service + exemples (les binaires canboat doivent
+#    aussi être installés, ou pointés via /etc/default/n2k-mux)
+sudo make install                 # ajouter GUI=1 pour installer aussi la GUI
+
+# 2. configurer
+sudo cp /etc/n2k-mux/n2k-mux.ini.example /etc/n2k-mux/n2k-mux.ini
+sudo cp /etc/default/n2k-mux.example /etc/default/n2k-mux   # facultatif (réglages)
+$EDITOR /etc/n2k-mux/n2k-mux.ini /etc/default/n2k-mux
+
+# 3. activer
+sudo systemctl daemon-reload
+sudo systemctl enable --now n2k-mux
+journalctl -u n2k-mux -f
+```
+
+Réglages (port, baud, chemins des binaires) dans **`/etc/default/n2k-mux`**
+(voir `n2k-mux.env.example`). Le service crée `/run/n2k-mux/` (FIFO d'émission
++ `sources.json`) et **émet les ISO Request au démarrage puis périodiquement**
+(`--tx-interval`, défaut 30 s). `kplex.conf` doit lire **stdin**
+(`[file] filename=- direction=in`) pour les instruments et se connecter en
+**client TCP à `127.0.0.1:2599`** pour l'AIS de `n2kd`.
+
 ---
 
 ## 4. Interface graphique
