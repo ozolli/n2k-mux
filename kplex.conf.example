@@ -16,11 +16,15 @@ direction=in
 filename=-
 
 # AIS (VDM) encodé par n2kd, déjà dédupliqué par MMSI (n2k-mux --ais-json).
+# persist=fromstart : kplex réessaie la connexion au lieu d'abandonner si n2kd
+# n'écoute pas encore (course au démarrage) ou redémarre.
 [tcp]
 direction=in
 mode=client
 address=127.0.0.1
 port=2599
+persist=fromstart
+retry=5
 
 # === Sorties (inchangées vs l'install d'origine) ===
 [tcp]

@@ -57,6 +57,8 @@ direction=in
 mode=client
 address=127.0.0.1
 port=2599
+persist=fromstart
+retry=5
 [tcp]
 mode=server
 port=10110
