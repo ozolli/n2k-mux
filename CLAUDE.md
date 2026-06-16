@@ -161,7 +161,10 @@ Modules prévus (ordre d'implémentation) :
                 GUI : onglet « Sources vues » (TreeView auto-rafraîchi, double-clic
                 = copie l'identité) + onglet « Configuration » (éditeur INI texte
                 brut → commentaires préservés ; « Valider » réutilise config_parse_
-                string ; « Enregistrer » refuse si la config est invalide).
+                string ; « Enregistrer » refuse si la config est invalide ;
+                « Enregistrer et redémarrer » relance le service via
+                `pkexec systemctl restart n2k-mux` (le daemon ne relit la config
+                qu'au démarrage — pas de SIGHUP)).
                 usage : n2k-mux-gui [config.ini] [--sources CHEMIN] [--tab sources|config].
                 make all NE construit PAS la GUI (garde le build OK sans GTK) ;
                 make n2k-mux-gui la construit (nécessite libgtk-3-dev).

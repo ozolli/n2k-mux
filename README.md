@@ -245,7 +245,10 @@ les instruments sur **stdin** (`[file] filename=-`) et l'AIS de `n2kd` en
   dans `[sources]`). La colonne « PGNs publiés » liste les PGN émis par chaque
   appareil — pratique pour savoir qui parle quoi et régler `[priority]`.
 - **Configuration** : éditeur du fichier INI. *Valider* vérifie la syntaxe,
-  *Enregistrer* refuse une config invalide.
+  *Enregistrer* écrit le fichier (refuse une config invalide). *Enregistrer et
+  redémarrer* écrit puis relance le service via `pkexec` (popup d'authentification)
+  pour appliquer immédiatement les changements — sinon le daemon ne relit sa
+  config qu'au prochain redémarrage.
 
 À distance : `ssh -Y o3nav` puis lancer la GUI (forcer `GDK_BACKEND=x11` si le
 client est sous Wayland).

@@ -31,6 +31,9 @@
 #include "config.h"
 #include "sources.h"
 
+/* Nom du service systemd redémarré par « Enregistrer et redémarrer ». */
+#define GUI_SERVICE_NAME "n2k-mux"
+
 enum { COL_SRC, COL_IDENT, COL_MFG, COL_MODEL, COL_SERIAL, COL_SEEN, COL_PGNS, N_COLS };
 
 typedef struct {
@@ -181,20 +184,54 @@ static void on_validate(GtkWidget *w, gpointer ud)
     g_free(txt);
 }
 
-static void on_save(GtkWidget *w, gpointer ud)
+/* Valide puis écrit l'INI. Retourne true si enregistré. */
+static bool do_save(app_t *a)
 {
-    (void)w;
-    app_t *a = ud;
     char *txt = buffer_text(a);
     config_t c;
+    bool ok = false;
     if (!config_parse_string(&c, txt)) {
         set_status(a, "NON enregistré — erreur ligne %d : %s", c.err_line, c.err);
     } else if (write_file(a->cfg_path, txt)) {
         set_status(a, "enregistré : %s", a->cfg_path);
+        ok = true;
     } else {
         set_status(a, "échec d'écriture : %s", a->cfg_path);
     }
     g_free(txt);
+    return ok;
+}
+
+static void on_save(GtkWidget *w, gpointer ud)
+{
+    (void)w;
+    do_save((app_t *)ud);
+}
+
+/* Enregistre puis redémarre le service via pkexec (popup d'authentification).
+ * Ne redémarre pas si la config est invalide ou l'écriture a échoué. */
+static void on_save_restart(GtkWidget *w, gpointer ud)
+{
+    (void)w;
+    app_t *a = ud;
+    if (!do_save(a))
+        return;
+
+    gchar *out = NULL, *err = NULL;
+    gint   status = 0;
+    GError *gerr = NULL;
+    if (!g_spawn_command_line_sync("pkexec systemctl restart " GUI_SERVICE_NAME,
+                                   &out, &err, &status, &gerr)) {
+        set_status(a, "redémarrage impossible : %s", gerr ? gerr->message : "?");
+        if (gerr) g_error_free(gerr);
+        return;
+    }
+    if (status == 0)   /* wait status Unix : 0 = exit 0 (succès) */
+        set_status(a, "enregistré et service %s redémarré.", GUI_SERVICE_NAME);
+    else
+        set_status(a, "enregistré, mais le redémarrage a échoué (auth annulée ou refusée).");
+    g_free(out);
+    g_free(err);
 }
 
 /* ---- construction de l'IHM ---- */
@@ -261,11 +298,16 @@ static GtkWidget *build_config_tab(app_t *a)
     GtkWidget *b_reload = gtk_button_new_with_label("Recharger");
     GtkWidget *b_check  = gtk_button_new_with_label("Valider");
     GtkWidget *b_save   = gtk_button_new_with_label("Enregistrer");
+    GtkWidget *b_apply  = gtk_button_new_with_label("Enregistrer et redémarrer");
+    gtk_widget_set_tooltip_text(b_apply,
+        "Écrit l'INI puis redémarre le service (pkexec : demande le mot de passe).");
     g_signal_connect(b_reload, "clicked", G_CALLBACK(on_reload), a);
     g_signal_connect(b_check,  "clicked", G_CALLBACK(on_validate), a);
     g_signal_connect(b_save,   "clicked", G_CALLBACK(on_save), a);
+    g_signal_connect(b_apply,  "clicked", G_CALLBACK(on_save_restart), a);
     gtk_box_pack_start(GTK_BOX(bar), b_reload, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(bar), b_check,  FALSE, FALSE, 0);
+    gtk_box_pack_end(GTK_BOX(bar), b_apply, FALSE, FALSE, 0);
     gtk_box_pack_end(GTK_BOX(bar), b_save, FALSE, FALSE, 0);
 
     gtk_box_pack_start(GTK_BOX(box), scroll, TRUE, TRUE, 0);
