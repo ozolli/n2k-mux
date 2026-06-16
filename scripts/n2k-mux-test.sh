@@ -27,6 +27,7 @@ CONF=${1:-${CONF:-/tmp/n2kmux.ini}}
 TX=/tmp/n2k-mux-test-tx.fifo
 AIS=/tmp/n2k-mux-test-ais.fifo
 SOURCES=/tmp/n2k-mux-test-sources.json
+STATS=/tmp/n2k-mux-test-stats.json
 KCONF=/tmp/n2k-mux-test-kplex.conf
 LOG=/tmp/n2k-mux-test.log
 
@@ -92,6 +93,16 @@ summary() {
         echo "ATTENTION : GSA ou GSV absent (129539/129540 non émis par la source," \
              "source non retenue dans [priority], ou test trop court ?)."
     fi
+    if [ -f "$STATS" ]; then
+        echo "--- Charge du bus N2K (estimée, $STATS) ---"
+        python3 - "$STATS" <<'PY' 2>/dev/null || cat "$STATS"
+import json,sys
+d=json.load(open(sys.argv[1]))
+print(f"{d['msg_per_s']:.1f} msg/s | ~{d['frames_per_s']:.0f} trames/s | charge bus ~{d['bus_load_pct']:.1f} %")
+top=sorted(d.get('pgns',[]),key=lambda p:p['hz'],reverse=True)[:8]
+for p in top: print(f"  PGN {p['pgn']:<7} {p['hz']:6.2f} Hz  (total {p['total']})")
+PY
+    fi
 }
 
 AIS_SID=""
@@ -109,6 +120,7 @@ device   : $DEVICE @ $BAUD   (NGX-1 doit être en mode TRANSFER)
 config   : $CONF
 sortie   : qtVlm → TCP 127.0.0.1:10110     |   log : $LOG
 sources  : $SOURCES (vues sur le bus)      |   AIS : n2kd TCP 2599
+stats    : $STATS (débit/PGN + charge bus estimée)
 Ctrl-C pour arrêter.
 EOF
 
@@ -123,4 +135,5 @@ AIS_SID=$!
   | "$ANALYZER" -json -nv \
   | tee "$AIS" \
   | "$N2KMUX" "$CONF" --tx "$TX" --tx-interval 10 --sources "$SOURCES" \
+              --stats "$STATS" --stats-interval 2 \
   | "$KPLEX" -f "$KCONF"

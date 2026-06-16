@@ -29,6 +29,7 @@
 #include "mapper.h"
 #include "aisdedup.h"
 #include "sources.h"
+#include "stats.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -111,7 +112,9 @@ static void usage(const char *prog)
         "                   à brancher devant n2kd (cf. fusion des sources AIS)\n"
         "  --sources CHEMIN publie les sources vues en JSON (pour la GUI)\n"
         "  --sources-interval N  période de publication en secondes (défaut 5)\n"
-        "  -v, --verbose    journalise les décisions sur stderr\n",
+        "  --stats CHEMIN   publie le débit/PGN et la charge de bus estimée en JSON\n"
+        "  --stats-interval N    période de publication des stats (défaut 5)\n"
+        "  -v, --verbose    journalise les décisions + un résumé stats sur stderr\n",
         prog);
 }
 
@@ -177,8 +180,10 @@ int main(int argc, char **argv)
     const char *cfg_path = NULL;
     const char *tx_path  = NULL;
     const char *sources_path = NULL;
+    const char *stats_path = NULL;
     unsigned    tx_interval = 30;
     unsigned    sources_interval = 5;
+    unsigned    stats_interval = 5;
     int         verbose = 0;
     int         ais_json = 0;
 
@@ -190,6 +195,11 @@ int main(int argc, char **argv)
         } else if (strcmp(argv[i], "--sources-interval") == 0 && i + 1 < argc) {
             sources_interval = (unsigned)strtoul(argv[++i], NULL, 10);
             if (sources_interval == 0) sources_interval = 5;
+        } else if (strcmp(argv[i], "--stats") == 0 && i + 1 < argc) {
+            stats_path = argv[++i];
+        } else if (strcmp(argv[i], "--stats-interval") == 0 && i + 1 < argc) {
+            stats_interval = (unsigned)strtoul(argv[++i], NULL, 10);
+            if (stats_interval == 0) stats_interval = 5;
         } else if (strcmp(argv[i], "--tx") == 0 && i + 1 < argc) {
             tx_path = argv[++i];
         } else if (strcmp(argv[i], "--tx-interval") == 0 && i + 1 < argc) {
@@ -230,6 +240,8 @@ int main(int argc, char **argv)
     mapper_t mp;
     mapper_init(&mp, cfg.talker);
     throttle_t thr = {0};   /* limite de débit 0183 par type ([rate]) */
+    stats_t st;
+    stats_init(&st, now_ms());   /* trafic N2K / charge de bus estimée */
 
     /* kplex peut fermer le tube : on gère l'erreur d'écriture nous-mêmes. */
     signal(SIGPIPE, SIG_IGN);
@@ -239,6 +251,7 @@ int main(int argc, char **argv)
     int txfd = -1;
     uint64_t last_tx = 0;
     uint64_t last_sources = 0;
+    uint64_t last_stats = now_ms();
     if (tx_path) {
         txfd = open(tx_path, O_RDWR | O_NONBLOCK);
         if (txfd < 0)
@@ -259,6 +272,8 @@ int main(int argc, char **argv)
         if (jsonl_parse(line, &m)) {
             n_lines++;
             registry_observe(&reg, &m);
+            if (m.has_pgn)
+                stats_observe(&st, m.pgn);   /* tout le trafic vu (avant filtres) */
 
             arb_decision_t d = arbiter_decide(&arb, &m, now);
             if (d.result == ARB_ACCEPT) n_accept++;
@@ -317,6 +332,19 @@ int main(int argc, char **argv)
         if (sources_path && now - last_sources >= (uint64_t)sources_interval * 1000u) {
             sources_write(&reg, sources_path);
             last_sources = now;
+        }
+
+        /* statistiques de trafic / charge de bus estimée */
+        if ((stats_path || verbose) && now - last_stats >= (uint64_t)stats_interval * 1000u) {
+            if (verbose) {
+                double mps, fps, load;
+                stats_summary(&st, now, &mps, &fps, &load);
+                fprintf(stderr, "n2k-mux stats : %.1f msg/s, ~%.1f trames/s, "
+                        "charge bus ~%.1f%%\n", mps, fps, load);
+            }
+            if (stats_path) stats_write(&st, stats_path, now);
+            else            stats_reset(&st, now);
+            last_stats = now;
         }
     }
 

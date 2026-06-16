@@ -23,18 +23,19 @@ ARBITER_OBJ  := $(BUILD)/arbiter.o
 MAPPER_OBJ   := $(BUILD)/mapper.o
 AISDEDUP_OBJ := $(BUILD)/aisdedup.o
 SOURCES_OBJ  := $(BUILD)/sources.o
+STATS_OBJ    := $(BUILD)/stats.o
 
 DAEMON_OBJ   := $(BUILD)/daemon.o
 
 # Tous les objets du pipeline (hors testeurs)
-CORE_OBJ := $(JSONL_OBJ) $(REGISTRY_OBJ) $(CONFIG_OBJ) $(ARBITER_OBJ) $(NMEA_OBJ) $(MAPPER_OBJ) $(AISDEDUP_OBJ) $(SOURCES_OBJ)
+CORE_OBJ := $(JSONL_OBJ) $(REGISTRY_OBJ) $(CONFIG_OBJ) $(ARBITER_OBJ) $(NMEA_OBJ) $(MAPPER_OBJ) $(AISDEDUP_OBJ) $(SOURCES_OBJ) $(STATS_OBJ)
 
 # GTK pour la GUI (cible séparée : make n2k-mux-gui)
 GTK_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 2>/dev/null)
 GTK_LIBS   := $(shell pkg-config --libs gtk+-3.0 2>/dev/null)
 
 .PHONY: all clean install uninstall
-all: n2k-mux test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources
+all: n2k-mux test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -74,6 +75,10 @@ test_aisdedup: $(JSONL_OBJ) $(REGISTRY_OBJ) $(CONFIG_OBJ) $(AISDEDUP_OBJ) $(BUIL
 test_sources: $(JSONL_OBJ) $(REGISTRY_OBJ) $(SOURCES_OBJ) $(BUILD)/test_sources.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
+# --- Module stats (débit / charge de bus estimée) + son testeur ---
+test_stats: $(STATS_OBJ) $(BUILD)/test_stats.o
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
 # --- Module (f) : daemon (binaire final) ---
 n2k-mux: $(CORE_OBJ) $(DAEMON_OBJ)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lm
@@ -108,7 +113,7 @@ uninstall:
 	rm -f $(DESTDIR)/etc/n2k-mux/n2k-mux.ini.example
 
 clean:
-	rm -rf $(BUILD) n2k-mux n2k-mux-gui test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources
+	rm -rf $(BUILD) n2k-mux n2k-mux-gui test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats
 
 # Dépendances d'en-têtes générées par -MMD (recompile si un .h change).
 -include $(wildcard $(BUILD)/*.d)

@@ -146,6 +146,11 @@ Modules prévus (ordre d'implémentation) :
                 config de référence : n2k-mux.ini.example.
                 --sources CHEMIN : publie périodiquement les sources vues en JSON
                 (module sources, défaut interval 5 s) pour la GUI.
+                --stats CHEMIN : publie le débit par PGN (hz + total) et la charge
+                de bus N2K ESTIMÉE en JSON (module stats, défaut 5 s). Aussi un
+                résumé sur stderr en -v. Charge estimée car on est en aval de
+                l'analyzer (messages, pas trames CAN) : trames/message via table
+                fast-packet, charge ≈ trames/s × 130 bits / 250 kbit/s (±15 %).
 (g) gui       — GTK3, édition de la config INI + liste des sources vues
                 [FAIT, binaire ./n2k-mux-gui (make n2k-mux-gui) ; 0 warning ;
                  rendu validé (Xvfb + capture) : 2 onglets corrects]
@@ -166,7 +171,7 @@ Modules prévus (ordre d'implémentation) :
 NGX-1 en mode TRANSFER (N2K brut, 230400) — surtout PAS Convert
   → actisense-serial -s 230400 /dev/ttyNGX1 < tx.fifo   (bidirectionnel pour --tx)
   → analyzer -json -nv          (-nv requis par n2kd ; notre parser le gère)
-  → tee ─┬→ n2k-mux conf --tx tx.fifo --sources sources.json ─┐ (instruments → stdin kplex)
+  → tee ─┬→ n2k-mux conf --tx tx.fifo --sources sources.json --stats stats.json ─┐ (instruments → stdin kplex)
          └→ n2k-mux --ais-json conf → n2kd  (AIS → TCP 2599) ─┘
   → kplex (mode=foreground : lit stdin + client tcp 2599) → TCP 10110 / UDP / log
   → qtVlm, tablettes

@@ -49,7 +49,8 @@ ExecStart=/bin/bash -c '\
     $ACTISENSE -s $BAUD $DEVICE < /run/n2k-mux/tx.fifo | \
     $ANALYZER -json -nv | \
     tee >($N2KMUX --ais-json $CONF | $N2KD) | \
-    $N2KMUX $CONF --tx /run/n2k-mux/tx.fifo --sources /run/n2k-mux/sources.json | \
+    $N2KMUX $CONF --tx /run/n2k-mux/tx.fifo --sources /run/n2k-mux/sources.json \
+            --stats /run/n2k-mux/stats.json | \
     $KPLEX -f $KPLEX_CONF'
 
 Restart=always

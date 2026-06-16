@@ -160,8 +160,19 @@ n2k-mux [config.ini] [--tx CHEMIN] [--tx-interval SEC]
 | `--tx-interval` | période d'émission (s, défaut 30) |
 | `--sources CHEMIN` | publie les équipements vus en JSON (pour la GUI) |
 | `--sources-interval` | période de publication (s, défaut 5) |
+| `--stats CHEMIN` | publie le débit/PGN + la charge de bus estimée en JSON |
+| `--stats-interval` | période de publication des stats (s, défaut 5) |
 | `--ais-json` | mode filtre AIS (JSON→JSON dédupliqué) devant `n2kd` |
-| `-v` | journalise les décisions sur stderr |
+| `-v` | journalise les décisions + un résumé stats sur stderr |
+
+### Charge du bus NMEA 2000
+
+`--stats CHEMIN` écrit périodiquement un JSON avec le **débit par PGN** (fréquence
+en Hz + total) et une **charge de bus estimée** (`bus_load_pct`). n2k-mux étant en
+aval de l'`analyzer` (il voit des messages, pas les trames CAN), la charge est
+*estimée* : nombre de trames par message déduit d'une table fast-packet, charge
+≈ trames/s × 130 bits ÷ 250 kbit/s (précision ~±15 %). Avec `-v`, un résumé
+s'affiche aussi sur stderr (journal systemd).
 
 ### Test manuel (avant installation)
 
