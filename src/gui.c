@@ -155,8 +155,10 @@ static void refresh_stats(app_t *a)
     gtk_label_set_text(GTK_LABEL(a->lbl_n2k), l1);
     gtk_label_set_text(GTK_LABEL(a->lbl_0183), l2);
 
-    /* détail : par PGN (entrée) puis par type de phrase (sortie) */
-    GString *g = g_string_new("PGN reçus (Hz) :\n");
+    /* détail : par PGN (entrée) puis par type de phrase (sortie), intervalle
+     * moyen en ms (= 1000/Hz) pour comparer directement à la section [rate]. */
+    char iv[16];
+    GString *g = g_string_new("PGN reçus (intervalle moyen) :\n");
     const char *p = strstr(c, "\"pgns\":[");
     if (p) {
         p += strlen("\"pgns\":[");
@@ -167,13 +169,15 @@ static void refresh_stats(app_t *a)
             int    pgn = (int)jnum(o, "pgn", 0);
             double hz  = jnum(o, "hz", 0);
             long   tot = (long)jnum(o, "total", 0);
-            g_string_append_printf(g, "  %-7d %7.2f Hz   (total %ld)\n", pgn, hz, tot);
+            if (hz > 0.0001) snprintf(iv, sizeof iv, "%6.0f ms", 1000.0 / hz);
+            else             snprintf(iv, sizeof iv, "     — ms");
+            g_string_append_printf(g, "  %-7d %s   (total %ld)\n", pgn, iv, tot);
             const char *cl = strchr(o, '}');
             if (!cl) break;
             p = cl + 1;
         }
     }
-    g_string_append(g, "\nPhrases 0183 émises (Hz) :\n");
+    g_string_append(g, "\nPhrases 0183 émises (intervalle moyen) :\n");
     p = strstr(c, "\"out_types\":[");
     if (p) {
         p += strlen("\"out_types\":[");
@@ -188,7 +192,9 @@ static void refresh_stats(app_t *a)
             }
             double hz  = jnum(p, "hz", 0);
             long   tot = (long)jnum(p, "total", 0);
-            g_string_append_printf(g, "  %-7s %7.2f Hz   (total %ld)\n", ty, hz, tot);
+            if (hz > 0.0001) snprintf(iv, sizeof iv, "%6.0f ms", 1000.0 / hz);
+            else             snprintf(iv, sizeof iv, "     — ms");
+            g_string_append_printf(g, "  %-7s %s   (total %ld)\n", ty, iv, tot);
             const char *cl = strchr(p, '}');
             if (!cl) break;
             p = cl + 1;
