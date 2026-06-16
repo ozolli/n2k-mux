@@ -73,11 +73,33 @@ EOF
 rm -f "$TX" "$AIS"
 mkfifo "$TX" "$AIS" || die "mkfifo a échoué"
 
+# Récapitulatif des phrases produites + contrôle explicite GSA/GSV (PGN
+# 129539/129540). Lu sur le log à l'arrêt ; talker-agnostique (GSA,/GSV,).
+summary() {
+    [ -f "$LOG" ] || return 0
+    echo
+    echo "=== Répartition des phrases ($LOG) ==="
+    cut -c1-6 "$LOG" 2>/dev/null | sort | uniq -c | sort -rn
+    local gsa gsv
+    gsa=$(grep -c 'GSA,' "$LOG" 2>/dev/null)
+    gsv=$(grep -c 'GSV,' "$LOG" 2>/dev/null)
+    echo "--- Contrôle GSA/GSV (PGN 129539/129540) ---"
+    echo "GSA : ${gsa:-0} phrase(s)   |   GSV : ${gsv:-0} phrase(s)"
+    if [ "${gsa:-0}" -gt 0 ] && [ "${gsv:-0}" -gt 0 ]; then
+        echo "OK : GSA et GSV présents."
+        grep -m1 'GSA,' "$LOG"; grep -m1 'GSV,' "$LOG"
+    else
+        echo "ATTENTION : GSA ou GSV absent (129539/129540 non émis par la source," \
+             "source non retenue dans [priority], ou test trop court ?)."
+    fi
+}
+
 AIS_SID=""
 cleanup() {
     echo; echo "arrêt…"
     [ -n "$AIS_SID" ] && kill -- -"$AIS_SID" 2>/dev/null
     rm -f "$TX" "$AIS"
+    summary
 }
 trap cleanup EXIT INT TERM
 
