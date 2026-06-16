@@ -51,6 +51,10 @@ void stats_reset(stats_t *s, uint64_t now)
     s->frames = 0;
     for (int i = 0; i < s->n_pgns; i++)
         s->pgns[i].count = 0;
+    s->out_sent = 0;
+    s->out_bytes = 0;
+    for (int i = 0; i < s->n_types; i++)
+        s->types[i].count = 0;
 }
 
 void stats_observe(stats_t *s, int pgn)
@@ -72,6 +76,39 @@ void stats_observe(stats_t *s, int pgn)
     }
 }
 
+void stats_observe_out(stats_t *s, const char *type, size_t bytes)
+{
+    s->out_sent++;
+    s->out_bytes += (unsigned long)bytes;
+    if (!type || !type[0])
+        return;
+    for (int i = 0; i < s->n_types; i++)
+        if (strcmp(s->types[i].type, type) == 0) {
+            s->types[i].count++;
+            s->types[i].total++;
+            return;
+        }
+    if (s->n_types < STATS_MAX_TYPES) {
+        snprintf(s->types[s->n_types].type, sizeof s->types[s->n_types].type, "%s", type);
+        s->types[s->n_types].count = 1;
+        s->types[s->n_types].total = 1;
+        s->n_types++;
+    }
+}
+
+void stats_summary_out(const stats_t *s, uint64_t now,
+                       double *sent_per_s, double *bytes_per_s, double *load_pct)
+{
+    double dt = (now > s->window_start) ? (double)(now - s->window_start) / 1000.0 : 0.0;
+    double sps = dt > 0 ? (double)s->out_sent / dt : 0.0;
+    double bps = dt > 0 ? (double)s->out_bytes / dt : 0.0;
+    /* 0183 8N1 : ~10 bits/octet ; charge = octets/s ÷ (baud/10) */
+    double load = bps / (STATS_0183_REF_BAUD / 10.0) * 100.0;
+    if (sent_per_s)  *sent_per_s  = sps;
+    if (bytes_per_s) *bytes_per_s = bps;
+    if (load_pct)    *load_pct    = load;
+}
+
 void stats_summary(const stats_t *s, uint64_t now,
                    double *msg_per_s, double *frames_per_s, double *load_pct)
 {
@@ -90,10 +127,15 @@ int stats_to_json(const stats_t *s, char *buf, size_t sz, uint64_t now)
     double mps, fps, load;
     stats_summary(s, now, &mps, &fps, &load);
 
+    double osps, obps, oload;
+    stats_summary_out(s, now, &osps, &obps, &oload);
+
     size_t n = 0;
     int w = snprintf(buf, sz,
                      "{\"window_s\":%.1f,\"msg_per_s\":%.1f,\"frames_per_s\":%.1f,"
-                     "\"bus_load_pct\":%.1f,\"pgns\":[\n", dt, mps, fps, load);
+                     "\"bus_load_pct\":%.1f,"
+                     "\"out_sent_per_s\":%.1f,\"out_bytes_per_s\":%.1f,\"out_load_pct\":%.1f,"
+                     "\"pgns\":[\n", dt, mps, fps, load, osps, obps, oload);
     if (w < 0 || (size_t)w >= sz) return -1;
     n += (size_t)w;
 
@@ -105,6 +147,18 @@ int stats_to_json(const stats_t *s, char *buf, size_t sz, uint64_t now)
         if (w < 0 || (size_t)w >= sz - n) return -1;
         n += (size_t)w;
     }
+    w = snprintf(buf + n, sz - n, "],\"out_types\":[\n");
+    if (w < 0 || (size_t)w >= sz - n) return -1;
+    n += (size_t)w;
+
+    for (int i = 0; i < s->n_types; i++) {
+        double hz = dt > 0 ? (double)s->types[i].count / dt : 0.0;
+        w = snprintf(buf + n, sz - n,
+                     "%s{\"type\":\"%s\",\"hz\":%.2f,\"total\":%lu}\n",
+                     i ? "," : "", s->types[i].type, hz, s->types[i].total);
+        if (w < 0 || (size_t)w >= sz - n) return -1;
+        n += (size_t)w;
+    }
     w = snprintf(buf + n, sz - n, "]}\n");
     if (w < 0 || (size_t)w >= sz - n) return -1;
     n += (size_t)w;
@@ -113,7 +167,7 @@ int stats_to_json(const stats_t *s, char *buf, size_t sz, uint64_t now)
 
 int stats_write(stats_t *s, const char *path, uint64_t now)
 {
-    char buf[STATS_MAX_PGNS * 48 + 160];
+    char buf[STATS_MAX_PGNS * 48 + STATS_MAX_TYPES * 48 + 256];
     int len = stats_to_json(s, buf, sizeof buf, now);
     if (len < 0)
         return -1;

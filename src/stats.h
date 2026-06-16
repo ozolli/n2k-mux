@@ -25,8 +25,10 @@
 #include <stddef.h>
 
 #define STATS_MAX_PGNS        128
+#define STATS_MAX_TYPES        48      /* types de phrases 0183 distincts */
 #define STATS_BUS_BPS         250000   /* NMEA 2000 : 250 kbit/s */
 #define STATS_BITS_PER_FRAME  130      /* trame CAN étendue ~130 bits (approx) */
+#define STATS_0183_REF_BAUD   4800     /* liaison 0183 classique → réf. de charge */
 
 typedef struct {
     int           pgn;
@@ -35,11 +37,25 @@ typedef struct {
 } stats_pgn_t;
 
 typedef struct {
+    char          type[4]; /* type de phrase 0183, ex. "GLL" */
+    unsigned long count;   /* phrases dans la fenêtre courante */
+    unsigned long total;
+} stats_type_t;
+
+typedef struct {
     uint64_t      window_start;        /* début de la fenêtre (ms) */
+
+    /* entrée NMEA 2000 */
     unsigned long msgs;                /* messages dans la fenêtre */
     unsigned long frames;              /* trames CAN estimées dans la fenêtre */
     stats_pgn_t   pgns[STATS_MAX_PGNS];
     int           n_pgns;
+
+    /* sortie NMEA 0183 (après throttle) */
+    unsigned long out_sent;            /* phrases émises dans la fenêtre */
+    unsigned long out_bytes;           /* octets émis dans la fenêtre */
+    stats_type_t  types[STATS_MAX_TYPES];
+    int           n_types;
 } stats_t;
 
 /* Réinitialise tout (y compris les totaux). */
@@ -51,12 +67,19 @@ void stats_reset(stats_t *s, uint64_t now);
 /* Enregistre un message d'un PGN (trames estimées en interne). */
 void stats_observe(stats_t *s, int pgn);
 
+/* Enregistre une phrase 0183 émise (type "GLL"… + nb d'octets). */
+void stats_observe_out(stats_t *s, const char *type, size_t bytes);
+
 /* Nombre de trames CAN estimé pour un PGN (1 par défaut / single-frame). */
 int  stats_frames_for(int pgn);
 
-/* Débits de la fenêtre courante (sans reset). Tout pointeur peut être NULL. */
+/* Débits N2K de la fenêtre courante (sans reset). Tout pointeur peut être NULL. */
 void stats_summary(const stats_t *s, uint64_t now,
                    double *msg_per_s, double *frames_per_s, double *load_pct);
+
+/* Débits 0183 de la fenêtre (sans reset). Charge = % d'une liaison 4800 bauds. */
+void stats_summary_out(const stats_t *s, uint64_t now,
+                       double *sent_per_s, double *bytes_per_s, double *load_pct);
 
 /* Sérialise l'état en JSON (sans reset). Retourne la longueur, ou -1. */
 int  stats_to_json(const stats_t *s, char *buf, size_t sz, uint64_t now);

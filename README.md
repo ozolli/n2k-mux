@@ -236,7 +236,8 @@ les instruments sur **stdin** (`[file] filename=-`) et l'AIS de `n2kd` en
 ## 4. Interface graphique
 
 ```sh
-./n2k-mux-gui n2k-mux.ini --sources /run/n2k-mux/sources.json
+./n2k-mux-gui n2k-mux.ini --sources /run/n2k-mux/sources.json \
+                          --stats /run/n2k-mux/stats.json
 ```
 
 - **Sources vues** : équipements présents sur le bus (adresse, identité,
@@ -244,6 +245,11 @@ les instruments sur **stdin** (`[file] filename=-`) et l'AIS de `n2kd` en
   Auto-rafraîchi. **Double-clic** sur une ligne = copie l'identité (à coller
   dans `[sources]`). La colonne « PGNs publiés » liste les PGN émis par chaque
   appareil — pratique pour savoir qui parle quoi et régler `[priority]`.
+- **Charge** : charge du bus **NMEA 2000** (estimée) et du flux **NMEA 0183**
+  produit (phrases/s, octets/s, % d'une liaison 4800 bauds), plus le débit par
+  PGN et par type de phrase. Lit `stats.json` (option `--stats` du daemon),
+  rafraîchi toutes les 3 s. Un dépassement de 100 % côté 0183 indique qu'il faut
+  throttler la sortie (section `[rate]`).
 - **Configuration** : éditeur du fichier INI. *Valider* vérifie la syntaxe,
   *Enregistrer* écrit le fichier (refuse une config invalide). *Enregistrer et
   redémarrer* écrit puis relance le service via `pkexec` (popup d'authentification)

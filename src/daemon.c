@@ -312,7 +312,11 @@ int main(int argc, char **argv)
                             }
                         }
                     }
-                    if (pass) { fputs(out.s[i], stdout); wrote++; }
+                    if (pass) {
+                        fputs(out.s[i], stdout);
+                        wrote++;
+                        stats_observe_out(&st, ty, strlen(out.s[i]));
+                    }
                 }
                 n_sent += wrote;
                 if (wrote && fflush(stdout) != 0) {
@@ -337,10 +341,12 @@ int main(int argc, char **argv)
         /* statistiques de trafic / charge de bus estimée */
         if ((stats_path || verbose) && now - last_stats >= (uint64_t)stats_interval * 1000u) {
             if (verbose) {
-                double mps, fps, load;
+                double mps, fps, load, osps, obps, oload;
                 stats_summary(&st, now, &mps, &fps, &load);
-                fprintf(stderr, "n2k-mux stats : %.1f msg/s, ~%.1f trames/s, "
-                        "charge bus ~%.1f%%\n", mps, fps, load);
+                stats_summary_out(&st, now, &osps, &obps, &oload);
+                fprintf(stderr, "n2k-mux stats : N2K %.1f msg/s ~%.1f trames/s charge ~%.1f%% | "
+                        "0183 %.1f phr/s %.0f o/s charge ~%.1f%%\n",
+                        mps, fps, load, osps, obps, oload);
             }
             if (stats_path) stats_write(&st, stats_path, now);
             else            stats_reset(&st, now);

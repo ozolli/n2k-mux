@@ -158,14 +158,18 @@ Modules prévus (ordre d'implémentation) :
                 ./test_sources) → fichier JSON (défaut /run/n2k-mux/sources.json).
                 Chaque source porte aussi sa liste de PGN publiés (registry suit
                 pgn→compteur par device) → colonne « PGNs publiés » de la GUI.
-                GUI : onglet « Sources vues » (TreeView auto-rafraîchi, double-clic
-                = copie l'identité) + onglet « Configuration » (éditeur INI texte
-                brut → commentaires préservés ; « Valider » réutilise config_parse_
-                string ; « Enregistrer » refuse si la config est invalide ;
-                « Enregistrer et redémarrer » relance le service via
-                `pkexec systemctl restart n2k-mux` (le daemon ne relit la config
-                qu'au démarrage — pas de SIGHUP)).
-                usage : n2k-mux-gui [config.ini] [--sources CHEMIN] [--tab sources|config].
+                GUI : 3 onglets. « Sources vues » (TreeView auto-rafraîchi,
+                double-clic = copie l'identité, colonne PGNs publiés) ;
+                « Charge » (lit stats.json : charge N2K estimée + charge 0183 en
+                % de 4800 bauds, débit par PGN et par type de phrase, rafraîchi
+                3 s) ; « Configuration » (éditeur INI texte brut → commentaires
+                préservés ; « Valider » réutilise config_parse_string ;
+                « Enregistrer » refuse si la config est invalide ; « Enregistrer
+                et redémarrer » relance le service via
+                `pkexec systemctl restart n2k-mux` — le daemon ne relit la config
+                qu'au démarrage, pas de SIGHUP).
+                usage GUI : n2k-mux-gui [config.ini] [--sources CHEMIN]
+                [--stats CHEMIN] [--tab sources|charge|config].
                 make all NE construit PAS la GUI (garde le build OK sans GTK) ;
                 make n2k-mux-gui la construit (nécessite libgtk-3-dev).
 

@@ -39,9 +39,13 @@ enum { COL_SRC, COL_IDENT, COL_MFG, COL_MODEL, COL_SERIAL, COL_SEEN, COL_PGNS, N
 typedef struct {
     char           cfg_path[512];
     char           sources_path[512];
+    char           stats_path[512];
     GtkListStore  *store;
     GtkTextBuffer *ini_buf;
     GtkWidget     *status;
+    GtkWidget     *lbl_n2k;     /* résumé charge NMEA 2000 */
+    GtkWidget     *lbl_0183;    /* résumé charge NMEA 0183 */
+    GtkTextBuffer *stats_buf;   /* détail par PGN / par type */
 } app_t;
 
 static void set_status(app_t *a, const char *fmt, ...)
@@ -119,9 +123,86 @@ static void refresh_sources(app_t *a)
     set_status(a, "%d source(s) — %s", v.n, a->sources_path);
 }
 
+/* ---- charge (stats.json) ---- */
+
+/* Extrait "key":nombre du JSON (premier match). Défaut si absent. */
+static double jnum(const char *s, const char *key, double dflt)
+{
+    char pat[48];
+    snprintf(pat, sizeof pat, "\"%s\":", key);
+    const char *p = strstr(s, pat);
+    return p ? g_ascii_strtod(p + strlen(pat), NULL) : dflt;
+}
+
+static void refresh_stats(app_t *a)
+{
+    char *c = read_file(a->stats_path);
+    if (!c) {
+        gtk_label_set_text(GTK_LABEL(a->lbl_n2k),
+                           "stats.json introuvable — le daemon tourne-t-il avec --stats ?");
+        gtk_label_set_text(GTK_LABEL(a->lbl_0183), a->stats_path);
+        gtk_text_buffer_set_text(a->stats_buf, "", -1);
+        return;
+    }
+
+    char l1[256], l2[256];
+    snprintf(l1, sizeof l1,
+             "NMEA 2000 : %.1f msg/s · ~%.0f trames/s · charge bus ≈ %.1f %%",
+             jnum(c, "msg_per_s", 0), jnum(c, "frames_per_s", 0), jnum(c, "bus_load_pct", 0));
+    snprintf(l2, sizeof l2,
+             "NMEA 0183 : %.1f phrases/s · %.0f o/s · charge ≈ %.1f %% (réf. 4800 bauds)",
+             jnum(c, "out_sent_per_s", 0), jnum(c, "out_bytes_per_s", 0), jnum(c, "out_load_pct", 0));
+    gtk_label_set_text(GTK_LABEL(a->lbl_n2k), l1);
+    gtk_label_set_text(GTK_LABEL(a->lbl_0183), l2);
+
+    /* détail : par PGN (entrée) puis par type de phrase (sortie) */
+    GString *g = g_string_new("PGN reçus (Hz) :\n");
+    const char *p = strstr(c, "\"pgns\":[");
+    if (p) {
+        p += strlen("\"pgns\":[");
+        const char *end = strchr(p, ']');
+        while (p && (!end || p < end)) {
+            const char *o = strchr(p, '{');
+            if (!o || (end && o > end)) break;
+            int    pgn = (int)jnum(o, "pgn", 0);
+            double hz  = jnum(o, "hz", 0);
+            long   tot = (long)jnum(o, "total", 0);
+            g_string_append_printf(g, "  %-7d %7.2f Hz   (total %ld)\n", pgn, hz, tot);
+            const char *cl = strchr(o, '}');
+            if (!cl) break;
+            p = cl + 1;
+        }
+    }
+    g_string_append(g, "\nPhrases 0183 émises (Hz) :\n");
+    p = strstr(c, "\"out_types\":[");
+    if (p) {
+        p += strlen("\"out_types\":[");
+        while ((p = strchr(p, '{')) != NULL) {
+            char ty[8] = "";
+            const char *t = strstr(p, "\"type\":\"");
+            if (t) {
+                t += strlen("\"type\":\"");
+                size_t i = 0;
+                while (*t && *t != '"' && i + 1 < sizeof ty) ty[i++] = *t++;
+                ty[i] = '\0';
+            }
+            double hz  = jnum(p, "hz", 0);
+            long   tot = (long)jnum(p, "total", 0);
+            g_string_append_printf(g, "  %-7s %7.2f Hz   (total %ld)\n", ty, hz, tot);
+            const char *cl = strchr(p, '}');
+            if (!cl) break;
+            p = cl + 1;
+        }
+    }
+    gtk_text_buffer_set_text(a->stats_buf, g->str, -1);
+    g_string_free(g, TRUE);
+    g_free(c);
+}
+
 static gboolean on_timer(gpointer ud)
 {
     refresh_sources((app_t *)ud);
+    refresh_stats((app_t *)ud);
     return G_SOURCE_CONTINUE;
 }
 
@@ -276,6 +357,43 @@ static GtkWidget *build_sources_tab(app_t *a)
     return box;
 }
 
+static GtkWidget *build_stats_tab(app_t *a)
+{
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_container_set_border_width(GTK_CONTAINER(box), 8);
+
+    a->lbl_n2k  = gtk_label_new("NMEA 2000 : —");
+    a->lbl_0183 = gtk_label_new("NMEA 0183 : —");
+    gtk_widget_set_halign(a->lbl_n2k,  GTK_ALIGN_START);
+    gtk_widget_set_halign(a->lbl_0183, GTK_ALIGN_START);
+
+    GtkWidget *detail = gtk_text_view_new();
+    a->stats_buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(detail));
+    gtk_text_view_set_editable(GTK_TEXT_VIEW(detail), FALSE);
+    gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(detail), FALSE);
+    GtkCssProvider *css = gtk_css_provider_new();
+    gtk_css_provider_load_from_data(css, "textview { font-family: Monospace; }", -1, NULL);
+    gtk_style_context_add_provider(gtk_widget_get_style_context(detail),
+                                   GTK_STYLE_PROVIDER(css), GTK_STYLE_PROVIDER_PRIORITY_USER);
+    g_object_unref(css);
+
+    GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
+    gtk_container_add(GTK_CONTAINER(scroll), detail);
+    gtk_widget_set_vexpand(scroll, TRUE);
+
+    GtkWidget *note = gtk_label_new(
+        "Charge bus N2K estimée (messages, pas trames brutes ; ~±15 %). "
+        "Charge 0183 = % d'une liaison 4800 bauds. Rafraîchi toutes les 3 s.");
+    gtk_widget_set_halign(note, GTK_ALIGN_START);
+    gtk_label_set_line_wrap(GTK_LABEL(note), TRUE);
+
+    gtk_box_pack_start(GTK_BOX(box), a->lbl_n2k,  FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), a->lbl_0183, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box), scroll, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(box), note, FALSE, FALSE, 0);
+    return box;
+}
+
 static GtkWidget *build_config_tab(app_t *a)
 {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
@@ -323,14 +441,20 @@ int main(int argc, char **argv)
     memset(&a, 0, sizeof a);
     snprintf(a.cfg_path, sizeof a.cfg_path, "%s", "n2k-mux.ini");
     snprintf(a.sources_path, sizeof a.sources_path, "%s", "/run/n2k-mux/sources.json");
+    snprintf(a.stats_path, sizeof a.stats_path, "%s", "/run/n2k-mux/stats.json");
     int start_tab = 0;
     bool cfg_given = false;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--sources") == 0 && i + 1 < argc)
             snprintf(a.sources_path, sizeof a.sources_path, "%s", argv[++i]);
-        else if (strcmp(argv[i], "--tab") == 0 && i + 1 < argc)
-            start_tab = (strcmp(argv[++i], "config") == 0) ? 1 : 0;
+        else if (strcmp(argv[i], "--stats") == 0 && i + 1 < argc)
+            snprintf(a.stats_path, sizeof a.stats_path, "%s", argv[++i]);
+        else if (strcmp(argv[i], "--tab") == 0 && i + 1 < argc) {
+            const char *t = argv[++i];
+            start_tab = (strcmp(t, "config") == 0) ? 2 :
+                        (strcmp(t, "charge") == 0) ? 1 : 0;
+        }
         else if (argv[i][0] != '-') {
             snprintf(a.cfg_path, sizeof a.cfg_path, "%s", argv[i]);
             cfg_given = true;
@@ -351,6 +475,7 @@ int main(int argc, char **argv)
     GtkWidget *root = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     GtkWidget *nb = gtk_notebook_new();
     gtk_notebook_append_page(GTK_NOTEBOOK(nb), build_sources_tab(&a), gtk_label_new("Sources vues"));
+    gtk_notebook_append_page(GTK_NOTEBOOK(nb), build_stats_tab(&a), gtk_label_new("Charge"));
     gtk_notebook_append_page(GTK_NOTEBOOK(nb), build_config_tab(&a), gtk_label_new("Configuration"));
     gtk_widget_set_vexpand(nb, TRUE);
 
@@ -365,8 +490,9 @@ int main(int argc, char **argv)
     gtk_container_add(GTK_CONTAINER(win), root);
 
     refresh_sources(&a);
+    refresh_stats(&a);
     load_ini(&a);
-    g_timeout_add_seconds(3, on_timer, &a);   /* auto-rafraîchit les sources */
+    g_timeout_add_seconds(3, on_timer, &a);   /* auto-rafraîchit sources + charge */
 
     gtk_widget_show_all(win);
     gtk_notebook_set_current_page(GTK_NOTEBOOK(nb), start_tab);  /* après show_all */
