@@ -7,7 +7,9 @@
 # par n2k-mux.service (désactiver l'ancien kplex.service).
 
 [global]
-mode=foreground          ; lancé dans le pipeline (PAS de daemon/fork)
+# mode=foreground : kplex est lancé DANS le pipeline (pas de daemon/fork).
+# (kplex n'accepte PAS de commentaire en fin de ligne, seulement en début.)
+mode=foreground
 
 # === Entrées ===
 # Instruments NMEA 0183 produits par n2k-mux (stdin du pipeline).
