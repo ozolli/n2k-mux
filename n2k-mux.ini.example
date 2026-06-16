@@ -1,0 +1,60 @@
+# n2k-mux.ini — configuration de référence (toute la table d'arbitrage du bord)
+#
+# Usage :
+#   actisense-serial -r -s 230400 /dev/ttyNGX1 | analyzer -json | n2k-mux n2k-mux.ini | kplex
+#
+# Pour résoudre les identités (Model Serial Code), envoyer une ISO Request :
+#   - soit via le daemon : n2k-mux ... --tx /chemin/fifo  (actisense en mode
+#     bidirectionnel, SANS -r, lisant ce FIFO sur son stdin) ;
+#   - puis lire les identités vues avec ./test_registry et remplir [sources].
+
+[output]
+talker = II          ; qtVlm ignore le talker ; II = Integrated Instruments
+
+[sources]
+# nom logique = Model Serial Code (cascade Unique Number si pas de serial)
+# >>> à compléter avec les vrais codes (cf. ./test_registry) <<<
+SCX    = A_REMPLIR_SCX       ; Furuno SCX-20 (cap/attitude/position)
+MAD    = A_REMPLIR_MAD       ; MADBrain (vent/safran/vitesse)
+DST_BB = A_REMPLIR_DST_BB    ; DST810 bâbord
+DST_TB = A_REMPLIR_DST_TB    ; DST810 tribord
+AIS    = A_REMPLIR_AIS       ; em-trak B953
+M510   = A_REMPLIR_M510      ; IC-M510E
+VER    = 917661              ; Veratron GO GPS        (résolu sur banc)
+DH     = 000A520AF6A0        ; DataHub PredictWind    (résolu sur banc)
+
+[priority]
+# clé = pgn[/discriminant]   |   valeur = [mode:] sources par priorité décroissante
+129025          = SCX, VER, MAD        ; GLL
+129026          = SCX, VER, MAD        ; VTG
+129029          = SCX, VER             ; GGA
+126992          = SCX, VER, MAD        ; ZDA
+127250/Magnetic = SCX, MAD             ; HDG + HDM
+127250/True     = SCX, MAD             ; HDT
+127251          = SCX, MAD             ; ROT
+127257          = SCX, MAD             ; XDR (pitch/roll)
+130306/Apparent = MAD                  ; MWV(R)
+130306/True     = MAD                  ; MWV(T) + MWD
+127245          = MAD                  ; RSA
+128259          = MAD                  ; VHW
+128267          = min: DST_BB, DST_TB  ; DPT (minimum = sécurité haut-fond)
+130312/Sea      = DST_BB, DST_TB       ; MTW (température eau)
+130312/Outside  = SCX                  ; MDA (température air)
+130314          = SCX                  ; MDA (pression)
+
+# AIS : dédup/fusion par MMSI, utilisée par le mode `n2k-mux --ais-json` (placé
+# devant n2kd, qui encode le VDM). em-trak (AIS) PRIORITAIRE sur DataHub (DH) :
+# l'ordre de la liste le dit. Une cible vue par une seule source passe quand
+# même (union) ; failover vers DH si l'em-trak se tait au-delà du timeout.
+129038 = fusion: AIS, DH
+129039 = fusion: AIS, DH
+129040 = fusion: AIS, DH
+129041 = fusion: AIS, DH
+129793 = fusion: AIS, DH
+129794 = fusion: AIS, DH
+129809 = fusion: AIS, DH
+129810 = fusion: AIS, DH
+
+[ignore]
+src = 0
+pgn = 262161, 262656                   ; Actisense Operating mode / CANboat Startup

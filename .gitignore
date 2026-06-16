@@ -1,0 +1,16 @@
+# Artefacts de compilation
+build/
+*.o
+
+# Binaires produits par make
+/n2k-mux
+/test_jsonl
+/test_registry
+/test_nmea0183
+/test_config
+/test_arbiter
+/test_mapper
+/test_aisdedup
+
+# Réglages locaux Claude Code (spécifiques à la machine)
+.claude/
