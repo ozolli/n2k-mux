@@ -133,17 +133,32 @@ Modules prévus (ordre d'implémentation) :
                 stdin d'un actisense-serial bidirectionnel (SANS -r). FIFO ouvert
                 en O_RDWR|O_NONBLOCK (évite l'interblocage de rendez-vous).
                 config de référence : n2k-mux.ini.example.
+                --sources CHEMIN : publie périodiquement les sources vues en JSON
+                (module sources, défaut interval 5 s) pour la GUI.
 (g) gui       — GTK3, édition de la config INI + liste des sources vues
+                [FAIT, binaire ./n2k-mux-gui (make n2k-mux-gui) ; compile 0 warning,
+                 démarrage OK ; rendu à valider visuellement par l'utilisateur]
+                pont daemon→GUI : module sources (src/sources.{h,c}, testeur
+                ./test_sources) → fichier JSON (défaut /run/n2k-mux/sources.json).
+                GUI : onglet « Sources vues » (TreeView auto-rafraîchi, double-clic
+                = copie l'identité) + onglet « Configuration » (éditeur INI texte
+                brut → commentaires préservés ; « Valider » réutilise config_parse_
+                string ; « Enregistrer » refuse si la config est invalide).
+                usage : n2k-mux-gui [config.ini] [--sources CHEMIN].
+                make all NE construit PAS la GUI (garde le build OK sans GTK) ;
+                make n2k-mux-gui la construit (nécessite libgtk-3-dev).
 
 ## Chaîne de production
 
 NGX-1 (Transfer Receive All, 230400 baud)
   → actisense-serial -r -s 230400 /dev/ttyNGX1
   → analyzer -json -nv          (-nv requis par n2kd ; notre parser le gère)
-  → tee ─┬→ n2k-mux conf.ini                       → instruments 0183 ─┐
-         └→ n2k-mux --ais-json conf.ini → n2kd     → !AIVDM (TCP 2599) ┤
-                                                                       ├→ kplex
+  → tee ─┬→ n2k-mux conf.ini --sources /run/n2k-mux/sources.json → instr. 0183 ─┐
+         └→ n2k-mux --ais-json conf.ini → n2kd          → !AIVDM (TCP 2599) ─────┤
+                                                                                  ├→ kplex
   → kplex (distribution TCP/UDP + logging polar_doctor) → qtVlm, tablettes
+
+n2k-mux-gui lit /run/n2k-mux/sources.json (sources vues) et édite conf.ini.
 
 Notes câblage AIS :
 - n2kd lit le JSON sur stdin (EXIGE analyzer -json -nv), encode le VDM, et sert

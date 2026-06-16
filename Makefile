@@ -19,14 +19,19 @@ CONFIG_OBJ   := $(BUILD)/config.o
 ARBITER_OBJ  := $(BUILD)/arbiter.o
 MAPPER_OBJ   := $(BUILD)/mapper.o
 AISDEDUP_OBJ := $(BUILD)/aisdedup.o
+SOURCES_OBJ  := $(BUILD)/sources.o
 
 DAEMON_OBJ   := $(BUILD)/daemon.o
 
 # Tous les objets du pipeline (hors testeurs)
-CORE_OBJ := $(JSONL_OBJ) $(REGISTRY_OBJ) $(CONFIG_OBJ) $(ARBITER_OBJ) $(NMEA_OBJ) $(MAPPER_OBJ) $(AISDEDUP_OBJ)
+CORE_OBJ := $(JSONL_OBJ) $(REGISTRY_OBJ) $(CONFIG_OBJ) $(ARBITER_OBJ) $(NMEA_OBJ) $(MAPPER_OBJ) $(AISDEDUP_OBJ) $(SOURCES_OBJ)
+
+# GTK pour la GUI (cible séparée : make n2k-mux-gui)
+GTK_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 2>/dev/null)
+GTK_LIBS   := $(shell pkg-config --libs gtk+-3.0 2>/dev/null)
 
 .PHONY: all clean
-all: n2k-mux test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup
+all: n2k-mux test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -62,9 +67,20 @@ test_mapper: $(JSONL_OBJ) $(REGISTRY_OBJ) $(CONFIG_OBJ) $(ARBITER_OBJ) $(NMEA_OB
 test_aisdedup: $(JSONL_OBJ) $(REGISTRY_OBJ) $(CONFIG_OBJ) $(AISDEDUP_OBJ) $(BUILD)/test_aisdedup.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
+# --- Module sources (pont daemon→GUI) + son testeur ---
+test_sources: $(JSONL_OBJ) $(REGISTRY_OBJ) $(SOURCES_OBJ) $(BUILD)/test_sources.o
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
 # --- Module (f) : daemon (binaire final) ---
 n2k-mux: $(CORE_OBJ) $(DAEMON_OBJ)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lm
 
+# --- Module (g) : GUI GTK3 (cible séparée, nécessite libgtk-3-dev) ---
+$(BUILD)/gui.o: $(SRCDIR)/gui.c | $(BUILD)
+	$(CC) $(CFLAGS) $(GTK_CFLAGS) -c $< -o $@
+
+n2k-mux-gui: $(CONFIG_OBJ) $(SOURCES_OBJ) $(BUILD)/gui.o
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) $(GTK_LIBS)
+
 clean:
-	rm -rf $(BUILD) n2k-mux test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup
+	rm -rf $(BUILD) n2k-mux n2k-mux-gui test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources

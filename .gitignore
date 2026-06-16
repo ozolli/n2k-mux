@@ -4,6 +4,8 @@ build/
 
 # Binaires produits par make
 /n2k-mux
+/n2k-mux-gui
+/test_sources
 /test_jsonl
 /test_registry
 /test_nmea0183

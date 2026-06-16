@@ -25,6 +25,7 @@
 #include "arbiter.h"
 #include "mapper.h"
 #include "aisdedup.h"
+#include "sources.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -68,6 +69,8 @@ static void usage(const char *prog)
         "  --tx-interval N  période d'émission en secondes (défaut 30)\n"
         "  --ais-json       mode filtre AIS : JSON->JSON dédupliqué par MMSI,\n"
         "                   à brancher devant n2kd (cf. fusion des sources AIS)\n"
+        "  --sources CHEMIN publie les sources vues en JSON (pour la GUI)\n"
+        "  --sources-interval N  période de publication en secondes (défaut 5)\n"
         "  -v, --verbose    journalise les décisions sur stderr\n",
         prog);
 }
@@ -133,13 +136,20 @@ int main(int argc, char **argv)
 {
     const char *cfg_path = NULL;
     const char *tx_path  = NULL;
+    const char *sources_path = NULL;
     unsigned    tx_interval = 30;
+    unsigned    sources_interval = 5;
     int         verbose = 0;
     int         ais_json = 0;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--ais-json") == 0) {
             ais_json = 1;
+        } else if (strcmp(argv[i], "--sources") == 0 && i + 1 < argc) {
+            sources_path = argv[++i];
+        } else if (strcmp(argv[i], "--sources-interval") == 0 && i + 1 < argc) {
+            sources_interval = (unsigned)strtoul(argv[++i], NULL, 10);
+            if (sources_interval == 0) sources_interval = 5;
         } else if (strcmp(argv[i], "--tx") == 0 && i + 1 < argc) {
             tx_path = argv[++i];
         } else if (strcmp(argv[i], "--tx-interval") == 0 && i + 1 < argc) {
@@ -187,6 +197,7 @@ int main(int argc, char **argv)
      * rendez-vous, pas de blocage si aucun lecteur, écriture bufferisée. */
     int txfd = -1;
     uint64_t last_tx = 0;
+    uint64_t last_sources = 0;
     if (tx_path) {
         txfd = open(tx_path, O_RDWR | O_NONBLOCK);
         if (txfd < 0)
@@ -234,8 +245,16 @@ int main(int argc, char **argv)
             emit_iso_requests(txfd);
             last_tx = now;
         }
+
+        /* publication périodique des sources vues (pour la GUI) */
+        if (sources_path && now - last_sources >= (uint64_t)sources_interval * 1000u) {
+            sources_write(&reg, sources_path);
+            last_sources = now;
+        }
     }
 
+    if (sources_path)
+        sources_write(&reg, sources_path);   /* dernière publication à l'arrêt */
     if (txfd >= 0) close(txfd);
     fprintf(stderr, "n2k-mux : %lu lignes, %lu retenues, %lu phrases émises.\n",
             n_lines, n_accept, n_sent);
