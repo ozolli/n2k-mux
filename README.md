@@ -63,7 +63,16 @@ DH  = 000A520AF6A0          ; DataHub PredictWind
 [ignore]
 src = 0
 pgn = 262161, 262656        ; messages de contrôle Actisense/CANboat
+
+[rate]
+; type de phrase = intervalle minimum en ms (0/absent = pas de limite)
+GLL = 1000                  ; au plus 1 position/s
+GSV = 5000                  ; satellites toutes les 5 s
 ```
+
+La section `[rate]` limite le débit de la **sortie 0183** par type de phrase
+(utile pour les liaisons lentes ou les PGN bavards). Une rafale multi-phrases
+(ex. les pages `GSV`) passe toujours en entier d'un coup.
 
 Modes : `priority` (défaut, 1ʳᵉ source vivante), `min` (valeur minimale),
 `fusion` (AIS, dédup MMSI). Le discriminant après `/` permet de router selon un

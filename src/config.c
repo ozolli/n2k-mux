@@ -15,7 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-enum { SEC_NONE = 0, SEC_OUTPUT, SEC_SOURCES, SEC_PRIORITY, SEC_IGNORE, SEC_OTHER };
+enum { SEC_NONE = 0, SEC_OUTPUT, SEC_SOURCES, SEC_PRIORITY, SEC_IGNORE, SEC_RATE, SEC_OTHER };
 
 /* Copie bornée, toujours terminée NUL. */
 static void cpy(char *dst, size_t sz, const char *src)
@@ -45,6 +45,7 @@ static int section_of(const char *n)
     if (strcasecmp(n, "priority") == 0 || strcasecmp(n, "priorities") == 0 ||
         strcasecmp(n, "priorites") == 0) return SEC_PRIORITY;
     if (strcasecmp(n, "ignore") == 0)   return SEC_IGNORE;
+    if (strcasecmp(n, "rate") == 0 || strcasecmp(n, "rates") == 0) return SEC_RATE;
     return SEC_OTHER;
 }
 
@@ -76,6 +77,19 @@ static bool add_int_list(config_t *c, int lineno, char *val, int *dst, int *n, i
             return fail(c, lineno, "trop de valeurs ([ignore])");
         dst[(*n)++] = (int)strtol(t, NULL, 10);
     }
+    return true;
+}
+
+static bool add_rate(config_t *c, int lineno, const char *type, const char *val)
+{
+    if (c->n_rates >= CFG_MAX_RATES)
+        return fail(c, lineno, "trop d'entrées ([rate])");
+    int ms = (int)strtol(val, NULL, 10);
+    if (ms < 0)
+        return fail(c, lineno, "intervalle négatif ([rate])");
+    cfg_rate_t *r = &c->rates[c->n_rates++];
+    cpy(r->type, sizeof r->type, type);
+    r->min_interval_ms = ms;
     return true;
 }
 
@@ -172,6 +186,8 @@ static bool feed(config_t *c, int *section, char *line, int lineno)
                 return add_int_list(c, lineno, val, c->ignore_pgn,
                                     &c->n_ignore_pgn, CFG_MAX_IGNORE);
             return true;        /* clé inconnue dans [ignore] : ignorée */
+        case SEC_RATE:
+            return add_rate(c, lineno, key, val);
         default:
             return true;        /* section inconnue : ignorée */
     }
@@ -282,4 +298,13 @@ bool config_ignore_src(const config_t *c, int src)
 bool config_ignore_pgn(const config_t *c, int pgn)
 {
     return in_list(c->ignore_pgn, c->n_ignore_pgn, pgn);
+}
+
+int config_rate_ms(const config_t *c, const char *type)
+{
+    if (!type) return 0;
+    for (int i = 0; i < c->n_rates; i++)
+        if (strcasecmp(c->rates[i].type, type) == 0)
+            return c->rates[i].min_interval_ms;
+    return 0;
 }

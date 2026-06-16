@@ -35,6 +35,11 @@
  *   src = 0
  *   pgn = 262161, 262656
  *
+ *   [rate]
+ *   ; type de phrase = intervalle minimum en ms (0 ou absent = pas de limite)
+ *   GLL = 1000              ; au plus une GLL par seconde
+ *   GSV = 5000
+ *
  * Commentaires : ';' ou '#' jusqu'à la fin de ligne. Espaces tolérés partout.
  * Sections/clés inconnues ignorées. Stockage fixe, zéro allocation dynamique.
  */
@@ -48,9 +53,11 @@
 #define CFG_MAX_RULES     64
 #define CFG_MAX_PRIO       8    /* sources par règle */
 #define CFG_MAX_IGNORE    16
+#define CFG_MAX_RATES     32   /* limites de débit par type de phrase */
 #define CFG_NAME_LEN      24
 #define CFG_IDENT_LEN     64
 #define CFG_DISC_LEN      32
+#define CFG_TYPE_LEN       8   /* type de phrase 0183 (ex. "GLL") */
 
 /* Mode de sélection d'une règle. */
 typedef enum {
@@ -72,6 +79,12 @@ typedef struct {
     int        n_sources;
 } cfg_rule_t;
 
+/* Limite de débit d'un type de phrase 0183 (throttle de la sortie). */
+typedef struct {
+    char type[CFG_TYPE_LEN];   /* type de phrase, ex. "GLL", "GSV" */
+    int  min_interval_ms;      /* intervalle minimum entre émissions (0 = illimité) */
+} cfg_rate_t;
+
 typedef struct {
     char         talker[3];                 /* talker 0183 de sortie (défaut "II") */
 
@@ -85,6 +98,9 @@ typedef struct {
     int          n_ignore_src;
     int          ignore_pgn[CFG_MAX_IGNORE];
     int          n_ignore_pgn;
+
+    cfg_rate_t   rates[CFG_MAX_RATES];
+    int          n_rates;
 
     char         err[160];  /* message de la dernière erreur de parsing */
     int          err_line;  /* ligne fautive (0 si aucune) */
@@ -113,5 +129,9 @@ const cfg_rule_t *config_rule(const config_t *c, int pgn, const char *disc);
 /* Règles d'exclusion explicites (listées dans [ignore]). */
 bool config_ignore_src(const config_t *c, int src);
 bool config_ignore_pgn(const config_t *c, int pgn);
+
+/* Intervalle minimum (ms) entre deux phrases d'un type donné ([rate]).
+ * 0 si le type n'est pas limité. La casse du type est ignorée. */
+int config_rate_ms(const config_t *c, const char *type);
 
 #endif /* N2KMUX_CONFIG_H */

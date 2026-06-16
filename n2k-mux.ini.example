@@ -60,3 +60,15 @@ DH     = 000A520AF6A0        ; DataHub PredictWind    (résolu sur banc)
 [ignore]
 src = 0
 pgn = 262161, 262656                   ; Actisense Operating mode / CANboat Startup
+
+[rate]
+# Limite de débit de la sortie 0183, par type de phrase : intervalle MINIMUM
+# en millisecondes entre deux émissions (0 ou absent = pas de limite).
+# Utile pour des liaisons lentes (qtVlm/tablettes) ou des PGN très bavards.
+# Une rafale multi-phrases (ex. pages GSV) passe en entier d'un coup.
+GLL = 1000                             ; position : 1/s max
+VTG = 1000
+HDG = 500                              ; cap : 2/s max
+GSV = 5000                             ; satellites : toutes les 5 s
+XDR = 1000                             ; attitude
+#MWV = 500                             ; vent (décommenter au besoin)

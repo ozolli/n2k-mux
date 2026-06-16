@@ -63,6 +63,43 @@ static void emit_iso_requests(int txfd)
     }
 }
 
+/* --- Throttle de la sortie 0183 (limite de débit par type de phrase) --- */
+#define THR_MAX 32
+typedef struct {
+    char     type[4];   /* type de phrase, ex. "GSV" */
+    uint64_t last;      /* dernière émission (ms) */
+} thr_entry_t;
+typedef struct { thr_entry_t e[THR_MAX]; int n; } throttle_t;
+
+/* Type d'une phrase "$ttTTT,..." → les 3 caractères suivant le talker (2). */
+static void sentence_type(const char *s, char out[4])
+{
+    out[0] = '\0';
+    if (s[0] != '$' && s[0] != '!')
+        return;
+    /* champ d'adresse = jusqu'à la virgule ; type = 3 derniers caractères. */
+    const char *comma = strchr(s, ',');
+    size_t addr = comma ? (size_t)(comma - (s + 1)) : strlen(s + 1);
+    if (addr < 3)
+        return;
+    const char *t = s + 1 + addr - 3;
+    out[0] = t[0]; out[1] = t[1]; out[2] = t[2]; out[3] = '\0';
+}
+
+/* Pointeur vers l'horodatage de dernière émission d'un type (créé au besoin). */
+static uint64_t *thr_last(throttle_t *t, const char *type)
+{
+    for (int i = 0; i < t->n; i++)
+        if (strcmp(t->e[i].type, type) == 0)
+            return &t->e[i].last;
+    if (t->n >= THR_MAX)
+        return NULL;
+    thr_entry_t *e = &t->e[t->n++];
+    snprintf(e->type, sizeof e->type, "%s", type);
+    e->last = 0;
+    return &e->last;
+}
+
 static void usage(const char *prog)
 {
     fprintf(stderr,
@@ -192,6 +229,7 @@ int main(int argc, char **argv)
     arbiter_init(&arb, &cfg, &reg);
     mapper_t mp;
     mapper_init(&mp, cfg.talker);
+    throttle_t thr = {0};   /* limite de débit 0183 par type ([rate]) */
 
     /* kplex peut fermer le tube : on gère l'erreur d'écriture nous-mêmes. */
     signal(SIGPIPE, SIG_IGN);
@@ -233,10 +271,36 @@ int main(int argc, char **argv)
 
             map_out_t out;
             if (mapper_map(&mp, &m, &d, now, &out) > 0) {
-                for (int i = 0; i < out.n; i++)
-                    fputs(out.s[i], stdout);
-                n_sent += out.n;
-                if (fflush(stdout) != 0) {
+                /* Throttle par type. Une rafale d'un même type produite dans le
+                 * même mapper_map (ex. les pages GSV) passe en entier dès que le
+                 * gate s'ouvre — sinon la pagination serait cassée. */
+                char opened[MAP_MAX_SENT][4];
+                int  n_opened = 0;
+                int  wrote = 0;
+                for (int i = 0; i < out.n; i++) {
+                    char ty[4];
+                    sentence_type(out.s[i], ty);
+                    int iv = ty[0] ? config_rate_ms(&cfg, ty) : 0;
+                    bool pass = true;
+                    if (iv > 0) {
+                        bool already = false;
+                        for (int j = 0; j < n_opened; j++)
+                            if (strcmp(opened[j], ty) == 0) { already = true; break; }
+                        if (!already) {
+                            uint64_t *last = thr_last(&thr, ty);
+                            if (last && now - *last < (uint64_t)iv) {
+                                pass = false;          /* gate fermé : on jette */
+                            } else {
+                                if (last) *last = now;
+                                if (n_opened < MAP_MAX_SENT)
+                                    snprintf(opened[n_opened++], 4, "%s", ty);
+                            }
+                        }
+                    }
+                    if (pass) { fputs(out.s[i], stdout); wrote++; }
+                }
+                n_sent += wrote;
+                if (wrote && fflush(stdout) != 0) {
                     fprintf(stderr, "n2k-mux : sortie fermée (%s)\n", strerror(errno));
                     break;
                 }

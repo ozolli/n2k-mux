@@ -104,10 +104,12 @@ Modules prévus (ordre d'implémentation) :
 (d) config    — parser INI (sources nommées, priorités, cas spéciaux)
                 [FAIT, testeur ./test_config : 0 échec]
                 sections [output] talker, [sources] nom→identité,
-                [priority] "pgn[/discriminant] = [mode:] liste", [ignore] src/pgn.
+                [priority] "pgn[/discriminant] = [mode:] liste", [ignore] src/pgn,
+                [rate] "type_phrase = intervalle_min_ms" (throttle sortie 0183).
                 modes : priority (défaut) | min (profondeur) | fusion (AIS).
                 config_rule(pgn,disc) préfère la règle au discriminant le plus
-                spécifique (préfixe) puis la générique. zéro alloc, tolérant.
+                spécifique (préfixe) puis la générique. config_rate_ms(type) → ms.
+                zéro alloc, tolérant.
 (e) arbiter   — cœur : clé (pgn, src, discriminant) → source retenue
                 [SÉLECTION FAITE, testeur ./test_arbiter : 0 échec]
                 arbiter_decide(msg, now_ms) → ARB_ACCEPT / REJECT_* / IGNORED.
@@ -133,7 +135,10 @@ Modules prévus (ordre d'implémentation) :
                  banc : ISO Request émises → Veratron résolu → GLL/VTG/ZDA/GGA
                  produits en temps réel, checksums OK]
                 pipeline : jsonl_parse → registry_observe → arbiter_decide →
-                mapper_map → stdout. horloge CLOCK_MONOTONIC (now_ms).
+                mapper_map → [throttle 0183] → stdout. horloge CLOCK_MONOTONIC
+                (now_ms). throttle : table type→dernière émission ; section [rate]
+                de l'INI ; une rafale multi-phrases (pages GSV) passe en entier
+                dès l'ouverture du gate (sinon pagination cassée).
                 usage : n2k-mux [config.ini] [--tx FIFO] [--tx-interval SEC] [-v]
                 --tx : émet les ISO Request (PGN 59904) sur un FIFO relié au
                 stdin d'un actisense-serial bidirectionnel (SANS -r). FIFO ouvert
