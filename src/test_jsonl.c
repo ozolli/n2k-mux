@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Copyright 2026 Olivier Zolli */
+
 /*
  * test_jsonl.c — Vérifie le parser jsonl sur un flux `analyzer -json`.
  *

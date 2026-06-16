@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Copyright 2026 Olivier Zolli */
+
 /*
  * registry.h — Table src → identité stable des équipements NMEA 2000.
  *

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Copyright 2026 Olivier Zolli */
+
 /*
  * test_sources.c — Vérifie l'aller-retour registre → JSON → vue (sans GTK).
  */

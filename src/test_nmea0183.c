@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Copyright 2026 Olivier Zolli */
+
 /*
  * test_nmea0183.c — Vérifie le générateur de phrases NMEA 0183.
  *

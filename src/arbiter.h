@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Copyright 2026 Olivier Zolli */
+
 /*
  * arbiter.h — Cœur d'arbitrage : choix de la source retenue.
  *

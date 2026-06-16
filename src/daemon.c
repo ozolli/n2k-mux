@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Copyright 2026 Olivier Zolli */
+
 /*
  * daemon.c — n2k-mux : multiplexeur NMEA 2000 → NMEA 0183.
  *

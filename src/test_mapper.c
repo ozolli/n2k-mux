@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Copyright 2026 Olivier Zolli */
+
 /*
  * test_mapper.c — Vérifie le mapping PGN → 0183 de bout en bout (config →
  * registry → arbiter → mapper), avec valeurs aux unités canboat réelles.

@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Copyright 2026 Olivier Zolli */
+
 /*
  * mapper.h — Mapping PGN NMEA 2000 → phrases NMEA 0183.
  *

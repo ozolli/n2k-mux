@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Copyright 2026 Olivier Zolli */
+
 /*
  * test_registry.c — Construit le registre à partir d'un flux `analyzer -json`
  * et affiche la table src → identité résolue.

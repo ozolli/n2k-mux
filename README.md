@@ -210,7 +210,7 @@ cat capture.raw | actisense-serial -r -s 230400 ... | analyzer -json | ./test_js
 ## Licence
 
 Distribué sous licence **Apache 2.0** — voir [`LICENSE`](LICENSE).
-© 2026 ozolli.
+© 2026 Olivier Zolli.
 
 n2k-mux **n'inclut pas de code de canboat** : il consomme la sortie de
 l'`analyzer` et délègue l'AIS à `n2kd` (lancé comme process séparé). canboat est
