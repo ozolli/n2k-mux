@@ -229,8 +229,10 @@ les instruments sur **stdin** (`[file] filename=-`) et l'AIS de `n2kd` en
 ```
 
 - **Sources vues** : équipements présents sur le bus (adresse, identité,
-  fabricant, modèle, n° série, nombre de messages). Auto-rafraîchi.
-  **Double-clic** sur une ligne = copie l'identité (à coller dans `[sources]`).
+  fabricant, modèle, n° série, nombre de messages, **PGNs publiés**).
+  Auto-rafraîchi. **Double-clic** sur une ligne = copie l'identité (à coller
+  dans `[sources]`). La colonne « PGNs publiés » liste les PGN émis par chaque
+  appareil — pratique pour savoir qui parle quoi et régler `[priority]`.
 - **Configuration** : éditeur du fichier INI. *Valider* vérifie la syntaxe,
   *Enregistrer* refuse une config invalide.
 

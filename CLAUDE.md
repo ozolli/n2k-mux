@@ -151,6 +151,8 @@ Modules prévus (ordre d'implémentation) :
                  rendu validé (Xvfb + capture) : 2 onglets corrects]
                 pont daemon→GUI : module sources (src/sources.{h,c}, testeur
                 ./test_sources) → fichier JSON (défaut /run/n2k-mux/sources.json).
+                Chaque source porte aussi sa liste de PGN publiés (registry suit
+                pgn→compteur par device) → colonne « PGNs publiés » de la GUI.
                 GUI : onglet « Sources vues » (TreeView auto-rafraîchi, double-clic
                 = copie l'identité) + onglet « Configuration » (éditeur INI texte
                 brut → commentaires préservés ; « Valider » réutilise config_parse_

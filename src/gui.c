@@ -31,7 +31,7 @@
 #include "config.h"
 #include "sources.h"
 
-enum { COL_SRC, COL_IDENT, COL_MFG, COL_MODEL, COL_SERIAL, COL_SEEN, N_COLS };
+enum { COL_SRC, COL_IDENT, COL_MFG, COL_MODEL, COL_SERIAL, COL_SEEN, COL_PGNS, N_COLS };
 
 typedef struct {
     char           cfg_path[512];
@@ -96,15 +96,22 @@ static void refresh_sources(app_t *a)
         return;
     }
     for (int i = 0; i < v.n; i++) {
-        char src[16], seen[24];
+        char src[16], seen[24], pgns[512];
         snprintf(src, sizeof src, "%d", v.e[i].src);
         snprintf(seen, sizeof seen, "%lu", v.e[i].seen);
+        /* liste des PGN publiés, séparés par des virgules */
+        size_t p = 0;
+        pgns[0] = '\0';
+        for (int j = 0; j < v.e[i].n_pgns && p + 12 < sizeof pgns; j++)
+            p += (size_t)snprintf(pgns + p, sizeof pgns - p,
+                                  "%s%d", j ? ", " : "", v.e[i].pgns[j]);
         GtkTreeIter it;
         gtk_list_store_append(a->store, &it);
         gtk_list_store_set(a->store, &it,
                            COL_SRC, src, COL_IDENT, v.e[i].ident,
                            COL_MFG, v.e[i].mfg, COL_MODEL, v.e[i].model,
-                           COL_SERIAL, v.e[i].serial, COL_SEEN, seen, -1);
+                           COL_SERIAL, v.e[i].serial, COL_SEEN, seen,
+                           COL_PGNS, pgns, -1);
     }
     set_status(a, "%d source(s) — %s", v.n, a->sources_path);
 }
@@ -205,7 +212,8 @@ static GtkWidget *build_sources_tab(app_t *a)
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
 
     a->store = gtk_list_store_new(N_COLS, G_TYPE_STRING, G_TYPE_STRING,
-                                  G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
+                                  G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING,
+                                  G_TYPE_STRING, G_TYPE_STRING);
     GtkWidget *tree = gtk_tree_view_new_with_model(GTK_TREE_MODEL(a->store));
     add_col(tree, "Adresse", COL_SRC);
     add_col(tree, "Identité", COL_IDENT);
@@ -213,6 +221,7 @@ static GtkWidget *build_sources_tab(app_t *a)
     add_col(tree, "Modèle", COL_MODEL);
     add_col(tree, "N° série", COL_SERIAL);
     add_col(tree, "Vues", COL_SEEN);
+    add_col(tree, "PGNs publiés", COL_PGNS);
     g_signal_connect(tree, "row-activated", G_CALLBACK(on_row_activated), a);
 
     GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);

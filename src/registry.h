@@ -37,6 +37,13 @@
 #define REG_MODEL_LEN     48
 #define REG_SERIAL_LEN    48
 #define REG_MFG_LEN       48
+#define REG_MAX_PGNS      40   /* PGN distincts suivis par device */
+
+/* Un PGN observé pour un device, avec son compteur de messages. */
+typedef struct {
+    int           pgn;
+    unsigned long count;
+} reg_pgn_t;
 
 /* Enregistrement détaché : connu par identité mais sans adresse courante
  * (device évincé d'une adresse reprise par un autre). */
@@ -63,6 +70,10 @@ typedef struct {
     char     ident[REG_IDENT_LEN];
 
     unsigned long seen;              /* nb de messages observés pour ce device */
+
+    /* PGN publiés par ce device (liste + compteur), pour la GUI / le diagnostic. */
+    reg_pgn_t     pgns[REG_MAX_PGNS];
+    int           n_pgns;
 } reg_device_t;
 
 typedef struct {

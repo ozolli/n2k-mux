@@ -80,6 +80,18 @@ static reg_device_t *touch_by_src(registry_t *r, int src)
     return d;
 }
 
+/* Incrémente le compteur du PGN pour ce device (ajoute l'entrée au besoin). */
+static void bump_pgn(reg_device_t *d, int pgn)
+{
+    for (int i = 0; i < d->n_pgns; i++)
+        if (d->pgns[i].pgn == pgn) { d->pgns[i].count++; return; }
+    if (d->n_pgns < REG_MAX_PGNS) {
+        d->pgns[d->n_pgns].pgn   = pgn;
+        d->pgns[d->n_pgns].count = 1;
+        d->n_pgns++;
+    }
+}
+
 /* Recalcule l'identité stable : serial, sinon unique en décimal, sinon "". */
 static void recompute_ident(reg_device_t *d)
 {
@@ -183,6 +195,7 @@ const reg_device_t *registry_observe(registry_t *r, const jsonl_msg_t *m)
         return NULL;
 
     d->seen++;
+    bump_pgn(d, m->pgn);
     recompute_ident(d);
     return d;
 }

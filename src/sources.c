@@ -53,8 +53,17 @@ int sources_to_json(const registry_t *r, char *buf, size_t sz)
         json_escape(emodel, sizeof emodel, d->model);
         json_escape(eserial, sizeof eserial, d->serial);
         w = snprintf(buf + n, sz - n,
-                     "%s{\"src\":%d,\"ident\":\"%s\",\"mfg\":\"%s\",\"model\":\"%s\",\"serial\":\"%s\",\"seen\":%lu}\n",
+                     "%s{\"src\":%d,\"ident\":\"%s\",\"mfg\":\"%s\",\"model\":\"%s\",\"serial\":\"%s\",\"seen\":%lu,\"pgns\":[",
                      first ? "" : ",", d->src, eident, emfg, emodel, eserial, d->seen);
+        if (w < 0 || (size_t)w >= sz - n) return -1;
+        n += w;
+        for (int j = 0; j < d->n_pgns; j++) {
+            w = snprintf(buf + n, sz - n, "%s{\"pgn\":%d,\"count\":%lu}",
+                         j ? "," : "", d->pgns[j].pgn, d->pgns[j].count);
+            if (w < 0 || (size_t)w >= sz - n) return -1;
+            n += w;
+        }
+        w = snprintf(buf + n, sz - n, "]}\n");
         if (w < 0 || (size_t)w >= sz - n) return -1;
         n += w;
         first = false;
@@ -67,7 +76,8 @@ int sources_to_json(const registry_t *r, char *buf, size_t sz)
 
 int sources_write(const registry_t *r, const char *path)
 {
-    char buf[SRC_VIEW_MAX * 256 + 16];
+    /* base ~150 o + jusqu'à REG_MAX_PGNS entrées (~24 o) par device. */
+    char buf[SRC_VIEW_MAX * 1280 + 16];
     int len = sources_to_json(r, buf, sizeof buf);
     if (len < 0)
         return -1;
@@ -134,7 +144,7 @@ int sources_load(const char *path, sources_view_t *v)
     FILE *f = fopen(path, "r");
     if (!f)
         return -1;
-    char line[1024];
+    char line[4096];
     while (fgets(line, sizeof line, f)) {
         long src;
         if (!jget_num(line, "src", &src))     /* ignore [ , ] et lignes vides */
@@ -151,6 +161,26 @@ int sources_load(const char *path, sources_view_t *v)
         long seen = 0;
         jget_num(line, "seen", &seen);
         e->seen = (unsigned long)seen;
+
+        /* Liste des PGN : "pgns":[{"pgn":N,"count":C},...] */
+        const char *p = strstr(line, "\"pgns\":[");
+        if (p) {
+            p += strlen("\"pgns\":[");
+            while (*p && *p != ']' && e->n_pgns < SRC_MAX_PGNS) {
+                const char *o = strchr(p, '{');
+                if (!o || (strchr(p, ']') && strchr(p, ']') < o))
+                    break;
+                long pg = 0, ct = 0;
+                jget_num(o, "pgn", &pg);
+                jget_num(o, "count", &ct);
+                e->pgns[e->n_pgns]      = (int)pg;
+                e->pgn_count[e->n_pgns] = (unsigned long)ct;
+                e->n_pgns++;
+                const char *close = strchr(o, '}');
+                if (!close) break;
+                p = close + 1;
+            }
+        }
         v->n++;
     }
     fclose(f);

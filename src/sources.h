@@ -20,6 +20,8 @@
 
 #define SRC_VIEW_MAX  REG_MAX_DEVICES
 
+#define SRC_MAX_PGNS  REG_MAX_PGNS
+
 /* Une source telle que relue depuis le JSON (pour la GUI). */
 typedef struct {
     int           src;
@@ -28,6 +30,9 @@ typedef struct {
     char          model[REG_MODEL_LEN];
     char          serial[REG_SERIAL_LEN];
     unsigned long seen;
+    int           pgns[SRC_MAX_PGNS];        /* PGN publiés par ce device */
+    unsigned long pgn_count[SRC_MAX_PGNS];
+    int           n_pgns;
 } src_entry_t;
 
 typedef struct {
