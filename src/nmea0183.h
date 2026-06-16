@@ -87,6 +87,19 @@ const char *nmea_gga(nmea_t *s, const char *talker, int hh, int mm, double ss,
                      double lat, double lon, int quality, int num_sats,
                      double hdop, double altitude, double geoidal_sep);
 
+/* DOP & satellites actifs : mode 'A'/'M', type de fix (1/2/3), puis PDOP/HDOP/
+ * VDOP. Les 12 champs de PRN sont laissés vides (non portés par le PGN 129539). */
+const char *nmea_gsa(nmea_t *s, const char *talker,
+                     char mode, int fix, double pdop, double hdop, double vdop);
+
+/* Satellites en vue (une phrase d'une page) : total de phrases, index (1-based),
+ * nb total de satellites en vue, puis `nsat` (1..4) quadruplets
+ * PRN / élévation (deg) / azimut (deg) / SNR (dB). Champs NaN → vides. */
+const char *nmea_gsv(nmea_t *s, const char *talker,
+                     int total, int index, int in_view,
+                     const int *prn, const double *elev,
+                     const double *azim, const double *snr, int nsat);
+
 /* Vent : angle (deg), reference 'R' (apparent) ou 'T' (vrai), vitesse,
  * unite 'N' (nœuds) / 'K' (km/h) / 'M' (m/s). */
 const char *nmea_mwv(nmea_t *s, const char *talker,

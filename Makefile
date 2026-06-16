@@ -40,7 +40,7 @@ $(BUILD):
 	mkdir -p $(BUILD)
 
 $(BUILD)/%.o: $(SRCDIR)/%.c | $(BUILD)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 # --- Module (a) : parser jsonl + son testeur ---
 test_jsonl: $(JSONL_OBJ) $(BUILD)/test_jsonl.o
@@ -80,7 +80,7 @@ n2k-mux: $(CORE_OBJ) $(DAEMON_OBJ)
 
 # --- Module (g) : GUI GTK3 (cible séparée, nécessite libgtk-3-dev) ---
 $(BUILD)/gui.o: $(SRCDIR)/gui.c | $(BUILD)
-	$(CC) $(CFLAGS) $(GTK_CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) $(GTK_CFLAGS) -MMD -MP -c $< -o $@
 
 n2k-mux-gui: $(CONFIG_OBJ) $(SOURCES_OBJ) $(BUILD)/gui.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) $(GTK_LIBS)
@@ -109,3 +109,6 @@ uninstall:
 
 clean:
 	rm -rf $(BUILD) n2k-mux n2k-mux-gui test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources
+
+# Dépendances d'en-têtes générées par -MMD (recompile si un .h change).
+-include $(wildcard $(BUILD)/*.d)

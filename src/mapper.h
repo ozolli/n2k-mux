@@ -32,7 +32,7 @@
 #include "nmea0183.h"
 #include <stdint.h>
 
-#define MAP_MAX_SENT  4   /* phrases max produites par un message */
+#define MAP_MAX_SENT  8   /* phrases max produites par un message (GSV paginé) */
 
 typedef struct {
     char s[MAP_MAX_SENT][NMEA_MAX_LEN];

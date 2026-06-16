@@ -149,6 +149,45 @@ int mapper_map(mapper_t *mp, const jsonl_msg_t *m, const arb_decision_t *d,
         break;
     }
 
+    case 129539: { /* GNSS DOPs → GSA */
+        char mode = has_word(gets(m, "Desired Mode"), "Auto") ? 'A' : 'M';
+        const char *am = gets(m, "Actual Mode");
+        int fix = 1;                               /* défaut : pas de fix */
+        if (has_word(am, "3D"))      fix = 3;
+        else if (has_word(am, "2D")) fix = 2;
+        double h = getf(m, "HDOP"), v = getf(m, "VDOP");
+        /* 129539 ne porte pas le PDOP : relation PDOP² = HDOP² + VDOP². */
+        double p = (isnan(h) || isnan(v)) ? NAN : sqrt(h * h + v * v);
+        emit(out, nmea_gsa(&s, tk, mode, fix, p, h, v));
+        break;
+    }
+
+    case 129540: { /* GNSS Sats in View → GSV (4 satellites par phrase) */
+        int n = jsonl_list_count(m);
+        if (n <= 0)
+            break;
+        int in_view = (int)getf(m, "Sats in View");
+        if (in_view <= 0)
+            in_view = n;
+        int total = (n + 3) / 4;          /* nb de phrases GSV (4 sats/phrase) */
+        int idx = 0;
+        for (int page = 0; page < total; page++) {
+            int    prn[4];
+            double el[4], az[4], sn[4];
+            int k = 0;
+            for (; k < 4 && idx < n; k++, idx++) {
+                double v;
+                prn[k] = jsonl_list_get_num(m, idx, "PRN", &v) ? (int)v : 0;
+                el[k]  = jsonl_list_get_num(m, idx, "Elevation", &v) ? v : NAN;
+                az[k]  = jsonl_list_get_num(m, idx, "Azimuth",   &v) ? v : NAN;
+                sn[k]  = jsonl_list_get_num(m, idx, "SNR",       &v) ? v : NAN;
+            }
+            nmea_t sg;
+            emit(out, nmea_gsv(&sg, tk, total, page + 1, in_view, prn, el, az, sn, k));
+        }
+        break;
+    }
+
     case 127250: { /* Vessel Heading → HDG+HDM (magnétique) ou HDT (vrai) */
         double head = getf(m, "Heading");
         const char *ref = gets(m, "Reference");

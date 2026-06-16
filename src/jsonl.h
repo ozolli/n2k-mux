@@ -29,6 +29,11 @@
 #define JSONL_DESC_LEN        96
 #define JSONL_TS_LEN          32
 
+/* Tableau répétitif "list" de canboat (ex. satellites du PGN 129540). Chaque
+ * élément est un petit objet clé:valeur. Bornes fixes (zéro allocation). */
+#define JSONL_MAX_LIST        18    /* éléments d'un tableau "list" */
+#define JSONL_LIST_FIELDS     8     /* champs par élément */
+
 /* Type de valeur d'un champ, tel que déduit du JSON. */
 typedef enum {
     JSONL_NULL = 0,   /* champ absent / vide */
@@ -45,6 +50,12 @@ typedef struct {
     char            str[JSONL_VAL_LEN];  /* texte (STR), nom (NV), ou nombre brut (NUM) */
 } jsonl_field_t;
 
+/* Un élément du tableau "list" (jeu de champs répétitif). */
+typedef struct {
+    jsonl_field_t f[JSONL_LIST_FIELDS];
+    int           n;
+} jsonl_listitem_t;
+
 /* Un message décodé (une ligne JSON). */
 typedef struct {
     bool     has_src, has_pgn, has_prio, has_dst;
@@ -57,6 +68,9 @@ typedef struct {
 
     jsonl_field_t fields[JSONL_MAX_FIELDS];
     int      n_fields;
+
+    jsonl_listitem_t list[JSONL_MAX_LIST];   /* tableau "list" éventuel */
+    int      n_list;
 
     bool     is_header;   /* true pour la ligne {"version":...} d'en-tête */
 } jsonl_msg_t;
@@ -78,5 +92,11 @@ const jsonl_field_t *jsonl_get(const jsonl_msg_t *m, const char *key);
  * ou d'un type incompatible. */
 bool jsonl_get_num(const jsonl_msg_t *m, const char *key, double *out);
 bool jsonl_get_str(const jsonl_msg_t *m, const char *key, const char **out);
+
+/* Accès au tableau "list" (ex. satellites). idx dans [0, jsonl_list_count). */
+int  jsonl_list_count(const jsonl_msg_t *m);
+const jsonl_field_t *jsonl_list_get(const jsonl_msg_t *m, int idx, const char *key);
+bool jsonl_list_get_num(const jsonl_msg_t *m, int idx, const char *key, double *out);
+bool jsonl_list_get_str(const jsonl_msg_t *m, int idx, const char *key, const char **out);
 
 #endif /* N2KMUX_JSONL_H */

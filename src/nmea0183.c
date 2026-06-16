@@ -245,6 +245,38 @@ const char *nmea_gga(nmea_t *s, const char *talker, int hh, int mm, double ss,
     return nmea_end(s);
 }
 
+const char *nmea_gsa(nmea_t *s, const char *talker,
+                     char mode, int fix, double pdop, double hdop, double vdop)
+{
+    nmea_begin(s, talker, "GSA");
+    nmea_field_char(s, mode);
+    nmea_field_int(s, fix);
+    for (int i = 0; i < 12; i++)
+        nmea_field_empty(s);          /* PRN des satellites (non portés par 129539) */
+    nmea_field_f(s, pdop, 1);
+    nmea_field_f(s, hdop, 1);
+    nmea_field_f(s, vdop, 1);
+    return nmea_end(s);
+}
+
+const char *nmea_gsv(nmea_t *s, const char *talker,
+                     int total, int index, int in_view,
+                     const int *prn, const double *elev,
+                     const double *azim, const double *snr, int nsat)
+{
+    nmea_begin(s, talker, "GSV");
+    nmea_field_int(s, total);
+    nmea_field_int(s, index);
+    nmea_field_intw(s, in_view, 2);
+    for (int i = 0; i < nsat; i++) {
+        nmea_field_intw(s, prn[i], 2);
+        if (isnan(elev[i])) nmea_field_empty(s); else nmea_field_intw(s, (int)lround(elev[i]), 2);
+        if (isnan(azim[i])) nmea_field_empty(s); else nmea_field_intw(s, (int)lround(azim[i]), 3);
+        if (isnan(snr[i]))  nmea_field_empty(s); else nmea_field_intw(s, (int)lround(snr[i]),  2);
+    }
+    return nmea_end(s);
+}
+
 const char *nmea_mwv(nmea_t *s, const char *talker,
                      double angle, char reference, double speed, char unit)
 {

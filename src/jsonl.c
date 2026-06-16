@@ -196,6 +196,57 @@ static const char *parse_field_value(const char *p, jsonl_field_t *f)
     }
 }
 
+/* Parse un objet {..} d'un élément de "list" en champs clé:valeur. p sur '{'. */
+static const char *parse_list_item(const char *p, jsonl_listitem_t *it)
+{
+    it->n = 0;
+    if (*p != '{')
+        return skip_value(p);
+    p++;
+    while (*p) {
+        p = skip_ws(p);
+        if (*p == '}') { p++; break; }
+        if (*p == ',') { p++; continue; }
+        if (*p != '"') { p = skip_value(p); if (!p) return NULL; continue; }
+
+        jsonl_field_t tmp;
+        memset(&tmp, 0, sizeof tmp);
+        p = parse_string(p, tmp.key, sizeof tmp.key);
+        if (!p) return NULL;
+        p = skip_ws(p);
+        if (*p != ':') return NULL;
+        p++;
+        p = parse_field_value(p, &tmp);
+        if (!p) return NULL;
+
+        if (it->n < JSONL_LIST_FIELDS)
+            it->f[it->n++] = tmp;
+    }
+    return p;
+}
+
+/* Parse un tableau "list":[{..},{..}]. p pointe sur le '[' ouvrant. */
+static const char *parse_list(const char *p, jsonl_msg_t *out)
+{
+    if (*p != '[')
+        return skip_value(p);
+    p++;
+    while (*p) {
+        p = skip_ws(p);
+        if (*p == ']') { p++; break; }
+        if (*p == ',') { p++; continue; }
+        if (*p == '{' && out->n_list < JSONL_MAX_LIST) {
+            p = parse_list_item(p, &out->list[out->n_list]);
+            if (!p) return NULL;
+            out->n_list++;
+        } else {
+            p = skip_value(p);   /* dépassement ou élément non-objet : ignoré */
+            if (!p) return NULL;
+        }
+    }
+    return p;
+}
+
 /* Parse le sous-objet "fields". p pointe sur le '{' ouvrant. */
 static const char *parse_fields(const char *p, jsonl_msg_t *out)
 {
@@ -215,6 +266,13 @@ static const char *parse_fields(const char *p, jsonl_msg_t *out)
         p = skip_ws(p);
         if (*p != ':') return NULL;
         p++;
+
+        /* Le tableau répétitif "list" (ex. satellites) est capté à part. */
+        if (strcmp(tmp.key, "list") == 0) {
+            const char *q = skip_ws(p);
+            if (*q == '[') { p = parse_list(q, out); if (!p) return NULL; continue; }
+        }
+
         p = parse_field_value(p, &tmp);
         if (!p) return NULL;
 
@@ -306,6 +364,44 @@ bool jsonl_get_num(const jsonl_msg_t *m, const char *key, double *out)
 bool jsonl_get_str(const jsonl_msg_t *m, const char *key, const char **out)
 {
     const jsonl_field_t *f = jsonl_get(m, key);
+    if (!f) return false;
+    if (f->type == JSONL_STR || f->type == JSONL_NV) {
+        if (out) *out = f->str;
+        return true;
+    }
+    return false;
+}
+
+int jsonl_list_count(const jsonl_msg_t *m)
+{
+    return m ? m->n_list : 0;
+}
+
+const jsonl_field_t *jsonl_list_get(const jsonl_msg_t *m, int idx, const char *key)
+{
+    if (!m || idx < 0 || idx >= m->n_list)
+        return NULL;
+    const jsonl_listitem_t *it = &m->list[idx];
+    for (int i = 0; i < it->n; i++)
+        if (strcmp(it->f[i].key, key) == 0)
+            return &it->f[i];
+    return NULL;
+}
+
+bool jsonl_list_get_num(const jsonl_msg_t *m, int idx, const char *key, double *out)
+{
+    const jsonl_field_t *f = jsonl_list_get(m, idx, key);
+    if (!f) return false;
+    if (f->type == JSONL_NUM || f->type == JSONL_NV) {
+        if (out) *out = f->num;
+        return true;
+    }
+    return false;
+}
+
+bool jsonl_list_get_str(const jsonl_msg_t *m, int idx, const char *key, const char **out)
+{
+    const jsonl_field_t *f = jsonl_list_get(m, idx, key);
     if (!f) return false;
     if (f->type == JSONL_STR || f->type == JSONL_NV) {
         if (out) *out = f->str;

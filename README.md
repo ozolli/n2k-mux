@@ -237,6 +237,8 @@ client est sous Wayland).
 | 129025 | Position | GLL |
 | 129026 | COG/SOG | VTG |
 | 129029 | Position GNSS | GGA |
+| 129539 | DOP / mode de fix | GSA |
+| 129540 | Satellites en vue | GSV (paginé) |
 | 126992 | Heure système | ZDA |
 | 127250 | Cap | HDG + HDM (mag) / HDT (vrai) |
 | 127251 | Taux de giration | ROT |

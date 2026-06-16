@@ -64,8 +64,12 @@ JSON parser. Key design constraints to preserve when modifying it:
   on absent or type-incompatible fields and leave the out-param untouched.
 
 Known limitations baked in intentionally: `\uXXXX` escapes are not decoded (the
-4 hex digits are skipped and a `?` inserted — relevant canboat fields are ASCII);
-arrays inside `fields` are skipped and marked `JSONL_NULL`.
+4 hex digits are skipped and a `?` inserted — relevant canboat fields are ASCII).
+Arbitrary arrays inside `fields` are still skipped (`JSONL_NULL`), **except** the
+canboat repeating set emitted under the key `"list"` (e.g. the satellite list of
+PGN 129540): it is captured into `jsonl_msg_t.list[]` (fixed cap `JSONL_MAX_LIST`
+× `JSONL_LIST_FIELDS`, zero-alloc) and read via `jsonl_list_count` /
+`jsonl_list_get_num` / `jsonl_list_get_str`.
 
 When adding a new module, follow the existing Makefile pattern: add a
 `$(BUILD)/<mod>.o` to the relevant target's prerequisites and, if it ships a test
@@ -116,8 +120,10 @@ Modules prévus (ordre d'implémentation) :
                 [FAIT, testeur ./test_mapper : 0 échec, + validé bout-en-bout
                  sur capture Veratron réelle : GLL/VTG/ZDA/GGA corrects]
                 mapper_map(msg, decision, now) → 0..N phrases 0183. Couvre :
-                129025→GLL, 129026→VTG, 126992→ZDA, 129029→GGA, 127250→HDG+HDM
-                /HDT, 127251→ROT, 127257→XDR, 130306→MWV(R)|MWV(T)+MWD,
+                129025→GLL, 129026→VTG, 126992→ZDA, 129029→GGA, 129539→GSA,
+                129540→GSV (paginé 4 sats/phrase, via jsonl_msg_t.list[]),
+                127250→HDG+HDM/HDT, 127251→ROT, 127257→XDR,
+                130306→MWV(R)|MWV(T)+MWD,
                 127245→RSA, 128259→VHW, 130312→MTW|MDA(air), 130314→MDA(press),
                 128267→DPT (minimum des DST, état interne par source).
                 AIS/VDM délégué à n2kd ; fusion/dédup MMSI = module aisdedup
@@ -202,6 +208,8 @@ AIS = em-trak B953 · VER = Veratron GO · DH = DataHub PredictWind · M510 = IC
 | 129025 | — | SCX > VER > MAD | GLL |
 | 129026 | — | SCX > VER > MAD | VTG |
 | 129029 | — | SCX > VER | GGA, GNS, RMC, ZDA |
+| 129539 | — | SCX > VER | GSA (mode fix + PDOP/HDOP/VDOP) |
+| 129540 | — | SCX > VER | GSV (satellites en vue, paginé 4/phrase) |
 | 126992 | — | SCX > VER > MAD | ZDA |
 | 127250 | Reference (Magnetic/True) | SCX > MAD | HDG, HDT, HDM |
 | 127251 | — | SCX > MAD | ROT |

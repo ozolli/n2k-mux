@@ -25,6 +25,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <stdbool.h>
+#include <unistd.h>
 
 #include "config.h"
 #include "sources.h"
@@ -271,15 +273,24 @@ int main(int argc, char **argv)
     snprintf(a.cfg_path, sizeof a.cfg_path, "%s", "n2k-mux.ini");
     snprintf(a.sources_path, sizeof a.sources_path, "%s", "/run/n2k-mux/sources.json");
     int start_tab = 0;
+    bool cfg_given = false;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--sources") == 0 && i + 1 < argc)
             snprintf(a.sources_path, sizeof a.sources_path, "%s", argv[++i]);
         else if (strcmp(argv[i], "--tab") == 0 && i + 1 < argc)
             start_tab = (strcmp(argv[++i], "config") == 0) ? 1 : 0;
-        else if (argv[i][0] != '-')
+        else if (argv[i][0] != '-') {
             snprintf(a.cfg_path, sizeof a.cfg_path, "%s", argv[i]);
+            cfg_given = true;
+        }
     }
+
+    /* Aucun chemin donné et pas de n2k-mux.ini dans le répertoire courant :
+     * se rabattre sur l'emplacement installé par le service. */
+    if (!cfg_given && access(a.cfg_path, R_OK) != 0 &&
+        access("/etc/n2k-mux/n2k-mux.ini", R_OK) == 0)
+        snprintf(a.cfg_path, sizeof a.cfg_path, "%s", "/etc/n2k-mux/n2k-mux.ini");
 
     GtkWidget *win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(win), "n2k-mux — configuration");
