@@ -267,10 +267,13 @@ int main(int argc, char **argv)
     memset(&a, 0, sizeof a);
     snprintf(a.cfg_path, sizeof a.cfg_path, "%s", "n2k-mux.ini");
     snprintf(a.sources_path, sizeof a.sources_path, "%s", "/run/n2k-mux/sources.json");
+    int start_tab = 0;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--sources") == 0 && i + 1 < argc)
             snprintf(a.sources_path, sizeof a.sources_path, "%s", argv[++i]);
+        else if (strcmp(argv[i], "--tab") == 0 && i + 1 < argc)
+            start_tab = (strcmp(argv[++i], "config") == 0) ? 1 : 0;
         else if (argv[i][0] != '-')
             snprintf(a.cfg_path, sizeof a.cfg_path, "%s", argv[i]);
     }
@@ -301,6 +304,7 @@ int main(int argc, char **argv)
     g_timeout_add_seconds(3, on_timer, &a);   /* auto-rafraîchit les sources */
 
     gtk_widget_show_all(win);
+    gtk_notebook_set_current_page(GTK_NOTEBOOK(nb), start_tab);  /* après show_all */
     gtk_main();
     return 0;
 }

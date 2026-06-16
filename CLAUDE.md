@@ -136,15 +136,15 @@ Modules prévus (ordre d'implémentation) :
                 --sources CHEMIN : publie périodiquement les sources vues en JSON
                 (module sources, défaut interval 5 s) pour la GUI.
 (g) gui       — GTK3, édition de la config INI + liste des sources vues
-                [FAIT, binaire ./n2k-mux-gui (make n2k-mux-gui) ; compile 0 warning,
-                 démarrage OK ; rendu à valider visuellement par l'utilisateur]
+                [FAIT, binaire ./n2k-mux-gui (make n2k-mux-gui) ; 0 warning ;
+                 rendu validé (Xvfb + capture) : 2 onglets corrects]
                 pont daemon→GUI : module sources (src/sources.{h,c}, testeur
                 ./test_sources) → fichier JSON (défaut /run/n2k-mux/sources.json).
                 GUI : onglet « Sources vues » (TreeView auto-rafraîchi, double-clic
                 = copie l'identité) + onglet « Configuration » (éditeur INI texte
                 brut → commentaires préservés ; « Valider » réutilise config_parse_
                 string ; « Enregistrer » refuse si la config est invalide).
-                usage : n2k-mux-gui [config.ini] [--sources CHEMIN].
+                usage : n2k-mux-gui [config.ini] [--sources CHEMIN] [--tab sources|config].
                 make all NE construit PAS la GUI (garde le build OK sans GTK) ;
                 make n2k-mux-gui la construit (nécessite libgtk-3-dev).
 
