@@ -166,6 +166,12 @@ Modules prévus (ordre d'implémentation) :
                 (J1939/N2K). qtVlm ≥ 5.12.27 lit le N2K réseau en YDRAW (auto-détecté
                 sur source NMEA TCP/UDP). Futur flux : trames arbitrées → YDRAW →
                 netout (TCP) → qtVlm local/distant. Testé, PAS encore lié au daemon.
+                Outil ./ydraw-bridge (src/ydraw_bridge.c) : pont de TEST qui lit le
+                format actisense sur stdin et sert en YDRAW/TCP les PGN single-frame
+                (fast-packet ignoré, faute des trames brutes). Permet de valider la
+                réception N2K de qtVlm AVANT socketcan/PEAK :
+                  actisense-serial ... | tee >(ydraw-bridge --port 2600) | analyzer -json | n2k-mux ...
+                puis dans qtVlm : source NMEA TCP → <o3nav>:2600.
 (g) gui       — GTK3, édition de la config INI + liste des sources vues
                 [FAIT, binaire ./n2k-mux-gui (make n2k-mux-gui) ; 0 warning ;
                  rendu validé (Xvfb + capture) : 2 onglets corrects]
