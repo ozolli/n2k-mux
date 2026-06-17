@@ -15,6 +15,7 @@ build/
 /test_aisdedup
 /test_stats
 /test_netout
+/test_ydraw
 
 # Réglages locaux Claude Code (spécifiques à la machine)
 .claude/

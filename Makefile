@@ -27,6 +27,9 @@ STATS_OBJ    := $(BUILD)/stats.o
 # netout : plomberie TCP fan-out, testée et prête pour le futur flux N2K arbité ;
 # pas encore liée au daemon (cf. test_netout).
 NETOUT_OBJ   := $(BUILD)/netout.o
+# ydraw : formateur YDRAW (Yacht Devices RAW text) pour le N2K réseau vers qtVlm ;
+# testé, pas encore lié au daemon (cf. test_ydraw).
+YDRAW_OBJ    := $(BUILD)/ydraw.o
 
 DAEMON_OBJ   := $(BUILD)/daemon.o
 
@@ -38,7 +41,7 @@ GTK_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 2>/dev/null)
 GTK_LIBS   := $(shell pkg-config --libs gtk+-3.0 2>/dev/null)
 
 .PHONY: all clean install uninstall
-all: n2k-mux test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout
+all: n2k-mux test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout test_ydraw
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -86,6 +89,10 @@ test_stats: $(STATS_OBJ) $(BUILD)/test_stats.o
 test_netout: $(NETOUT_OBJ) $(BUILD)/test_netout.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
+# --- Module ydraw (formateur YDRAW pour le N2K réseau) + son testeur ---
+test_ydraw: $(YDRAW_OBJ) $(BUILD)/test_ydraw.o
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
 # --- Module (f) : daemon (binaire final) ---
 n2k-mux: $(CORE_OBJ) $(DAEMON_OBJ)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lm
@@ -120,7 +127,7 @@ uninstall:
 	rm -f $(DESTDIR)/etc/n2k-mux/n2k-mux.ini.example
 
 clean:
-	rm -rf $(BUILD) n2k-mux n2k-mux-gui test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout
+	rm -rf $(BUILD) n2k-mux n2k-mux-gui test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout test_ydraw
 
 # Dépendances d'en-têtes générées par -MMD (recompile si un .h change).
 -include $(wildcard $(BUILD)/*.d)

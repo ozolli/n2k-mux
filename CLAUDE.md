@@ -161,6 +161,11 @@ Modules prévus (ordre d'implémentation) :
                 bloquants. Testé et PRÊT mais PAS encore lié au daemon — réservé au
                 futur flux N2K arbité (kplex reste l'endpoint 0183 : il fusionne
                 instruments + AIS, fait UDP/multi-sorties, ce que netout ne fait pas).
+                Module ydraw (src/ydraw.{h,c}, testeur ./test_ydraw) : formateur
+                YDRAW (Yacht Devices RAW text) + (dé)codage de l'ID CAN 29 bits
+                (J1939/N2K). qtVlm ≥ 5.12.27 lit le N2K réseau en YDRAW (auto-détecté
+                sur source NMEA TCP/UDP). Futur flux : trames arbitrées → YDRAW →
+                netout (TCP) → qtVlm local/distant. Testé, PAS encore lié au daemon.
 (g) gui       — GTK3, édition de la config INI + liste des sources vues
                 [FAIT, binaire ./n2k-mux-gui (make n2k-mux-gui) ; 0 warning ;
                  rendu validé (Xvfb + capture) : 2 onglets corrects]
