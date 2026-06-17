@@ -38,6 +38,7 @@ DH     = 000A520AF6A0        ; DataHub PredictWind    (résolu sur banc)
 130306/Apparent = MAD                  ; MWV(R)
 130306/True     = MAD                  ; MWV(T) + MWD
 127245          = MAD                  ; RSA
+129291          = MAD                  ; VDR (courant set/drift)
 128259          = MAD                  ; VHW
 128267          = min: DST_BB, DST_TB  ; DPT (minimum = sécurité haut-fond)
 130312/Sea      = DST_BB, DST_TB       ; MTW (température eau)

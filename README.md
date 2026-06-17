@@ -283,6 +283,7 @@ client est sous Wayland).
 | 127257 | Attitude | XDR (pitch/roll) |
 | 130306 | Vent | MWV(R) / MWV(T) + MWD |
 | 127245 | Barre | RSA |
+| 129291 | Courant (set/drift) | VDR |
 | 128259 | Vitesse surface | VHW |
 | 128267 | Profondeur | DPT (min des sondeurs) |
 | 130312 | Température | MTW (eau) / MDA (air) |

@@ -77,7 +77,7 @@ static const char *INI =
     "129025=GPS\n129026=GPS\n126992=GPS\n129029=GPS\n"
     "127250=CMP\n127251=CMP\n127257=CMP\n"
     "130306/Apparent=WND\n130306/True=WND\n"
-    "127245=RUD\n128259=LOG\n"
+    "127245=RUD\n128259=LOG\n129291=WND\n"
     "130312/Sea=TMP\n130312/Outside=TMP\n130314=BAR\n"
     "128267=min: DST_BB, DST_TB\n";
 
@@ -131,6 +131,10 @@ int main(void)
     o = run("{\"src\":8,\"pgn\":130306,\"fields\":{\"Reference\":\"True (ground referenced to North)\",\"Wind Speed\":5.0,\"Wind Angle\":215.0}}", 1000);
     chk("MWV(T)", &o, 0, "$IIMWV,215.0,T,9.7,N,A*");
     chk("MWD",    &o, 1, "$IIMWD,215.0,T,,M,9.7,N,5.0,M*");
+
+    /* Courant (set & drift) → VDR. 0.72 m/s → 1.4 kn ; True → champ T rempli */
+    o = run("{\"src\":8,\"pgn\":129291,\"fields\":{\"Set Reference\":\"True\",\"Set\":95.0,\"Drift\":0.72}}", 1000);
+    chk("VDR", &o, 0, "$IIVDR,95.0,T,,M,1.4,N*");
 
     /* Barre, loch, températures, pression */
     o = run("{\"src\":9,\"pgn\":127245,\"fields\":{\"Position\":4.5}}", 1000);

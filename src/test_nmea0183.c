@@ -81,6 +81,7 @@ int main(void)
     check_frame("GGA", nmea_gga(&s, "II", 14, 30, 12.5, 47.5, -3.21, 1, 9, 0.8, 63.5, -47.9)); sample(s.buf);
     check_frame("MWV", nmea_mwv(&s, "II", 42.0, 'R', 12.3, 'N')); sample(s.buf);
     check_frame("MWD", nmea_mwd(&s, "II", 215.0, 12.3));          sample(s.buf);
+    check_frame("VDR", nmea_vdr(&s, "II", 95.0, NMEA_NA, 1.4));   sample(s.buf);
     check_frame("DPT", nmea_dpt(&s, "II", 18.7, 0.3));        sample(s.buf);
     check_frame("MTW", nmea_mtw(&s, "II", 21.5));             sample(s.buf);
     check_frame("ROT", nmea_rot(&s, "II", -4.2));             sample(s.buf);

@@ -227,6 +227,17 @@ int mapper_map(mapper_t *mp, const jsonl_msg_t *m, const arb_decision_t *d,
         break;
     }
 
+    case 129291: { /* Set & Drift → VDR (courant) */
+        double set   = getf(m, "Set");
+        double drift = getf(m, "Drift");
+        double kn    = isnan(drift) ? NAN : drift * MS_TO_KN;
+        const char *ref = gets(m, "Set Reference");
+        double dir_t = has_word(ref, "Magnetic") ? NAN : set;
+        double dir_m = has_word(ref, "Magnetic") ? set : NAN;
+        emit(out, nmea_vdr(&s, tk, dir_t, dir_m, kn));
+        break;
+    }
+
     case 127245:  /* Rudder → RSA */
         emit(out, nmea_rsa(&s, tk, getf(m, "Position"), NMEA_NA));
         break;

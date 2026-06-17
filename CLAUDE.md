@@ -126,7 +126,8 @@ Modules prévus (ordre d'implémentation) :
                 129540→GSV (paginé 4 sats/phrase, via jsonl_msg_t.list[]),
                 127250→HDG+HDM/HDT, 127251→ROT, 127257→XDR,
                 130306→MWV(R)|MWV(T)+MWD,
-                127245→RSA, 128259→VHW, 130312→MTW|MDA(air), 130314→MDA(press),
+                127245→RSA, 129291→VDR (courant), 128259→VHW,
+                130312→MTW|MDA(air), 130314→MDA(press),
                 128267→DPT (minimum des DST, état interne par source).
                 AIS/VDM délégué à n2kd ; fusion/dédup MMSI = module aisdedup
                 (mode n2k-mux --ais-json), testeur ./test_aisdedup : 0 échec.
@@ -237,6 +238,7 @@ AIS = em-trak B953 · VER = Veratron GO · DH = DataHub PredictWind · M510 = IC
 | 127257 | — | SCX > MAD | XDR (pitch/roll) |
 | 130306 | Reference (Apparent/True) | MAD | MWV(R) si Apparent ; MWV(T)+MWD si True |
 | 127245 | — | MAD | RSA |
+| 129291 | — | MAD | VDR (courant : set vrai/mag + drift) |
 | 128267 | — | min(DST_BB, DST_TB) | DPT |
 | 128259 | — | MAD | VHW |
 | 130312 | Temperature Source = Sea | DST_BB > DST_TB | MTW |
@@ -263,8 +265,13 @@ Le module mapper (e, 2e passe) concentre toutes ces conversions.
 
 ### Sentences explicitement NON générées
 GRS (inutile, non géré par qtVlm), DBT/DBK/DBS (DPT seul suffit), VBW (qtVlm calcule
-la dérive lui-même), 127252 Heave (pas d'usage), yaw du 127257, 129283/284 route
-(qtVlm gère ses propres routes).
+la dérive *surface* lui-même ; à ne pas confondre avec VDR, le courant set/drift du
+129291 que l'on émet bien), 127252 Heave (pas d'usage), yaw du 127257, 129283/284
+route (qtVlm gère ses propres routes).
+
+Note : VDR (courant, 129291) n'est PAS dans la liste qtVlm vérifiée ci-dessous —
+on l'émet quand même car d'autres logiciels du réseau (ou une version future de
+qtVlm) peuvent l'exploiter ; il est inoffensif pour les consommateurs qui l'ignorent.
 
 ### Cible : qtVlm
 qtVlm accepte (vérifié) : GGA GSA GSV RMC VTG GLL HDG HDT HDM RSA VHW VLW VWR VWT

@@ -110,6 +110,12 @@ const char *nmea_mwv(nmea_t *s, const char *talker,
 const char *nmea_mwd(nmea_t *s, const char *talker,
                      double dir_true, double speed_knots);
 
+/* Courant (set & drift) : direction du courant vraie + magnétique (deg) +
+ * vitesse (nœuds). Une seule des deux directions est en général connue ;
+ * l'autre, NMEA_NA, laisse son champ vide. */
+const char *nmea_vdr(nmea_t *s, const char *talker,
+                     double dir_true, double dir_mag, double drift_knots);
+
 /* Profondeur sous capteur (m) + offset capteur→surface/quille (m). */
 const char *nmea_dpt(nmea_t *s, const char *talker, double depth, double offset);
 

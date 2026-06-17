@@ -301,6 +301,16 @@ const char *nmea_mwd(nmea_t *s, const char *talker,
     return nmea_end(s);
 }
 
+const char *nmea_vdr(nmea_t *s, const char *talker,
+                     double dir_true, double dir_mag, double drift_knots)
+{
+    nmea_begin(s, talker, "VDR");
+    nmea_field_f(s, dir_true, 1); nmea_field_char(s, 'T');
+    nmea_field_f(s, dir_mag, 1);  nmea_field_char(s, 'M');
+    nmea_field_f(s, drift_knots, 1); nmea_field_char(s, 'N');
+    return nmea_end(s);
+}
+
 const char *nmea_dpt(nmea_t *s, const char *talker, double depth, double offset)
 {
     nmea_begin(s, talker, "DPT");
