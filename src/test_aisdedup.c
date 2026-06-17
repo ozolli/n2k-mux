@@ -58,6 +58,9 @@ int main(void)
 
     /* détection des PGN AIS */
     expect("129039 est AIS", aisdedup_is_ais(129039), true);
+    expect("129795 est AIS", aisdedup_is_ais(129795), true);
+    expect("129796 est AIS", aisdedup_is_ais(129796), true);
+    expect("129797 est AIS", aisdedup_is_ais(129797), true);
     expect("129025 n'est pas AIS", aisdedup_is_ais(129025), false);
 
     const int EMTRAK = 20, DH = 178;

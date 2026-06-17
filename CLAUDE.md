@@ -244,7 +244,7 @@ AIS = em-trak B953 · VER = Veratron GO · DH = DataHub PredictWind · M510 = IC
 | 130312 | Temperature Source = Sea | DST_BB > DST_TB | MTW |
 | 130312 | Temperature Source = Outside | SCX | MDA (temp air) |
 | 130314 | — | SCX | MDA (pression) |
-| 129038/39/40/41, 129793/94, 129809/810 | — | fusion AIS + DH (dédup MMSI) | VDM |
+| 129038/39/40/41, 129793/94/95/96/97/98, 129801/02, 129809/810 | — | fusion AIS + DH (dédup MMSI) | VDM |
 | 129808 | — | M510 | DSC, DSE |
 
 ### Règles de génération

@@ -288,7 +288,7 @@ client est sous Wayland).
 | 128267 | Profondeur | DPT (min des sondeurs) |
 | 130312 | Température | MTW (eau) / MDA (air) |
 | 130314 | Pression | MDA |
-| 129038/39/40/41, 129793/94, 129809/810 | AIS | !AIVDM (via n2kd) |
+| 129038/39/40/41, 129793/94/95/96/97/98, 129801/02, 129809/810 | AIS | !AIVDM (via n2kd) |
 
 ---
 

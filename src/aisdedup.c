@@ -32,7 +32,8 @@ bool aisdedup_is_ais(int pgn)
 {
     switch (pgn) {
         case 129038: case 129039: case 129040: case 129041:
-        case 129793: case 129794: case 129798:
+        case 129793: case 129794:
+        case 129795: case 129796: case 129797: case 129798:
         case 129801: case 129802: case 129809: case 129810:
             return true;
         default:
