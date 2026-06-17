@@ -24,6 +24,9 @@ MAPPER_OBJ   := $(BUILD)/mapper.o
 AISDEDUP_OBJ := $(BUILD)/aisdedup.o
 SOURCES_OBJ  := $(BUILD)/sources.o
 STATS_OBJ    := $(BUILD)/stats.o
+# netout : plomberie TCP fan-out, testée et prête pour le futur flux N2K arbité ;
+# pas encore liée au daemon (cf. test_netout).
+NETOUT_OBJ   := $(BUILD)/netout.o
 
 DAEMON_OBJ   := $(BUILD)/daemon.o
 
@@ -35,7 +38,7 @@ GTK_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 2>/dev/null)
 GTK_LIBS   := $(shell pkg-config --libs gtk+-3.0 2>/dev/null)
 
 .PHONY: all clean install uninstall
-all: n2k-mux test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats
+all: n2k-mux test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -79,6 +82,10 @@ test_sources: $(JSONL_OBJ) $(REGISTRY_OBJ) $(SOURCES_OBJ) $(BUILD)/test_sources.
 test_stats: $(STATS_OBJ) $(BUILD)/test_stats.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
+# --- Module netout (serveur TCP de diffusion) + son testeur ---
+test_netout: $(NETOUT_OBJ) $(BUILD)/test_netout.o
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
 # --- Module (f) : daemon (binaire final) ---
 n2k-mux: $(CORE_OBJ) $(DAEMON_OBJ)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lm
@@ -113,7 +120,7 @@ uninstall:
 	rm -f $(DESTDIR)/etc/n2k-mux/n2k-mux.ini.example
 
 clean:
-	rm -rf $(BUILD) n2k-mux n2k-mux-gui test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats
+	rm -rf $(BUILD) n2k-mux n2k-mux-gui test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout
 
 # Dépendances d'en-têtes générées par -MMD (recompile si un .h change).
 -include $(wildcard $(BUILD)/*.d)

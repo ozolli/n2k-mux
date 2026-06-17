@@ -140,7 +140,8 @@ Modules prévus (ordre d'implémentation) :
                 (now_ms). throttle : table type→dernière émission ; section [rate]
                 de l'INI ; une rafale multi-phrases (pages GSV) passe en entier
                 dès l'ouverture du gate (sinon pagination cassée).
-                usage : n2k-mux [config.ini] [--tx FIFO] [--tx-interval SEC] [-v]
+                usage : n2k-mux [config.ini] [--tx FIFO] [--tx-interval SEC]
+                        [--no-0183] [-v]
                 --tx : émet les ISO Request (PGN 59904) sur un FIFO relié au
                 stdin d'un actisense-serial bidirectionnel (SANS -r). FIFO ouvert
                 en O_RDWR|O_NONBLOCK (évite l'interblocage de rendez-vous).
@@ -152,6 +153,14 @@ Modules prévus (ordre d'implémentation) :
                 résumé sur stderr en -v. Charge estimée car on est en aval de
                 l'analyzer (messages, pas trames CAN) : trames/message via table
                 fast-packet, charge ≈ trames/s × 130 bits / 250 kbit/s (±15 %).
+                --no-0183 : désactive toute génération 0183 ; l'arbitrage continue
+                (registre/sources/stats). Prélude au futur flux N2K arbité (qtVlm
+                sait lire le N2K natif sur CAN ou réseau).
+                Module netout (src/netout.{h,c}, testeur ./test_netout) : serveur
+                TCP de diffusion (fan-out vers N clients), zéro alloc, sockets non
+                bloquants. Testé et PRÊT mais PAS encore lié au daemon — réservé au
+                futur flux N2K arbité (kplex reste l'endpoint 0183 : il fusionne
+                instruments + AIS, fait UDP/multi-sorties, ce que netout ne fait pas).
 (g) gui       — GTK3, édition de la config INI + liste des sources vues
                 [FAIT, binaire ./n2k-mux-gui (make n2k-mux-gui) ; 0 warning ;
                  rendu validé (Xvfb + capture) : 2 onglets corrects]

@@ -19,7 +19,11 @@
  * le daemon reste un simple filtre (le registre se peuple si les identités
  * arrivent par un autre moyen).
  *
- * Usage : n2k-mux [config.ini] [--tx CHEMIN] [--tx-interval SEC] [-v]
+ * Usage : n2k-mux [config.ini] [--tx CHEMIN] [--tx-interval SEC] [--no-0183] [-v]
+ *
+ * Le flux 0183 sort sur stdout (vers kplex). --no-0183 désactive toute génération
+ * 0183 : l'arbitrage tourne encore (registre, sources, stats), prélude au futur
+ * flux N2K arbité (qtVlm lit le N2K natif) qui réutilisera le module netout.
  */
 
 #include "jsonl.h"
@@ -114,6 +118,7 @@ static void usage(const char *prog)
         "  --sources-interval N  période de publication en secondes (défaut 5)\n"
         "  --stats CHEMIN   publie le débit/PGN et la charge de bus estimée en JSON\n"
         "  --stats-interval N    période de publication des stats (défaut 5)\n"
+        "  --no-0183        n'émet aucune phrase NMEA 0183 (arbitrage seul)\n"
         "  -v, --verbose    journalise les décisions + un résumé stats sur stderr\n",
         prog);
 }
@@ -186,6 +191,7 @@ int main(int argc, char **argv)
     unsigned    stats_interval = 5;
     int         verbose = 0;
     int         ais_json = 0;
+    int         gen_0183 = 1;    /* 0 avec --no-0183 : arbitrage sans sortie 0183 */
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--ais-json") == 0) {
@@ -205,6 +211,8 @@ int main(int argc, char **argv)
         } else if (strcmp(argv[i], "--tx-interval") == 0 && i + 1 < argc) {
             tx_interval = (unsigned)strtoul(argv[++i], NULL, 10);
             if (tx_interval == 0) tx_interval = 30;
+        } else if (strcmp(argv[i], "--no-0183") == 0) {
+            gen_0183 = 0;
         } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--verbose") == 0) {
             verbose = 1;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -285,7 +293,7 @@ int main(int argc, char **argv)
                         d.discriminant[0] ? d.discriminant : "");
 
             map_out_t out;
-            if (mapper_map(&mp, &m, &d, now, &out) > 0) {
+            if (gen_0183 && mapper_map(&mp, &m, &d, now, &out) > 0) {
                 /* Throttle par type. Une rafale d'un même type produite dans le
                  * même mapper_map (ex. les pages GSV) passe en entier dès que le
                  * gate s'ouvre — sinon la pagination serait cassée. */

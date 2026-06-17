@@ -150,7 +150,8 @@ de l'entrée recevant la sortie instruments de n2k-mux.
 ```
 n2k-mux [config.ini] [--tx CHEMIN] [--tx-interval SEC]
                      [--sources CHEMIN] [--sources-interval SEC]
-                     [--ais-json] [-v]
+                     [--stats CHEMIN] [--stats-interval SEC]
+                     [--no-0183] [--ais-json] [-v]
 ```
 
 | Option | Rôle |
@@ -162,8 +163,20 @@ n2k-mux [config.ini] [--tx CHEMIN] [--tx-interval SEC]
 | `--sources-interval` | période de publication (s, défaut 5) |
 | `--stats CHEMIN` | publie le débit/PGN + la charge de bus estimée en JSON |
 | `--stats-interval` | période de publication des stats (s, défaut 5) |
+| `--no-0183` | désactive la génération 0183 (arbitrage seul) |
 | `--ais-json` | mode filtre AIS (JSON→JSON dédupliqué) devant `n2kd` |
 | `-v` | journalise les décisions + un résumé stats sur stderr |
+
+`--no-0183` coupe toute sortie 0183 tout en gardant l'arbitrage
+(registre/sources/stats) : c'est le prélude au futur flux **NMEA 2000 arbitré**
+(qtVlm sait désormais lire le N2K nativement, sur le bus CAN ou sur le réseau).
+
+Le module `netout` (serveur TCP de diffusion, `src/netout.{h,c}`, testeur
+`test_netout`) est la plomberie réseau de ce futur flux N2K : un fan-out générique
+vers plusieurs clients, zéro allocation, sockets non bloquants. Il est **testé et
+prêt mais pas encore relié** au daemon — `kplex` reste l'endpoint NMEA 0183 (il
+fusionne instruments + AIS et gère l'UDP / plusieurs sorties, ce que `netout` ne
+fait pas).
 
 ### Charge du bus NMEA 2000
 
