@@ -114,6 +114,7 @@ n2k-mux-gui: $(CONFIG_OBJ) $(SOURCES_OBJ) $(BUILD)/gui.o
 install: n2k-mux
 	install -d $(DESTDIR)$(PREFIX)/bin
 	install -m755 n2k-mux $(DESTDIR)$(PREFIX)/bin/n2k-mux
+	install -m755 n2k-mux-run $(DESTDIR)$(PREFIX)/bin/n2k-mux-run
 	install -Dm644 n2k-mux.service $(DESTDIR)/etc/systemd/system/n2k-mux.service
 	install -Dm644 n2k-mux.ini.example $(DESTDIR)/etc/n2k-mux/n2k-mux.ini.example
 	install -Dm644 kplex.conf.example $(DESTDIR)/etc/n2k-mux/kplex.conf.example
@@ -125,7 +126,7 @@ endif
 	@echo "puis : systemctl daemon-reload && systemctl enable --now n2k-mux"
 
 uninstall:
-	rm -f $(DESTDIR)$(PREFIX)/bin/n2k-mux $(DESTDIR)$(PREFIX)/bin/n2k-mux-gui
+	rm -f $(DESTDIR)$(PREFIX)/bin/n2k-mux $(DESTDIR)$(PREFIX)/bin/n2k-mux-run $(DESTDIR)$(PREFIX)/bin/n2k-mux-gui
 	rm -f $(DESTDIR)/etc/systemd/system/n2k-mux.service
 	rm -f $(DESTDIR)/etc/default/n2k-mux.example
 	rm -f $(DESTDIR)/etc/n2k-mux/n2k-mux.ini.example

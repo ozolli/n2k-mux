@@ -210,6 +210,16 @@ Tout est lancé par n2k-mux.service ; kplex est le DERNIER maillon du pipeline
 (plus de service kplex autonome → Conflicts=kplex.service). Voir n2k-mux.service,
 kplex.conf.example, n2k-mux.env.example. La GUI lit sources.json et édite conf.
 
+Le service ne lance PAS un `bash -c` inline : il appelle le script **n2k-mux-run**
+(installé dans $PREFIX/bin). Robustesse : la branche AIS passe par un FIFO nommé
+($RUNTIME_DIRECTORY/ais.fifo) au lieu de `tee >(... | n2kd)` — l'ancienne
+substitution de process laissait survivre n2kd → collision « Address already in
+use » sur ses ports 2597-2602 au redémarrage. Le script suit tous les composants
+(`wait -n`) : si UN meurt (n2kd, kplex, analyzer, un n2k-mux), il sort → systemd
+relance TOUTE la chaîne (fini la dégradation silencieuse où n2kd mort = plus d'AIS
+sans alerte). KillMode=control-group tue le cgroup entier (0 zombie), et
+`ExecStartPre` fait un `pkill -f "[n]2kd"` de garde avant chaque démarrage.
+
 CONTEXTE (cf. /home/ozolli/CR-NMEA-O3.pdf) : l'archi d'origine était NGX-1 en
 mode Convert (N2K→0183 dans la passerelle) → kplex lisant /dev/ttyNGX1 en direct
 (115200), priorité position SCX>Veratron gérée par l'ADRESSE N2K, sans arbitrage

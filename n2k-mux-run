@@ -1,0 +1,41 @@
+#!/bin/bash
+# n2k-mux-run — lance la chaîne de production NMEA 2000 → 0183 de façon ROBUSTE.
+#
+# Remplace l'ancien « bash -c '... | tee >(... | n2kd) | ...' » qui :
+#   - laissait survivre n2kd (substitution de process) → collision de ports au start ;
+#   - continuait en mode dégradé silencieux si un étage mourait (ex. n2kd).
+#
+# Ici : la branche AIS passe par un FIFO nommé (pas de >(...)) et TOUS les
+# composants sont des jobs suivis. `wait -n` rend la main dès qu'UN composant
+# meurt → le script sort en erreur → systemd (Restart) relance TOUT proprement,
+# et KillMode=control-group tue le cgroup entier (aucun zombie).
+#
+# Variables fournies par le service (Environment / EnvironmentFile) :
+#   DEVICE BAUD CONF KPLEX_CONF ACTISENSE ANALYZER N2KD N2KMUX KPLEX
+
+set -uo pipefail
+
+: "${DEVICE:?}" "${BAUD:?}" "${CONF:?}" "${KPLEX_CONF:?}"
+: "${ACTISENSE:?}" "${ANALYZER:?}" "${N2KD:?}" "${N2KMUX:?}" "${KPLEX:?}"
+
+RUN="${RUNTIME_DIRECTORY:-/run/n2k-mux}"   # fourni par systemd (RuntimeDirectory=)
+TXFIFO="$RUN/tx.fifo"     # ISO Request → actisense bidirectionnel
+AISFIFO="$RUN/ais.fifo"   # copie du flux analyzer → branche AIS
+mkfifo -m 0600 "$TXFIFO"  2>/dev/null || true
+mkfifo -m 0600 "$AISFIFO" 2>/dev/null || true
+
+# Branche AIS : flux dupliqué (ais.fifo) → dédup MMSI → n2kd (encode le VDM, TCP 2599).
+"$N2KMUX" --ais-json "$CONF" < "$AISFIFO" | "$N2KD" &
+
+# Branche principale : acquisition → analyzer → tee(→ais.fifo) → arbitrage → kplex.
+"$ACTISENSE" -s "$BAUD" "$DEVICE" < "$TXFIFO" \
+  | "$ANALYZER" -json -nv \
+  | tee "$AISFIFO" \
+  | "$N2KMUX" "$CONF" --tx "$TXFIFO" \
+        --sources "$RUN/sources.json" --stats "$RUN/stats.json" \
+  | "$KPLEX" -f "$KPLEX_CONF" &
+
+# Dès qu'un composant (n2kd, kplex, analyzer, un n2k-mux…) s'arrête, on sort :
+# systemd relance l'unité entière, KillMode=control-group nettoie le reste.
+wait -n
+exit 1

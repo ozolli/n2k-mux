@@ -36,22 +36,22 @@ EnvironmentFile=-/etc/default/n2k-mux
 RuntimeDirectory=n2k-mux
 RuntimeDirectoryMode=0755
 
-# FIFO relié au stdin de l'actisense bidirectionnel (émission des ISO Request).
-ExecStartPre=/bin/sh -c 'mkfifo -m 0600 /run/n2k-mux/tx.fifo 2>/dev/null || true'
+# Garde-fou : tue tout n2kd résiduel d'un démarrage précédent (sinon le nouveau
+# n2kd ne peut pas se lier à ses ports 2597-2602 → « Address already in use »).
+# Le motif [n]2kd évite que pkill ne se matche lui-même. '-' = échec ignoré.
+ExecStartPre=-/bin/sh -c 'pkill -f "[n]2kd" 2>/dev/null || true'
 
-# Chaîne complète : acquisition → arbitrage → AIS (n2kd) → kplex.
-#   - analyzer en -json -nv (requis par n2kd ; n2k-mux le gère aussi)
-#   - branche AIS : n2k-mux --ais-json (dédup MMSI) → n2kd (encode le VDM, TCP 2599)
-#   - branche instruments : n2k-mux (arbitrage) → kplex
+# Lancement ROBUSTE via le script n2k-mux-run :
+#   - branche AIS via FIFO nommé (plus de substitution de process >(...) qui
+#     laissait survivre n2kd) ;
+#   - tous les composants sont suivis : si UN meurt (n2kd, kplex, analyzer…), le
+#     script sort → systemd relance TOUTE la chaîne (plus de dégradation
+#     silencieuse) ; KillMode par défaut (control-group) tue le cgroup → 0 zombie.
+# Le script crée les FIFO dans $RUNTIME_DIRECTORY (=/run/n2k-mux) et lit les
+# chemins/réglages depuis l'environnement ci-dessus.
 # kplex.conf doit lire stdin (entrée file filename=-) ET se connecter en client
 # tcp à 127.0.0.1:2599 pour récupérer l'AIS (!AIVDM), puis distribuer.
-ExecStart=/bin/bash -c '\
-    $ACTISENSE -s $BAUD $DEVICE < /run/n2k-mux/tx.fifo | \
-    $ANALYZER -json -nv | \
-    tee >($N2KMUX --ais-json $CONF | $N2KD) | \
-    $N2KMUX $CONF --tx /run/n2k-mux/tx.fifo --sources /run/n2k-mux/sources.json \
-            --stats /run/n2k-mux/stats.json | \
-    $KPLEX -f $KPLEX_CONF'
+ExecStart=/usr/local/bin/n2k-mux-run
 
 Restart=always
 RestartSec=3
