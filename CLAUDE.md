@@ -40,6 +40,51 @@ cat samples/xxx.raw | .../analyzer -json | ./test_jsonl --fields  # also dump ev
 It prints a recap to stderr (lines seen / parsed / failed) and **exits non-zero
 if any line failed to parse** — usable as a regression check against real captures.
 
+### Simulateur `n2k-sim` (banc sans matériel)
+
+`make n2k-sim` construit `./n2k-sim`, un générateur de flux NMEA 2000 simulé :
+il émet sur stdout du JSON façon `analyzer -json -nv` (un objet par ligne) pour
+**tous les PGN que n2k-mux comprend** + les PGN d'identité (60928 + 126996, sans
+lesquels l'arbitrage ne résout pas src→identité→nom). Valeurs sinusoïdales dans
+le temps (flux « vivant »). Source unique `src/simulator.c`, zéro dépendance.
+
+```sh
+./n2k-sim | ./n2k-mux n2k-sim.ini -v           # instruments → phrases 0183
+./n2k-sim | ./n2k-mux --ais-json n2k-sim.ini   # AIS → dédup par MMSI
+./n2k-sim --once | ./n2k-mux n2k-sim.ini       # un exemplaire de chaque PGN, puis fin
+```
+
+Options : `--once` (couverture : un de chaque PGN puis sort), `--duration SEC`,
+`--no-ais`, `--tick MS`. La config compagnon **`n2k-sim.ini`** porte les Model
+Serial Code émis par le simulateur (SCX/VER/MAD/DST_BB/DST_TB/AIS/DH) → arbitrage
+résolu d'emblée, toute la table de conversion sort. Sert de test bout-en-bout
+(daemon, --ais-json, GUI) sans bus ni passerelle réels.
+
+L'**état bateau** est cohérent (position intégrée VERS L'AVANT le long du COG, cap
+≈ COG, ROT = dérivée du COG) : qtVlm affiche le bateau cap en avant qui infléchit
+sa route, pas une cible figée ou « à reculons ». L'AIS est émis en forme canboat
+`-nv` COMPLÈTE (tous les champs) pour que n2kd l'encode réellement en VDM.
+
+**Chaîne 0183 complète sans matériel — `./n2k-sim-run`** (calqué sur `n2k-mux-run`,
+branche AIS via FIFO) : `n2k-sim` → tee → n2k-mux (instruments) + n2k-mux --ais-json
+→ n2kd → kplex (`kplex-sim.conf`) → serveur TCP 10110. Pointer qtVlm sur
+`<hôte>:10110` → instruments + AIS fusionnés.
+
+**Mode N2K (YDRAW) — `--actisense`** : `n2k-sim --actisense` encode les PGN
+**single-frame** en trames N2K binaires (format texte actisense, unités SI :
+radians/m·s⁻¹/kelvin/pascals), à piper dans `./ydraw-bridge` → YDRAW/TCP → qtVlm
+en N2K (source NMEA **TCP client**, PAS la section socketcan ; auto-détection YDRAW) :
+
+```sh
+./n2k-sim --actisense | ./ydraw-bridge --port 2600    # → qtVlm sur <hôte>:2600
+```
+
+Couvre : 129025/129026/127250/127251/127257/130306/128259/128267/127245/130312/
+130314/**130311** (baromètre)/126992. Le fast-packet (GNSS 129029, GSV, AIS) n'est
+PAS encore encodé (le `ydraw-bridge` sait re-fragmenter, donc faisable ensuite ; et
+qtVlm ne lit pas l'AIS en N2K). Les facteurs d'échelle binaires sont validés par
+aller-retour dans `analyzer -format YDWG02 -json`.
+
 ## Architecture
 
 The parser (`src/jsonl.h`, `src/jsonl.c`) is deliberately **not** a general-purpose

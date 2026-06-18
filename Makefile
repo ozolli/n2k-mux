@@ -41,7 +41,7 @@ GTK_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 2>/dev/null)
 GTK_LIBS   := $(shell pkg-config --libs gtk+-3.0 2>/dev/null)
 
 .PHONY: all clean install uninstall
-all: n2k-mux ydraw-bridge test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout test_ydraw
+all: n2k-mux n2k-sim ydraw-bridge test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout test_ydraw
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -101,6 +101,10 @@ n2k-mux: $(CORE_OBJ) $(DAEMON_OBJ)
 ydraw-bridge: $(YDRAW_OBJ) $(NETOUT_OBJ) $(BUILD)/ydraw_bridge.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
+# --- Outil de test : simulateur de flux N2K (JSON-lines) pour tous les PGN ---
+n2k-sim: $(BUILD)/simulator.o
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lm
+
 # --- Module (g) : GUI GTK3 (cible séparée, nécessite libgtk-3-dev) ---
 $(BUILD)/gui.o: $(SRCDIR)/gui.c | $(BUILD)
 	$(CC) $(CFLAGS) $(GTK_CFLAGS) -MMD -MP -c $< -o $@
@@ -132,7 +136,7 @@ uninstall:
 	rm -f $(DESTDIR)/etc/n2k-mux/n2k-mux.ini.example
 
 clean:
-	rm -rf $(BUILD) n2k-mux n2k-mux-gui ydraw-bridge test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout test_ydraw
+	rm -rf $(BUILD) n2k-mux n2k-mux-gui n2k-sim ydraw-bridge test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout test_ydraw
 
 # Dépendances d'en-têtes générées par -MMD (recompile si un .h change).
 -include $(wildcard $(BUILD)/*.d)

@@ -1,0 +1,47 @@
+#!/bin/bash
+# n2k-sim-run — banc de test SANS matériel : le simulateur n2k-sim remplace
+# « actisense-serial | analyzer », tout le reste est la chaîne de prod.
+#
+#   n2k-sim → tee ─┬→ n2k-mux conf ───────────────┐ (instruments → stdin kplex)
+#                  └→ n2k-mux --ais-json → n2kd ───┘ (AIS → TCP 2599)
+#   kplex (stdin + client 2599) → serveur TCP 10110 → qtVlm
+#
+# Pointer qtVlm sur <hôte>:10110 → instruments + AIS fusionnés.
+# Surcharge possible par l'environnement : CONF, KPLEX_CONF, CB, KPLEX…
+
+set -uo pipefail
+
+HERE=$(dirname "$(readlink -f "$0")")
+CB=${CB:-/home/ozolli/canboat/rel/linux-x86_64}
+CONF=${CONF:-$HERE/n2k-sim.ini}
+KPLEX_CONF=${KPLEX_CONF:-$HERE/kplex-sim.conf}
+SIM=${SIM:-$HERE/n2k-sim}
+N2KMUX=${N2KMUX:-$HERE/n2k-mux}
+N2KD=${N2KD:-$CB/n2kd}
+KPLEX=${KPLEX:-/usr/bin/kplex}
+
+for bin in "$SIM" "$N2KMUX" "$N2KD" "$KPLEX"; do
+    [ -x "$bin" ] || { echo "n2k-sim-run : binaire manquant : $bin" >&2; exit 1; }
+done
+
+RUN=$(mktemp -d /tmp/n2k-sim.XXXXXX)
+AISFIFO="$RUN/ais.fifo"
+mkfifo "$AISFIFO"
+cleanup() { rm -rf "$RUN"; }
+trap cleanup EXIT
+
+# Garde-fou : un n2kd résiduel tiendrait les ports 2597-2602. `pkill -x` cible le
+# process nommé exactement « n2kd » (pas `-f` qui matcherait toute ligne de
+# commande contenant « n2kd », y compris un shell appelant — banc seulement).
+pkill -x n2kd 2>/dev/null || true
+sleep 0.3
+
+# Branche AIS : flux dupliqué → dédup MMSI → n2kd (encode le VDM, TCP 2599).
+"$N2KMUX" --ais-json "$CONF" < "$AISFIFO" | "$N2KD" &
+
+# Branche principale : simulateur → tee(→ais.fifo) → arbitrage → kplex.
+"$SIM" | tee "$AISFIFO" | "$N2KMUX" "$CONF" | "$KPLEX" -f "$KPLEX_CONF" &
+
+echo "n2k-sim-run : banc lancé. qtVlm → <hôte>:10110 (instruments + AIS)." >&2
+wait -n
+exit 1
