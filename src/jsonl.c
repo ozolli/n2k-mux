@@ -142,9 +142,19 @@ static const char *parse_field_value(const char *p, jsonl_field_t *f)
             q++;
             q = skip_ws(q);
             if (strcmp(k, "value") == 0) {
-                f->num = strtod(q, NULL);
+                /* "value" peut être un nombre OU une chaîne (ex. canboat encode
+                 * les identifiants type MMSI en {"value":"227211160","key":true}).
+                 * Dans le cas chaîne : la stocker dans str ET en tirer le nombre,
+                 * sinon le champ resterait num=0 / str="" (dédup AIS cassée). */
+                if (*q == '"') {
+                    q = parse_string(q, f->str, sizeof f->str);
+                    if (!q) return NULL;
+                    f->num = strtod(f->str, NULL);
+                } else {
+                    f->num = strtod(q, NULL);
+                    q = skip_value(q);
+                }
                 got_value = true;
-                q = skip_value(q);
             } else if (strcmp(k, "name") == 0) {
                 q = parse_string(q, f->str, sizeof f->str);
                 got_name = true;
