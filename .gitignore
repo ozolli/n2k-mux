@@ -4,6 +4,7 @@ build/
 
 # Binaires produits par make
 /n2k-mux
+/n2k-mux-web
 /n2k-mux-gui
 /n2k-sim
 /ydraw-bridge

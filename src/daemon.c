@@ -58,6 +58,33 @@ static uint64_t now_ms(void)
     return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
 }
 
+/* Reload de la config sur SIGHUP : le handler ne fait que lever un drapeau, le
+ * rechargement réel se fait dans la boucle (entre deux lignes). Avec signal(),
+ * fgets n'est PAS interrompu (SA_RESTART) → la nouvelle config prend effet à la
+ * ligne suivante ; sans objet pour un flux N2K vivant (jamais inactif). */
+static volatile sig_atomic_t g_reload = 0;
+static void on_hup(int sig) { (void)sig; g_reload = 1; }
+
+/* Recharge `path` dans une config temporaire ; ne remplace `*cfg` QUE si le
+ * parsing réussit (sinon l'ancienne config reste active). Renvoie true si rechargé. */
+static bool config_reload(config_t *cfg, const char *path)
+{
+    if (!path) {
+        fprintf(stderr, "n2k-mux : SIGHUP ignoré (aucun fichier de config)\n");
+        return false;
+    }
+    config_t tmp;
+    config_init(&tmp);
+    if (!config_load(&tmp, path)) {
+        fprintf(stderr, "n2k-mux : reload échoué (%s : %s ligne %d) — "
+                "ancienne config conservée\n", path, tmp.err, tmp.err_line);
+        return false;
+    }
+    *cfg = tmp;
+    fprintf(stderr, "n2k-mux : config rechargée (%s)\n", path);
+    return true;
+}
+
 static void emit_iso_requests(int txfd)
 {
     if (txfd < 0)
@@ -128,19 +155,26 @@ static void usage(const char *prog)
  * et les messages AIS de la source RETENUE par MMSI (fusion em-trak > DataHub).
  * Le reste est filtré. Sortie destinée au stdin de n2kd (qui encode le VDM).
  */
-static int run_ais_json(const config_t *cfg, int verbose)
+static int run_ais_json(config_t *cfg, const char *cfg_path, int verbose)
 {
     registry_t reg;
     registry_init(&reg);
     aisdedup_t dd;
     aisdedup_init(&dd, cfg, &reg);
     signal(SIGPIPE, SIG_IGN);
+    signal(SIGHUP, on_hup);
 
     char line[8192];
     unsigned long n_ais = 0, n_fwd = 0;
 
     while (fgets(line, sizeof line, stdin)) {
         uint64_t now = now_ms();
+
+        if (g_reload) {
+            g_reload = 0;
+            if (config_reload(cfg, cfg_path))
+                aisdedup_init(&dd, cfg, &reg);   /* repart sur les nouvelles règles */
+        }
         jsonl_msg_t m;
         if (!jsonl_parse(line, &m))
             continue;
@@ -239,7 +273,7 @@ int main(int argc, char **argv)
     }
 
     if (ais_json)
-        return run_ais_json(&cfg, verbose);
+        return run_ais_json(&cfg, cfg_path, verbose);
 
     registry_t reg;
     registry_init(&reg);
@@ -253,6 +287,7 @@ int main(int argc, char **argv)
 
     /* kplex peut fermer le tube : on gère l'erreur d'écriture nous-mêmes. */
     signal(SIGPIPE, SIG_IGN);
+    signal(SIGHUP, on_hup);   /* reload config à chaud */
 
     /* Canal d'émission optionnel. O_RDWR sur un FIFO : pas d'interblocage de
      * rendez-vous, pas de blocage si aucun lecteur, écriture bufferisée. */
@@ -275,6 +310,15 @@ int main(int argc, char **argv)
 
     while (fgets(line, sizeof line, stdin)) {
         uint64_t now = now_ms();
+
+        if (g_reload) {
+            g_reload = 0;
+            if (config_reload(&cfg, cfg_path)) {
+                /* ré-init des modules dépendants ; reg/thr/st = état runtime conservé */
+                arbiter_init(&arb, &cfg, &reg);
+                mapper_init(&mp, cfg.talker);
+            }
+        }
 
         jsonl_msg_t m;
         if (jsonl_parse(line, &m)) {

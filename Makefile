@@ -41,7 +41,7 @@ GTK_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 2>/dev/null)
 GTK_LIBS   := $(shell pkg-config --libs gtk+-3.0 2>/dev/null)
 
 .PHONY: all clean install uninstall
-all: n2k-mux n2k-sim ydraw-bridge test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout test_ydraw
+all: n2k-mux n2k-mux-web n2k-sim ydraw-bridge test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout test_ydraw
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -97,6 +97,10 @@ test_ydraw: $(YDRAW_OBJ) $(BUILD)/test_ydraw.o
 n2k-mux: $(CORE_OBJ) $(DAEMON_OBJ)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lm
 
+# --- Interface web de gestion (remplace à terme la GUI GTK ; zéro dépendance) ---
+n2k-mux-web: $(CONFIG_OBJ) $(BUILD)/web.o
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
 # --- Outil de test : pont canboat/actisense → YDRAW → TCP (pour qtVlm N2K) ---
 ydraw-bridge: $(YDRAW_OBJ) $(NETOUT_OBJ) $(BUILD)/ydraw_bridge.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
@@ -136,7 +140,7 @@ uninstall:
 	rm -f $(DESTDIR)/etc/n2k-mux/n2k-mux.ini.example
 
 clean:
-	rm -rf $(BUILD) n2k-mux n2k-mux-gui n2k-sim ydraw-bridge test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout test_ydraw
+	rm -rf $(BUILD) n2k-mux n2k-mux-web n2k-mux-gui n2k-sim ydraw-bridge test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout test_ydraw
 
 # Dépendances d'en-têtes générées par -MMD (recompile si un .h change).
 -include $(wildcard $(BUILD)/*.d)

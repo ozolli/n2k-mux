@@ -198,6 +198,12 @@ Modules prévus (ordre d'implémentation) :
                 stdin d'un actisense-serial bidirectionnel (SANS -r). FIFO ouvert
                 en O_RDWR|O_NONBLOCK (évite l'interblocage de rendez-vous).
                 config de référence : n2k-mux.ini.example.
+                SIGHUP : relit le fichier de config À CHAUD (sans redémarrage) —
+                ne remplace l'active QUE si le parsing réussit, sinon garde
+                l'ancienne et logue l'erreur. Vaut pour le mode principal ET
+                --ais-json. Avec signal() (SA_RESTART), fgets n'est pas interrompu
+                → effet à la ligne suivante (sans objet pour un flux vivant).
+                C'est ce que l'UI web utilise pour « Enregistrer » sans root.
                 --sources CHEMIN : publie périodiquement les sources vues en JSON
                 (module sources, défaut interval 5 s) pour la GUI.
                 --stats CHEMIN : publie le débit par PGN (hz + total) et la charge
@@ -224,7 +230,30 @@ Modules prévus (ordre d'implémentation) :
                 réception N2K de qtVlm AVANT socketcan/PEAK :
                   actisense-serial ... | tee >(ydraw-bridge --port 2600) | analyzer -json | n2k-mux ...
                 puis dans qtVlm : source NMEA TCP → <o3nav>:2600.
-(g) gui       — GTK3, édition de la config INI + liste des sources vues
+(g) web       — interface de gestion WEB (src/web.c, binaire ./n2k-mux-web,
+                make n2k-mux-web ; 0 warning ; **remplace à terme la GUI GTK**).
+                [FAIT, validé bout-en-bout : endpoints + reload web→SIGHUP live]
+                Mini serveur HTTP zéro-dépendance (C11, réutilise le module
+                config) servant une SPA embarquée (HTML/CSS/JS, single quotes JS).
+                Mono-client séquentiel (outil d'admin) ; tampons fixes, zéro alloc.
+                Endpoints : GET / (page), GET /api/sources|stats (relaie les JSON
+                du daemon), GET /api/config (INI brut), POST /api/validate
+                (config_parse_string → {ok,line,err}), POST /api/config (valide
+                PUIS écrit l'INI PUIS lance --reload-cmd). 3 onglets comme la GUI
+                GTK : Sources, Charge, Configuration (éditeur + Valider/Enregistrer).
+                Sauvegarde SANS root : « Enregistrer » écrit le fichier (user) et
+                exécute --reload-cmd (ex. "pkill -HUP -x n2k-mux") → le daemon
+                relit à chaud (cf. SIGHUP plus haut). Plus de pkexec/systemctl.
+                usage : n2k-mux-web [config.ini] [--sources P] [--stats P]
+                  [--port N (défaut 8080)] [--bind ADDR (défaut 127.0.0.1 ;
+                  0.0.0.0 = LAN)] [--reload-cmd CMD].
+                Pourquoi web > GTK ici : consultable depuis tablettes/téléphone
+                sans X-forwarding (la douleur ssh -Y/GDK_BACKEND documentée plus
+                bas), cohérent avec la direction « tout réseau ». La GUI GTK reste
+                construite (make n2k-mux-gui) tant que le web n'est pas éprouvé en
+                prod, puis sera dépréciée.
+(g-bis) gui   — GTK3, édition de la config INI + liste des sources vues [LEGACY,
+                à déprécier au profit de l'UI web ci-dessus]
                 [FAIT, binaire ./n2k-mux-gui (make n2k-mux-gui) ; 0 warning ;
                  rendu validé (Xvfb + capture) : 2 onglets corrects]
                 pont daemon→GUI : module sources (src/sources.{h,c}, testeur
