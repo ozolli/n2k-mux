@@ -664,14 +664,145 @@ static void a_gsv(double t)        /* 129540 GNSS Sats in View (fast-packet) */
     emit_frame(6, SCX_SRC, 129540, b, off);
 }
 
-static int run_actisense(double duration, long tick, int once)
+/* --- AIS binaire (bit-packé, ordre N2K : LSB d'abord) ---
+ * Les PGN AIS ne sont PAS alignés octet → packer au bit près. Le buffer doit
+ * être pré-mis à 0. Tous fast-packet : emit_frame émet le message complet, le
+ * ydraw-bridge re-fragmente. Layouts/échelles validés par aller-retour analyzer.
+ * Les deux sources (em-trak + DataHub) émettent la même cible 227000002 : en N2K
+ * direct, c'est qtVlm qui dédoublonne par MMSI (pas d'arbitrage n2k-mux ici). */
+static void putbits(uint8_t *b, int *pos, uint64_t val, int bits)
+{
+    for (int i = 0; i < bits; i++)
+        if ((val >> i) & 1ULL) {
+            int p = *pos + i;
+            b[p >> 3] |= (uint8_t)(1u << (p & 7));
+        }
+    *pos += bits;
+}
+
+/* STRING_FIX (champ byte-aligné) : ASCII puis bourrage 0xff (terminateur canboat). */
+static void putstr_fix(uint8_t *b, int *pos, const char *s, int nbytes)
+{
+    int byte = *pos >> 3, i = 0;
+    for (; s && s[i] && i < nbytes; i++) b[byte + i] = (uint8_t)s[i];
+    for (; i < nbytes; i++) b[byte + i] = 0xff;
+    *pos += nbytes * 8;
+}
+
+static uint64_t b32(double deg) { return (uint64_t)(int64_t)lround(deg / 1e-7); }
+
+static void a_ais_class_b(int src, unsigned mmsi, double lat, double lon,
+                          double cog, double sog, double hdg)
+{
+    uint8_t b[27]; memset(b, 0, sizeof b); int p = 0;
+    putbits(b,&p, 18, 6);                                   /* Message ID */
+    putbits(b,&p, 0, 2);                                    /* Repeat Indicator */
+    putbits(b,&p, mmsi, 32);                                /* User ID (MMSI) */
+    putbits(b,&p, b32(lon), 32);                            /* Longitude */
+    putbits(b,&p, b32(lat), 32);                            /* Latitude */
+    putbits(b,&p, 0, 1);                                    /* Position Accuracy */
+    putbits(b,&p, 0, 1);                                    /* RAIM */
+    putbits(b,&p, 30, 6);                                   /* Time Stamp */
+    putbits(b,&p, (uint64_t)lround(DEG2RAD(cog)/1e-4), 16); /* COG */
+    putbits(b,&p, (uint64_t)lround(sog/0.01), 16);          /* SOG */
+    putbits(b,&p, 0x7ffff, 19);                             /* Communication State */
+    putbits(b,&p, 1, 5);                                    /* Transceiver (Channel B) */
+    putbits(b,&p, (uint64_t)lround(DEG2RAD(hdg)/1e-4), 16); /* Heading */
+    putbits(b,&p, 0xff, 8);                                 /* Regional Application */
+    putbits(b,&p, 0x3, 2);                                  /* Regional Application B */
+    putbits(b,&p, 0, 1);                                    /* Unit type */
+    putbits(b,&p, 0, 1);                                    /* Integrated Display */
+    putbits(b,&p, 0, 1);                                    /* DSC */
+    putbits(b,&p, 0, 1);                                    /* Band */
+    putbits(b,&p, 0, 1);                                    /* Can handle Msg 22 */
+    putbits(b,&p, 0, 1);                                    /* AIS mode */
+    putbits(b,&p, 0, 1);                                    /* AIS communication state */
+    putbits(b,&p, 0x7fff, 15);                              /* Reserved */
+    emit_frame(4, src, 129039, b, 27);
+}
+
+static void a_ais_class_a(int src, unsigned mmsi, double lat, double lon,
+                          double cog, double sog, double hdg)
+{
+    uint8_t b[28]; memset(b, 0, sizeof b); int p = 0;
+    putbits(b,&p, 1, 6);                                    /* Message ID (sched A) */
+    putbits(b,&p, 0, 2);
+    putbits(b,&p, mmsi, 32);
+    putbits(b,&p, b32(lon), 32);
+    putbits(b,&p, b32(lat), 32);
+    putbits(b,&p, 0, 1);                                    /* Position Accuracy */
+    putbits(b,&p, 0, 1);                                    /* RAIM */
+    putbits(b,&p, 5, 6);                                    /* Time Stamp */
+    putbits(b,&p, (uint64_t)lround(DEG2RAD(cog)/1e-4), 16); /* COG */
+    putbits(b,&p, (uint64_t)lround(sog/0.01), 16);          /* SOG */
+    putbits(b,&p, 0x7ffff, 19);                             /* Communication State */
+    putbits(b,&p, 0, 5);                                    /* Transceiver (Channel A) */
+    putbits(b,&p, (uint64_t)lround(DEG2RAD(hdg)/1e-4), 16); /* Heading */
+    putbits(b,&p, 0, 16);                                   /* Rate of Turn = 0 */
+    putbits(b,&p, 0, 4);                                    /* Nav Status (under way) */
+    putbits(b,&p, 0, 2);                                    /* Special Maneuver */
+    putbits(b,&p, 0x3, 2);                                  /* Reserved */
+    putbits(b,&p, 0x7, 3);                                  /* Spare */
+    putbits(b,&p, 0x1f, 5);                                 /* Reserved */
+    putbits(b,&p, 0xff, 8);                                 /* Sequence ID */
+    emit_frame(4, src, 129038, b, 28);
+}
+
+static void a_ais_static_a(int src, unsigned mmsi, const char *name)
+{
+    uint8_t b[27]; memset(b, 0, sizeof b); int p = 0;
+    putbits(b,&p, 24, 6);                                   /* Message ID (static) */
+    putbits(b,&p, 0, 2);
+    putbits(b,&p, mmsi, 32);
+    putstr_fix(b,&p, name, 20);                             /* Name (160 bits) */
+    putbits(b,&p, 1, 5);                                    /* Transceiver (Channel B) */
+    putbits(b,&p, 0x7, 3);                                  /* Reserved */
+    putbits(b,&p, 0xff, 8);                                 /* Sequence ID */
+    emit_frame(6, src, 129809, b, 27);
+}
+
+static void a_ais_static_b(int src, unsigned mmsi)
+{
+    uint8_t b[35]; memset(b, 0, sizeof b); int p = 0;
+    putbits(b,&p, 24, 6);
+    putbits(b,&p, 0, 2);
+    putbits(b,&p, mmsi, 32);
+    putbits(b,&p, 36, 8);                                   /* Type of ship = Sailing */
+    putstr_fix(b,&p, "SIM", 7);                             /* Vendor ID (56 bits) */
+    putstr_fix(b,&p, "SIM1", 7);                            /* Callsign (56 bits) */
+    putbits(b,&p, (uint64_t)lround(12.0/0.1), 16);          /* Length */
+    putbits(b,&p, (uint64_t)lround(4.0/0.1), 16);           /* Beam */
+    putbits(b,&p, 0, 16);                                   /* Pos ref Starboard */
+    putbits(b,&p, 0, 16);                                   /* Pos ref Bow */
+    putbits(b,&p, 0, 32);                                   /* Mothership User ID */
+    putbits(b,&p, 0x3, 2);                                  /* Reserved */
+    putbits(b,&p, 0x3, 2);                                  /* Spare */
+    putbits(b,&p, 0, 4);                                    /* GNSS type */
+    putbits(b,&p, 1, 5);                                    /* Transceiver (Channel B) */
+    putbits(b,&p, 0x7, 3);                                  /* Reserved */
+    putbits(b,&p, 0xff, 8);                                 /* Sequence ID */
+    emit_frame(6, src, 129810, b, 35);
+}
+
+static void a_ais(double t)
+{
+    double dl = 0.0010 * sin(t / 30.0);
+    a_ais_class_b(AIS_SRC, 227000002, 47.512 + dl, -3.020, 120.0, 3.0, 120.0);
+    a_ais_class_b(DH_SRC,  227000002, 47.512 + dl, -3.020, 120.0, 3.0, 120.0);
+    a_ais_class_b(AIS_SRC, 227000001, 47.505 + dl, -3.010,  90.0, 4.0,  90.0);
+    a_ais_class_a(DH_SRC,  227000003, 47.490 + dl, -2.995, 200.0, 6.0, 200.0);
+    a_ais_static_a(AIS_SRC, 227000002, "SIM CLASSB");
+    a_ais_static_b(AIS_SRC, 227000002);
+}
+
+static int run_actisense(double duration, long tick, int once, int no_ais)
 {
     /* (fn0 sans arg) et (fn1 avec t) regroupées via un switch indexé. */
     struct { int id; double iv, next; } S[] = {
         {0,250,0},{1,1000,0},{2,200,0},{3,500,0},{4,200,0},
         {5,250,0},{6,500,0},{7,500,0},{8,2000,0},{9,2000,0},{10,1000,0},
         {11,2000,0},{12,200,0},{13,1000,0},{14,5000,0},{15,2000,0},
-        {16,2000,0},
+        {16,2000,0},{17,3000,0},
     };
     int n = (int)(sizeof S / sizeof *S);
     uint64_t start = now_ms();
@@ -701,6 +832,7 @@ static int run_actisense(double duration, long tick, int once)
                 case 14: a_gsv(t); break;
                 case 15: a_dops(); break;
                 case 16: a_log(t); break;
+                case 17: if (!no_ais) a_ais(t); break;
             }
             S[i].next = el + S[i].iv;
         }
@@ -745,8 +877,9 @@ static void usage(const char *p)
         "  --once          émet un exemplaire de chaque PGN puis s'arrête\n"
         "  --duration SEC  s'arrête après SEC secondes (0 = sans fin, défaut)\n"
         "  --no-ais        n'émet pas les PGN AIS\n"
-        "  --actisense     émet des TRAMES N2K binaires (format actisense, single-frame)\n"
-        "                  à piper dans ./ydraw-bridge → YDRAW/TCP → qtVlm en N2K\n"
+        "  --actisense     émet des TRAMES N2K binaires (format actisense, single-frame\n"
+        "                  + fast-packet GNSS/loch/AIS) à piper dans ./ydraw-bridge\n"
+        "                  → YDRAW/TCP → qtVlm en N2K\n"
         "  --tick MS       période de la boucle d'émission (défaut 100 ms)\n"
         "\nÉmet du JSON façon `analyzer -json` pour tous les PGN compris par\n"
         "n2k-mux + l'identité. Exemple : %s | ./n2k-mux n2k-sim.ini -v\n",
@@ -775,9 +908,9 @@ int main(int argc, char **argv)
     setvbuf(stdout, NULL, _IOLBF, 0);   /* sortie ligne par ligne (pipe) */
 
     /* Mode --actisense : trames N2K binaires (→ ydraw-bridge → qtVlm en N2K).
-     * Pas d'en-tête JSON ici (format texte actisense, single-frame). */
+     * Pas d'en-tête JSON ici (format texte actisense). AIS inclus (fast-packet). */
     if (actisense)
-        return run_actisense(duration, tick_ms, once);
+        return run_actisense(duration, tick_ms, once, no_ais);
 
     /* En-tête analyzer (exigé par n2kd ; le parser le marque is_header). */
     printf("{\"version\":\"n2k-sim 1.0\",\"showLookupValues\":true}\n");

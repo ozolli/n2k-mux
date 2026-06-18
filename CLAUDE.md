@@ -83,10 +83,14 @@ Couvre (single-frame) : 129025/129026/127250/127251/127257/130306/128259/128267/
 127245/130312/130314/**130311** (baromètre)/126992. Et en **fast-packet** (message
 complet émis par le simulateur, re-fragmenté en trames par `ydraw-bridge`) :
 **129029** (position GNSS complète), **129539** (DOP/mode de fix), **129540** (GSV
-satellites en vue), **128275** (Distance Log → VLW, 14 o.). Seul l'AIS reste hors
-N2K (fast-packet aussi, mais qtVlm ne lit
-pas l'AIS en N2K). Les facteurs d'échelle binaires sont validés par aller-retour
-dans `analyzer -format YDWG02 -json`.
+satellites en vue), **128275** (Distance Log, 14 o.) et l'**AIS** : **129039**
+(Class B position), **129038** (Class A position), **129809** (static msg 24A nom),
+**129810** (static msg 24B type/dimensions). Les champs AIS sont bit-packés (ordre
+N2K LSB d'abord) via un packer dédié (`putbits`/`putstr_fix`). Les deux sources AIS
+(em-trak + DataHub) émettent la même cible 227000002 (dédup par MMSI côté
+consommateur). `--no-ais` coupe aussi l'AIS en mode `--actisense`. Les facteurs
+d'échelle et offsets de bits sont validés par aller-retour dans `analyzer -format
+YDWG02 -json` (chaîne complète) et `-format FAST -json`.
 
 ## Architecture
 
