@@ -46,6 +46,11 @@ typedef struct {
     double   depth[CFG_MAX_PRIO];
     uint64_t depth_t[CFG_MAX_PRIO];
     bool     depth_seen[CFG_MAX_PRIO];
+    /* état du mode max (PGN 128275, loch), par slot de source de la règle */
+    double   log_total[CFG_MAX_PRIO];
+    double   log_trip[CFG_MAX_PRIO];
+    uint64_t log_t[CFG_MAX_PRIO];
+    bool     log_seen[CFG_MAX_PRIO];
 } mapper_t;
 
 /* Initialise (talker NULL → "II"). */

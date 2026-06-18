@@ -50,6 +50,7 @@ static const char *INI =
     "127250/True     = SCX, MAD\n"
     "130306/Apparent = MAD\n"
     "128267          = min: DST_BB, DST_TB\n"
+    "128275          = max: DST_BB, DST_TB\n"
     "130312/Sea      = DST_BB, DST_TB\n"
     "130312/Outside  = SCX\n"
     "129038          = fusion: AIS, DH\n"
@@ -100,6 +101,11 @@ int main(void)
     r = config_rule(&c, 128267, NULL);
     ok("128267 mode min", r && r->mode == CFG_PICK_MIN);
     ok("128267 2 DST", r && r->n_sources == 2);
+
+    /* mode max (loch) */
+    r = config_rule(&c, 128275, NULL);
+    ok("128275 mode max", r && r->mode == CFG_PICK_MAX);
+    ok("128275 2 DST", r && r->n_sources == 2);
 
     /* 130312 selon Temperature Source (préfixe) */
     r = config_rule(&c, 130312, "Sea Temperature");

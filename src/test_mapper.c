@@ -79,7 +79,8 @@ static const char *INI =
     "130306/Apparent=WND\n130306/True=WND\n"
     "127245=RUD\n128259=LOG\n129291=WND\n"
     "130312/Sea=TMP\n130312/Outside=TMP\n130314=BAR\n"
-    "128267=min: DST_BB, DST_TB\n";
+    "128267=min: DST_BB, DST_TB\n"
+    "128275=max: DST_BB, DST_TB\n";
 
 int main(void)
 {
@@ -153,6 +154,13 @@ int main(void)
     chk("DPT (BB seul)", &o, 0, "$IIDPT,3.2,0.5*");
     o = run("{\"src\":13,\"pgn\":128267,\"fields\":{\"Depth\":2.8,\"Offset\":0.5}}", 2000);
     chk("DPT (min BB/TB)", &o, 0, "$IIDPT,2.8,0.5*");
+
+    /* Loch max : TB en retard (9260 m = 5.0 NM) puis BB (18520 m = 10.0 NM,
+     * 1852 m trip = 1.0 NM) → VLW garde le MAX même si le petit est arrivé avant */
+    o = run("{\"src\":13,\"pgn\":128275,\"fields\":{\"Log\":9260,\"Trip Log\":926}}", 3000);
+    chk("VLW (TB seul)", &o, 0, "$IIVLW,5.0,N,0.5,N,");
+    o = run("{\"src\":12,\"pgn\":128275,\"fields\":{\"Log\":18520,\"Trip Log\":1852}}", 3000);
+    chk("VLW (max BB/TB)", &o, 0, "$IIVLW,10.0,N,1.0,N,");
 
     fprintf(stderr, "\n--- Récapitulatif ---\néchecs : %d\n", failures);
     return failures ? 1 : 0;

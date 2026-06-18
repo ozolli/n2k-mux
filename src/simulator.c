@@ -295,6 +295,19 @@ static void e_stw(double t)   /* 128259 → VHW (vitesse surface) */
     emit(2, MAD_SRC, 128259, "Speed", f);
 }
 
+static void e_log(double t)    /* 128275 → VLW (distance dans l'eau, DST810) */
+{
+    char f[96];
+    /* loch : cumul (odomètre) + trajet depuis reset, en mètres. Les deux DST810
+     * émettent ; l'arbitre garde le MAX (le capteur le plus avancé). Le tribord
+     * traîne ~2 NM (simule un capteur qui décroche/sort de l'eau et sous-compte). */
+    double trip  = 4.6 * t;                 /* ~9 nœuds moyens depuis le départ */
+    snprintf(f, sizeof f, "\"Log\":%.0f,\"Trip Log\":%.0f", 1234567.0 + trip, trip);
+    emit(3, DSTBB_SRC, 128275, "Distance Log", f);
+    snprintf(f, sizeof f, "\"Log\":%.0f,\"Trip Log\":%.0f", 1230860.0 + trip, trip - 3707.0);
+    emit(3, DSTTB_SRC, 128275, "Distance Log", f);
+}
+
 static void e_temp(double t)   /* 130312 → MTW (eau, DST) + MDA (air, SCX) */
 {
     char f[160];
@@ -524,6 +537,19 @@ static void a_stw(double t)        /* 128259 Speed (water referenced) */
     emit_frame(2, MAD_SRC, 128259, b, 8);
 }
 
+static void a_log(double t)        /* 128275 Distance Log (fast-packet, 14 o.) */
+{
+    uint8_t b[14];
+    memset(b, 0, sizeof b);
+    struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts);
+    p16(b, 0, (int)(ts.tv_sec / 86400));                 /* Date (jours) */
+    p32(b, 2, (ts.tv_sec % 86400) * 10000L);             /* Time (×0.0001 s) */
+    double trip  = 4.6 * t;
+    p32(b, 6,  lround(1234567.0 + trip));                /* Log (m) */
+    p32(b, 10, lround(trip));                            /* Trip Log (m) */
+    emit_frame(3, DSTBB_SRC, 128275, b, 14);
+}
+
 static void a_depth(double t)      /* 128267 Water Depth */
 {
     uint8_t b[8] = { 0xff, 0, 0, 0, 0, 0, 0, 0xff };
@@ -645,6 +671,7 @@ static int run_actisense(double duration, long tick, int once)
         {0,250,0},{1,1000,0},{2,200,0},{3,500,0},{4,200,0},
         {5,250,0},{6,500,0},{7,500,0},{8,2000,0},{9,2000,0},{10,1000,0},
         {11,2000,0},{12,200,0},{13,1000,0},{14,5000,0},{15,2000,0},
+        {16,2000,0},
     };
     int n = (int)(sizeof S / sizeof *S);
     uint64_t start = now_ms();
@@ -673,6 +700,7 @@ static int run_actisense(double duration, long tick, int once)
                 case 13: a_gnss(); break;
                 case 14: a_gsv(t); break;
                 case 15: a_dops(); break;
+                case 16: a_log(t); break;
             }
             S[i].next = el + S[i].iv;
         }
@@ -702,6 +730,7 @@ static sched_t SCHED[] = {
     { e_setdrift,     1000, 0, 0, "129291 → VDR" },
     { e_rudder,        200, 0, 0, "127245 → RSA" },
     { e_stw,           500, 0, 0, "128259 → VHW" },
+    { e_log,          2000, 0, 0, "128275 → VLW" },
     { e_temp,         2000, 0, 0, "130312 → MTW/MDA" },
     { e_press,        2000, 0, 0, "130314 → MDA" },
     { e_depth,         500, 0, 0, "128267 → DPT" },

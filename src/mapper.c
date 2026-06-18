@@ -16,6 +16,7 @@
 #include <math.h>
 
 #define MS_TO_KN  1.943844   /* m/s → nœuds (1 / 0.514444) */
+#define M_TO_NM   (1.0/1852.0)  /* mètres → milles nautiques */
 
 /* Lecture tolérante : valeur numérique ou NaN si absente. */
 static double getf(const jsonl_msg_t *m, const char *k)
@@ -97,6 +98,46 @@ static const char *map_depth_min(mapper_t *mp, const jsonl_msg_t *m,
             best = mp->depth[i];
     }
     return nmea_dpt(s, mp->talker, best, offset);
+}
+
+/* PGN 128275 : loch retenu = max des sources vivantes. Un DST810 sorti de
+ * l'eau cesse de compter (sous-estime) → on garde le capteur le plus avancé.
+ * Log et Trip Log proviennent du MÊME capteur (le max sur le Log) pour rester
+ * cohérents. */
+static const char *map_log_max(mapper_t *mp, const jsonl_msg_t *m,
+                               const arb_decision_t *d, uint64_t now, nmea_t *s)
+{
+    double total = getf(m, "Log");
+    double trip  = getf(m, "Trip Log");
+
+    int slot = -1;
+    if (d->rule && d->source_name)
+        for (int i = 0; i < d->rule->n_sources; i++)
+            if (strcmp(d->rule->sources[i], d->source_name) == 0) { slot = i; break; }
+    if (slot < 0 || isnan(total))
+        return NULL;
+
+    mp->log_total[slot] = total;
+    mp->log_trip[slot]  = trip;
+    mp->log_t[slot]     = now;
+    mp->log_seen[slot]  = true;
+
+    /* capteur au Log maximal parmi les sources vues récemment */
+    double best_total = NAN, best_trip = NAN;
+    int    n = d->rule ? d->rule->n_sources : 0;
+    for (int i = 0; i < n; i++) {
+        if (!mp->log_seen[i])
+            continue;
+        if ((now - mp->log_t[i]) > mp->timeout_ms)
+            continue;
+        if (isnan(best_total) || mp->log_total[i] > best_total) {
+            best_total = mp->log_total[i];
+            best_trip  = mp->log_trip[i];
+        }
+    }
+    return nmea_vlw(s, mp->talker,
+                    isnan(best_total) ? NAN : best_total * M_TO_NM,
+                    isnan(best_trip)  ? NAN : best_trip  * M_TO_NM);
 }
 
 int mapper_map(mapper_t *mp, const jsonl_msg_t *m, const arb_decision_t *d,
@@ -247,6 +288,10 @@ int mapper_map(mapper_t *mp, const jsonl_msg_t *m, const arb_decision_t *d,
         emit(out, nmea_vhw(&s, tk, NMEA_NA, NMEA_NA, isnan(stw) ? NAN : stw * MS_TO_KN));
         break;
     }
+
+    case 128275:  /* Distance Log → VLW (max des DST : le plus avancé) */
+        emit(out, map_log_max(mp, m, d, now_ms, &s));
+        break;
 
     case 130312: { /* Temperature → MTW (eau) ou MDA (air) selon discriminant */
         double t = getf(m, "Actual Temperature");

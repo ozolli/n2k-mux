@@ -357,6 +357,18 @@ const char *nmea_vhw(nmea_t *s, const char *talker,
     return nmea_end(s);
 }
 
+const char *nmea_vlw(nmea_t *s, const char *talker,
+                     double total_water_nm, double trip_water_nm)
+{
+    nmea_begin(s, talker, "VLW");
+    nmea_field_f(s, total_water_nm, 1); nmea_field_char(s, 'N');
+    nmea_field_f(s, trip_water_nm, 1);  nmea_field_char(s, 'N');
+    /* champs sol (cumul + trajet) laissés vides : distance dans l'eau seule. */
+    nmea_field_empty(s); nmea_field_empty(s);
+    nmea_field_empty(s); nmea_field_empty(s);
+    return nmea_end(s);
+}
+
 const char *nmea_xdr(nmea_t *s, const char *talker,
                      char type, double value, int decimals, char unit, const char *id)
 {

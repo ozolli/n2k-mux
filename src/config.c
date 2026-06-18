@@ -119,9 +119,10 @@ static bool add_rule(config_t *c, int lineno, char *key, char *val)
         *colon = '\0';
         char *m = trim(val);
         if (strcasecmp(m, "min") == 0)            r->mode = CFG_PICK_MIN;
+        else if (strcasecmp(m, "max") == 0)       r->mode = CFG_PICK_MAX;
         else if (strcasecmp(m, "fusion") == 0)    r->mode = CFG_PICK_FUSION;
         else if (strcasecmp(m, "priority") == 0)  r->mode = CFG_PICK_PRIORITY;
-        else return fail(c, lineno, "mode inconnu (attendu min/fusion/priority)");
+        else return fail(c, lineno, "mode inconnu (attendu min/max/fusion/priority)");
         list = colon + 1;
     }
 

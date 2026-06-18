@@ -11,7 +11,8 @@
  *   - priorités par PGN (éventuellement par discriminant) : liste ordonnée de
  *     noms logiques ;
  *   - mode de sélection : priority (1re source dispo), min (profondeur, par
- *     sécurité), fusion (AIS, dédup MMSI).
+ *     sécurité), max (loch : DST hors de l'eau sous-compte), fusion (AIS,
+ *     dédup MMSI).
  *
  * Format INI accepté :
  *
@@ -63,6 +64,7 @@
 typedef enum {
     CFG_PICK_PRIORITY = 0, /* 1re source disponible dans l'ordre */
     CFG_PICK_MIN,          /* valeur minimale (profondeur : sécurité haut-fond) */
+    CFG_PICK_MAX,          /* valeur maximale (loch : DST hors de l'eau sous-compte) */
     CFG_PICK_FUSION        /* fusion de plusieurs sources (AIS, dédup MMSI) */
 } cfg_mode_t;
 

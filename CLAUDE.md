@@ -83,7 +83,8 @@ Couvre (single-frame) : 129025/129026/127250/127251/127257/130306/128259/128267/
 127245/130312/130314/**130311** (baromètre)/126992. Et en **fast-packet** (message
 complet émis par le simulateur, re-fragmenté en trames par `ydraw-bridge`) :
 **129029** (position GNSS complète), **129539** (DOP/mode de fix), **129540** (GSV
-satellites en vue). Seul l'AIS reste hors N2K (fast-packet aussi, mais qtVlm ne lit
+satellites en vue), **128275** (Distance Log → VLW, 14 o.). Seul l'AIS reste hors
+N2K (fast-packet aussi, mais qtVlm ne lit
 pas l'AIS en N2K). Les facteurs d'échelle binaires sont validés par aller-retour
 dans `analyzer -format YDWG02 -json`.
 
@@ -144,7 +145,7 @@ Modules prévus (ordre d'implémentation) :
 (c) nmea0183  — générateur de phrases 0183 + checksum
                 [FAIT, testeur ./test_nmea0183 : 0 échec, ancres + auto-cohérence]
                 noyau (nmea_begin/field_*/end, checksum XOR) + constructeurs :
-                HDG HDT HDM VTG GLL MWV DPT MTW ROT RSA VHW XDR(+attitude) MDA ZDA
+                HDG HDT HDM VTG GLL MWV DPT MTW ROT RSA VHW VLW XDR(+attitude) MDA ZDA
                 zéro alloc (nmea_t fourni) ; champ absent = NMEA_NA (NaN) → vide ;
                 variation/déviation signées (Est +) ; talker par défaut "II".
                 Reste à câbler par l'arbitre (e) selon le champ Reference, etc.
@@ -153,7 +154,7 @@ Modules prévus (ordre d'implémentation) :
                 sections [output] talker, [sources] nom→identité,
                 [priority] "pgn[/discriminant] = [mode:] liste", [ignore] src/pgn,
                 [rate] "type_phrase = intervalle_min_ms" (throttle sortie 0183).
-                modes : priority (défaut) | min (profondeur) | fusion (AIS).
+                modes : priority (défaut) | min (profondeur) | max (loch) | fusion (AIS).
                 config_rule(pgn,disc) préfère la règle au discriminant le plus
                 spécifique (préfixe) puis la générique. config_rate_ms(type) → ms.
                 zéro alloc, tolérant.
@@ -161,7 +162,7 @@ Modules prévus (ordre d'implémentation) :
                 [SÉLECTION FAITE, testeur ./test_arbiter : 0 échec]
                 arbiter_decide(msg, now_ms) → ARB_ACCEPT / REJECT_* / IGNORED.
                 priority = 1re source vivante (failover par timeout, déf. 5 s) ;
-                min/fusion = toutes les sources listées vivantes participent.
+                min/max/fusion = toutes les sources listées vivantes participent.
                 table pgn→champ discriminant codée en dur (130306/127250 →
                 "Reference", 130312 → "Temperature Source"/"Source").
                 exclut d'office src<=0 et PGN>=262144, + liste [ignore].
@@ -173,7 +174,7 @@ Modules prévus (ordre d'implémentation) :
                 129540→GSV (paginé 4 sats/phrase, via jsonl_msg_t.list[]),
                 127250→HDG+HDM/HDT, 127251→ROT, 127257→XDR,
                 130306→MWV(R)|MWV(T)+MWD,
-                127245→RSA, 129291→VDR (courant), 128259→VHW,
+                127245→RSA, 129291→VDR (courant), 128259→VHW, 128275→VLW,
                 130312→MTW|MDA(air), 130314→MDA(press),
                 128267→DPT (minimum des DST, état interne par source).
                 AIS/VDM délégué à n2kd ; fusion/dédup MMSI = module aisdedup
@@ -288,6 +289,8 @@ Notes câblage AIS :
 - Priorités : cap/attitude/position = SCX-20 > Veratron > MADBrain
               vent/safran = MADBrain
               profondeur = min(DST bâbord, DST tribord)  [sécurité]
+              loch (distance eau) = max(DST bâbord, DST tribord)  [le capteur
+                hors de l'eau cesse de compter → sous-estime]
               vitesse surface = MADBrain
               AIS = fusion em-trak + DataHub, dédup par MMSI
 - Ignorer : src=0, PGN 262xxx (messages contrôle CANboat/Actisense)
@@ -318,6 +321,7 @@ AIS = em-trak B953 · VER = Veratron GO · DH = DataHub PredictWind · M510 = IC
 | 129291 | — | MAD | VDR (courant : set vrai/mag + drift) |
 | 128267 | — | min(DST_BB, DST_TB) | DPT |
 | 128259 | — | MAD | VHW |
+| 128275 | — | max(DST_BB, DST_TB) | VLW (distance dans l'eau) |
 | 130312 | Temperature Source = Sea | DST_BB > DST_TB | MTW |
 | 130312 | Temperature Source = Outside | SCX | MDA (temp air) |
 | 130314 | — | SCX | MDA (pression) |

@@ -40,6 +40,7 @@ DH     = 000A520AF6A0        ; DataHub PredictWind    (résolu sur banc)
 127245          = MAD                  ; RSA
 129291          = MAD                  ; VDR (courant set/drift)
 128259          = MAD                  ; VHW
+128275          = max: DST_BB, DST_TB  ; VLW (loch : max = capteur le plus avancé, l'autre hors de l'eau sous-compte)
 128267          = min: DST_BB, DST_TB  ; DPT (minimum = sécurité haut-fond)
 130312/Sea      = DST_BB, DST_TB       ; MTW (température eau)
 130312/Outside  = SCX                  ; MDA (température air)

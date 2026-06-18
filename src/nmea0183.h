@@ -132,6 +132,11 @@ const char *nmea_rsa(nmea_t *s, const char *talker, double starboard, double por
 const char *nmea_vhw(nmea_t *s, const char *talker,
                      double heading_true, double heading_mag, double speed_knots);
 
+/* Distance parcourue dans l'eau : cumul + trajet depuis reset (milles
+ * nautiques). Les deux champs sol restent vides (NMEA <3.0, water only). */
+const char *nmea_vlw(nmea_t *s, const char *talker,
+                     double total_water_nm, double trip_water_nm);
+
 /* XDR générique : un quadruplet (type, valeur, unité, identifiant). */
 const char *nmea_xdr(nmea_t *s, const char *talker,
                      char type, double value, int decimals, char unit, const char *id);
