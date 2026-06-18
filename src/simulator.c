@@ -452,6 +452,10 @@ static void p32(uint8_t *b, int off, long v)
     b[off + 2] = (uint8_t)((v >> 16) & 0xff);
     b[off + 3] = (uint8_t)((v >> 24) & 0xff);
 }
+static void p64(uint8_t *b, int off, long long v)
+{
+    for (int i = 0; i < 8; i++) { b[off + i] = (uint8_t)(v & 0xff); v >>= 8; }
+}
 
 static void emit_frame(int prio, int src, int pgn, const uint8_t *d, int len)
 {
@@ -573,13 +577,74 @@ static void a_systime(void)        /* 126992 System Time */
     emit_frame(3, SCX_SRC, 126992, b, 8);
 }
 
+/* --- Fast-packet : encodés en un message complet (>8 octets), ydraw-bridge
+ *     les re-fragmente en trames CAN fast-packet. --- */
+
+static void a_gnss(void)           /* 129029 GNSS Position Data (fast-packet) */
+{
+    uint8_t b[43];
+    memset(b, 0, sizeof b);
+    b[0] = 0xff;                                        /* SID */
+    struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts);
+    long days = ts.tv_sec / 86400, secday = ts.tv_sec % 86400;
+    p16(b, 1, (int)days);
+    p32(b, 3, secday * 10000L + ts.tv_nsec / 100000);
+    p64(b, 7,  llround(boat.lat / 1e-16));              /* Latitude  (1e-16 deg) */
+    p64(b, 15, llround(boat.lon / 1e-16));             /* Longitude (1e-16 deg) */
+    p64(b, 23, llround(12.3 / 1e-6));                  /* Altitude  (1e-6 m) */
+    b[31] = (1 << 4) | 0;                              /* Method=GNSS fix ; type=GPS */
+    b[32] = 0xfc;                                      /* Integrity 0 + réservé */
+    b[33] = 9;                                         /* Number of SVs */
+    p16(b, 34, (int)lround(0.8 / 0.01));              /* HDOP */
+    p16(b, 36, (int)lround(1.5 / 0.01));              /* PDOP */
+    p32(b, 38, lround(47.0 / 0.01));                  /* Geoidal Separation */
+    b[42] = 0;                                         /* Reference Stations */
+    emit_frame(3, SCX_SRC, 129029, b, 43);
+}
+
+static void a_dops(void)           /* 129539 GNSS DOPs (mode de fix + DOP) */
+{
+    uint8_t b[8];
+    memset(b, 0, sizeof b);
+    b[0] = 0xff;
+    b[1] = (uint8_t)(3 | (2 << 3) | (3 << 6));        /* Desired=Auto(3), Actual=3D(2) */
+    p16(b, 2, (int)lround(0.8 / 0.01));               /* HDOP */
+    p16(b, 4, (int)lround(1.2 / 0.01));               /* VDOP */
+    p16(b, 6, 0x7fff);                                 /* TDOP n/a */
+    emit_frame(6, SCX_SRC, 129539, b, 8);
+}
+
+static void a_gsv(double t)        /* 129540 GNSS Sats in View (fast-packet) */
+{
+    int nsat = 8;
+    uint8_t b[3 + 12 * 8];
+    memset(b, 0, sizeof b);
+    b[0] = 0xff;                                       /* SID */
+    b[1] = 0xfc;                                       /* Range residual mode + réservé */
+    b[2] = (uint8_t)nsat;                              /* Sats in View */
+    int off = 3;
+    for (int i = 0; i < nsat; i++) {
+        double el = 20 + 60.0 * fabs(sin((t + i * 7) / 40.0));
+        double az = fmod(i * 45 + t * 2, 360.0);
+        double sn = 30 + 12.0 * fabs(sin((t + i * 3) / 20.0));
+        b[off]      = (uint8_t)(i + 1);                /* PRN */
+        p16(b, off + 1, (int)lround(DEG2RAD(el) / 1e-4));  /* Elevation */
+        p16(b, off + 3, (int)lround(DEG2RAD(az) / 1e-4));  /* Azimuth */
+        p16(b, off + 5, (int)lround(sn / 0.01));           /* SNR */
+        p32(b, off + 7, 0x7fffffff);                       /* Range residuals n/a */
+        b[off + 11] = 0xf2;                                /* Status=Used + réservé */
+        off += 12;
+    }
+    emit_frame(6, SCX_SRC, 129540, b, off);
+}
+
 static int run_actisense(double duration, long tick, int once)
 {
     /* (fn0 sans arg) et (fn1 avec t) regroupées via un switch indexé. */
     struct { int id; double iv, next; } S[] = {
         {0,250,0},{1,1000,0},{2,200,0},{3,500,0},{4,200,0},
         {5,250,0},{6,500,0},{7,500,0},{8,2000,0},{9,2000,0},{10,1000,0},
-        {11,2000,0},{12,200,0},
+        {11,2000,0},{12,200,0},{13,1000,0},{14,5000,0},{15,2000,0},
     };
     int n = (int)(sizeof S / sizeof *S);
     uint64_t start = now_ms();
@@ -605,6 +670,9 @@ static int run_actisense(double duration, long tick, int once)
                 case 10: a_systime(); break;
                 case 11: a_envparams(t); break;
                 case 12: a_rudder(t); break;
+                case 13: a_gnss(); break;
+                case 14: a_gsv(t); break;
+                case 15: a_dops(); break;
             }
             S[i].next = el + S[i].iv;
         }

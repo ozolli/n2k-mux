@@ -79,11 +79,13 @@ en N2K (source NMEA **TCP client**, PAS la section socketcan ; auto-détection Y
 ./n2k-sim --actisense | ./ydraw-bridge --port 2600    # → qtVlm sur <hôte>:2600
 ```
 
-Couvre : 129025/129026/127250/127251/127257/130306/128259/128267/127245/130312/
-130314/**130311** (baromètre)/126992. Le fast-packet (GNSS 129029, GSV, AIS) n'est
-PAS encore encodé (le `ydraw-bridge` sait re-fragmenter, donc faisable ensuite ; et
-qtVlm ne lit pas l'AIS en N2K). Les facteurs d'échelle binaires sont validés par
-aller-retour dans `analyzer -format YDWG02 -json`.
+Couvre (single-frame) : 129025/129026/127250/127251/127257/130306/128259/128267/
+127245/130312/130314/**130311** (baromètre)/126992. Et en **fast-packet** (message
+complet émis par le simulateur, re-fragmenté en trames par `ydraw-bridge`) :
+**129029** (position GNSS complète), **129539** (DOP/mode de fix), **129540** (GSV
+satellites en vue). Seul l'AIS reste hors N2K (fast-packet aussi, mais qtVlm ne lit
+pas l'AIS en N2K). Les facteurs d'échelle binaires sont validés par aller-retour
+dans `analyzer -format YDWG02 -json`.
 
 ## Architecture
 
