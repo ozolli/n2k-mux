@@ -70,6 +70,24 @@ int main(void)
     ydraw_decode_id(0x09F80103u, NULL, &pgn, NULL, NULL);
     ok("décodage avec NULL", pgn == 129025);
 
+    /* --- fast-packet : nombre de trames --- */
+    ok("fp frames(6) = 1",   ydraw_fastpacket_frames(6) == 1);
+    ok("fp frames(8) = 2",   ydraw_fastpacket_frames(8) == 2);   /* 6 + 2 */
+    ok("fp frames(13) = 2",  ydraw_fastpacket_frames(13) == 2);  /* 6 + 7 */
+    ok("fp frames(14) = 3",  ydraw_fastpacket_frames(14) == 3);  /* 6 + 7 + 1 */
+    ok("fp frames(28) = 5",  ydraw_fastpacket_frames(28) == 5);  /* AIS 129038 : 6+7+7+7+1 */
+    ok("fp frames(223) = 32", ydraw_fastpacket_frames(223) == 32);
+
+    /* --- fast-packet : contenu des trames (message de 10 octets, seq=1) --- */
+    /* payload 01..0A → trame 0 : [20][0A][01..06] ; trame 1 : [21][07..0A][FF FF FF] */
+    uint8_t fp[10] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+    n = ydraw_format_fp(buf, sizeof buf, 0x09F80103u, fp, 10, 0, 1, 0u);
+    ok("fp trame 0",
+       n > 0 && strcmp(buf, "00:00:00.000 R 09F80103 20 0A 01 02 03 04 05 06\r\n") == 0);
+    n = ydraw_format_fp(buf, sizeof buf, 0x09F80103u, fp, 10, 1, 1, 0u);
+    ok("fp trame 1 (complétée 0xFF)",
+       n > 0 && strcmp(buf, "00:00:00.000 R 09F80103 21 07 08 09 0A FF FF FF\r\n") == 0);
+
     fprintf(stderr, "\n--- Récapitulatif ---\néchecs : %d\n", failures);
     return failures ? 1 : 0;
 }

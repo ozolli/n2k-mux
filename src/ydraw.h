@@ -50,4 +50,29 @@ int ydraw_format(char *buf, size_t sz, uint32_t can_id,
 /* Millisecondes écoulées depuis minuit (heure locale) — pour la production. */
 uint32_t ydraw_tod_ms_now(void);
 
+/* --- Fast-packet NMEA 2000 (messages > 8 octets) ---
+ *
+ * Un message N2K de plus de 8 octets est transporté en plusieurs trames CAN
+ * « fast-packet » : la trame 0 porte [compteur|0][longueur totale][6 octets],
+ * les suivantes [compteur|n][7 octets]. Le compteur de séquence (3 bits) est
+ * commun à toutes les trames d'un même message ; il faut l'incrémenter entre
+ * messages pour que le récepteur ne fusionne pas deux messages distincts.
+ *
+ * Utile pour ré-émettre en YDRAW un message déjà réassemblé (ex. sortie texte
+ * d'actisense-serial) : le vrai chemin socketcan, lui, fournit les trames brutes
+ * directement et n'a pas besoin de re-fragmenter. */
+
+/* Nombre de trames fast-packet pour `total_len` octets de données (1 si
+ * total_len ≤ 6, sinon 1 + ceil((total_len − 6) / 7)). Max N2K = 223 octets. */
+int ydraw_fastpacket_frames(int total_len);
+
+/* Formate la trame fast-packet d'indice `idx` (0..frames−1) du message
+ * `payload`/`total_len` en une ligne YDRAW. `seq` = identifiant de séquence
+ * (0..7). Les octets manquants de la dernière trame sont complétés à 0xFF
+ * (comme les passerelles Yacht Devices). Retourne la longueur écrite (CRLF
+ * inclus), ou -1. */
+int ydraw_format_fp(char *buf, size_t sz, uint32_t can_id,
+                    const uint8_t *payload, int total_len,
+                    int idx, int seq, uint32_t tod_ms);
+
 #endif /* N2KMUX_YDRAW_H */

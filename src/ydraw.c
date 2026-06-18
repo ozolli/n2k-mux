@@ -87,3 +87,33 @@ uint32_t ydraw_tod_ms_now(void)
     return (uint32_t)((tmv.tm_hour * 3600 + tmv.tm_min * 60 + tmv.tm_sec) * 1000
                       + tv.tv_usec / 1000);
 }
+
+int ydraw_fastpacket_frames(int total_len)
+{
+    if (total_len <= 6)
+        return 1;
+    return 1 + (total_len - 6 + 6) / 7;   /* 1 + ceil((total_len − 6) / 7) */
+}
+
+int ydraw_format_fp(char *buf, size_t sz, uint32_t can_id,
+                    const uint8_t *payload, int total_len,
+                    int idx, int seq, uint32_t tod_ms)
+{
+    uint8_t f[8];
+    for (int i = 0; i < 8; i++)
+        f[i] = 0xFF;                       /* remplissage par défaut */
+
+    if (idx == 0) {
+        f[0] = (uint8_t)((seq & 0x7) << 5);            /* séquence | trame 0 */
+        f[1] = (uint8_t)total_len;
+        int n = total_len < 6 ? total_len : 6;
+        for (int i = 0; i < n; i++)
+            f[2 + i] = payload[i];
+    } else {
+        f[0] = (uint8_t)(((seq & 0x7) << 5) | (idx & 0x1F));
+        int off = 6 + (idx - 1) * 7;
+        for (int i = 0; i < 7 && off + i < total_len; i++)
+            f[1 + i] = payload[off + i];
+    }
+    return ydraw_format(buf, sz, can_id, f, 8, tod_ms);
+}
