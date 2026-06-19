@@ -225,11 +225,16 @@ Modules prévus (ordre d'implémentation) :
                 sur source NMEA TCP/UDP). Futur flux : trames arbitrées → YDRAW →
                 netout (TCP) → qtVlm local/distant. Testé, PAS encore lié au daemon.
                 Outil ./ydraw-bridge (src/ydraw_bridge.c) : pont de TEST qui lit le
-                format actisense sur stdin et sert en YDRAW/TCP les PGN single-frame
-                (fast-packet ignoré, faute des trames brutes). Permet de valider la
-                réception N2K de qtVlm AVANT socketcan/PEAK :
+                format actisense sur stdin et sert en YDRAW/TCP. Single-frame (len≤8)
+                en une trame ; fast-packet (len>8, déjà réassemblé par actisense :
+                AIS, GNSS 129029…) RE-FRAGMENTÉ en trames CAN (qtVlm réassemble).
+                Permet de valider la réception N2K de qtVlm AVANT socketcan/PEAK :
                   actisense-serial ... | tee >(ydraw-bridge --port 2600) | analyzer -json | n2k-mux ...
                 puis dans qtVlm : source NMEA TCP → <o3nav>:2600.
+                VALIDÉ LIVE le 2026-06-19 sur bus RÉEL (NGX-1) avec qtVlm beta2 :
+                  actisense-serial -r -s 230400 /dev/ttyNGX1 | ./ydraw-bridge --port 2600
+                → constellation GPS (satellites) ET cibles AIS réelles affichées
+                (129038/39/41, 129794, 129809/810 ; noms via static). Voir mémoire.
 (g) web       — interface de gestion WEB (src/web.c, binaire ./n2k-mux-web,
                 make n2k-mux-web ; 0 warning ; **remplace à terme la GUI GTK**).
                 [FAIT, validé bout-en-bout : endpoints + reload web→SIGHUP live]

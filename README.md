@@ -306,6 +306,17 @@ mode `--actisense`, il valide la réception N2K de qtVlm sans matériel :
 > trames N2K, re-fragmentées par `ydraw-bridge`. Les échelles et offsets binaires
 > sont validés par aller-retour dans `analyzer -format YDWG02 -json` / `-format FAST`.
 
+Sur **bus réel** (passerelle Actisense NGX-1 en mode Transfer), le même pont sert
+les vraies trames :
+
+```sh
+actisense-serial -r -s 230400 /dev/ttyNGX1 | ./ydraw-bridge --port 2600
+```
+
+> Validé live (qtVlm 5.12.27-beta2) : **constellation GPS** et **cibles AIS
+> réelles** (positions Class A/B, AtoN, noms via les messages static 129809/810)
+> affichées dans qtVlm depuis ce flux YDRAW/TCP, ainsi que la température 130316.
+
 Le flux N2K arbitré du daemon lui-même (lecture du bus → arbitrage → YDRAW →
 `netout`) reste à câbler ; `kplex` demeure l'endpoint NMEA 0183.
 
