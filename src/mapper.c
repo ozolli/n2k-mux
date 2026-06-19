@@ -293,8 +293,11 @@ int mapper_map(mapper_t *mp, const jsonl_msg_t *m, const arb_decision_t *d,
         emit(out, map_log_max(mp, m, d, now_ms, &s));
         break;
 
-    case 130312: { /* Temperature → MTW (eau) ou MDA (air) selon discriminant */
-        double t = getf(m, "Actual Temperature");
+    case 130312:   /* Temperature (DÉPRÉCIÉ) — air (SCX/Outside) → MDA */
+    case 130316: { /* Temperature Extended Range — eau (DST/Sea) → MTW */
+        /* 130316 porte la valeur en "Temperature" (24 bits, 0.001 K) ;
+           130312, déprécié, en "Actual Temperature" (16 bits). */
+        double t = getf(m, m->pgn == 130316 ? "Temperature" : "Actual Temperature");
         if (has_word(d->discriminant, "Sea"))
             emit(out, nmea_mtw(&s, tk, t));
         else if (has_word(d->discriminant, "Outside"))

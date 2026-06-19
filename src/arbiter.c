@@ -30,7 +30,8 @@ static const char *discriminant_of(int pgn, const jsonl_msg_t *m)
         case 127250:   /* Vessel Heading : Magnetic / True */
             if (jsonl_get_str(m, "Reference", &v)) return v;
             return NULL;
-        case 130312:   /* Temperature : Sea / Outside */
+        case 130312:   /* Temperature (déprécié) : Sea / Outside */
+        case 130316:   /* Temperature Extended Range : Sea / Outside */
             if (jsonl_get_str(m, "Temperature Source", &v)) return v;
             if (jsonl_get_str(m, "Source", &v)) return v;
             return NULL;

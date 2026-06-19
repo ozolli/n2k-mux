@@ -78,6 +78,7 @@ static const char *INI =
     "127250=CMP\n127251=CMP\n127257=CMP\n"
     "130306/Apparent=WND\n130306/True=WND\n"
     "127245=RUD\n128259=LOG\n129291=WND\n"
+    "130316/Sea=TMP\n130316/Outside=TMP\n"
     "130312/Sea=TMP\n130312/Outside=TMP\n130314=BAR\n"
     "128267=min: DST_BB, DST_TB\n"
     "128275=max: DST_BB, DST_TB\n";
@@ -142,10 +143,13 @@ int main(void)
     chk("RSA", &o, 0, "$IIRSA,4.5,A,,V*");
     o = run("{\"src\":10,\"pgn\":128259,\"fields\":{\"Speed Water Referenced\":3.0}}", 1000);
     chk("VHW", &o, 0, "$IIVHW,,T,,M,5.8,N,");
-    o = run("{\"src\":11,\"pgn\":130312,\"fields\":{\"Source\":\"Sea Temperature\",\"Actual Temperature\":18.5}}", 1000);
+    o = run("{\"src\":11,\"pgn\":130316,\"fields\":{\"Source\":\"Sea Temperature\",\"Temperature\":18.5}}", 1000);
     chk("MTW", &o, 0, "$IIMTW,18.5,C*");
-    o = run("{\"src\":11,\"pgn\":130312,\"fields\":{\"Source\":\"Outside Temperature\",\"Actual Temperature\":21.0}}", 1000);
+    o = run("{\"src\":11,\"pgn\":130316,\"fields\":{\"Source\":\"Outside Temperature\",\"Temperature\":21.0}}", 1000);
     chk("MDA(air)", &o, 0, "$IIMDA,,I,,B,21.0,C,");
+    /* 130312 déprécié mais toujours accepté (champ "Actual Temperature") */
+    o = run("{\"src\":11,\"pgn\":130312,\"fields\":{\"Source\":\"Sea Temperature\",\"Actual Temperature\":18.5}}", 1000);
+    chk("MTW(130312)", &o, 0, "$IIMTW,18.5,C*");
     o = run("{\"src\":14,\"pgn\":130314,\"fields\":{\"Pressure\":1.013}}", 1000);
     chk("MDA(press)", &o, 0, "$IIMDA,29.9139,I,1.0130,B,");
 

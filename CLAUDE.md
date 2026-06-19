@@ -80,7 +80,7 @@ en N2K (source NMEA **TCP client**, PAS la section socketcan ; auto-détection Y
 ```
 
 Couvre (single-frame) : 129025/129026/127250/127251/127257/130306/128259/128267/
-127245/130312/130314/**130311** (baromètre)/126992. Et en **fast-packet** (message
+127245/130316/130314/**130311** (baromètre)/126992. Et en **fast-packet** (message
 complet émis par le simulateur, re-fragmenté en trames par `ydraw-bridge`) :
 **129029** (position GNSS complète), **129539** (DOP/mode de fix), **129540** (GSV
 satellites en vue), **128275** (Distance Log, 14 o.) et l'**AIS** : **129039**
@@ -168,7 +168,7 @@ Modules prévus (ordre d'implémentation) :
                 priority = 1re source vivante (failover par timeout, déf. 5 s) ;
                 min/max/fusion = toutes les sources listées vivantes participent.
                 table pgn→champ discriminant codée en dur (130306/127250 →
-                "Reference", 130312 → "Temperature Source"/"Source").
+                "Reference", 130316/130312 → "Temperature Source"/"Source").
                 exclut d'office src<=0 et PGN>=262144, + liste [ignore].
                 2e passe (mapping) : module mapper (src/mapper.{h,c}).
                 [FAIT, testeur ./test_mapper : 0 échec, + validé bout-en-bout
@@ -179,7 +179,7 @@ Modules prévus (ordre d'implémentation) :
                 127250→HDG+HDM/HDT, 127251→ROT, 127257→XDR,
                 130306→MWV(R)|MWV(T)+MWD,
                 127245→RSA, 129291→VDR (courant), 128259→VHW, 128275→VLW,
-                130312→MTW|MDA(air), 130314→MDA(press),
+                130316→MTW|MDA(air) (130312 déprécié aussi accepté), 130314→MDA(press),
                 128267→DPT (minimum des DST, état interne par source).
                 AIS/VDM délégué à n2kd ; fusion/dédup MMSI = module aisdedup
                 (mode n2k-mux --ais-json), testeur ./test_aisdedup : 0 échec.
@@ -318,7 +318,8 @@ Notes câblage AIS :
 
 - Clé d'arbitrage : (pgn, src, discriminant)
   discriminant = "Reference" pour vent 130306 (Apparent/True) et cap 127250 (Magnetic/True)
-                 "Temperature Source" pour 130312 (Sea→MTW eau / Outside→MDA air)
+                 "Temperature Source" pour 130316 (Sea→MTW eau / Outside→MDA air ;
+                 130312 déprécié reste accepté)
 - Priorités : cap/attitude/position = SCX-20 > Veratron > MADBrain
               vent/safran = MADBrain
               profondeur = min(DST bâbord, DST tribord)  [sécurité]
@@ -355,8 +356,8 @@ AIS = em-trak B953 · VER = Veratron GO · DH = DataHub PredictWind · M510 = IC
 | 128267 | — | min(DST_BB, DST_TB) | DPT |
 | 128259 | — | MAD | VHW |
 | 128275 | — | max(DST_BB, DST_TB) | VLW (distance dans l'eau) |
-| 130312 | Temperature Source = Sea | DST_BB > DST_TB | MTW |
-| 130312 | Temperature Source = Outside | SCX | MDA (temp air) |
+| 130316 | Temperature Source = Sea | DST_BB > DST_TB | MTW |
+| 130316 | Temperature Source = Outside | SCX | MDA (temp air) |
 | 130314 | — | SCX | MDA (pression) |
 | 129038/39/40/41, 129793/94/95/96/97/98, 129801/02, 129809/810 | — | fusion AIS + DH (dédup MMSI) | VDM |
 | 129808 | — | M510 | DSC, DSE |
@@ -364,8 +365,8 @@ AIS = em-trak B953 · VER = Veratron GO · DH = DataHub PredictWind · M510 = IC
 ### Règles de génération
 - **HDG** porte cap magnétique + déviation + variation (le plus complet) ; **HDT** = cap vrai ; **HDM** = cap magnétique seul. Générer selon le champ Reference du 127250.
 - **MWV(R)** = vent apparent (Reference "R") ; **MWV(T)** = vent vrai (Reference "T") ; **MWD** = direction/vitesse vent vrai/sol. Le 130306 Apparent → MWV(R) ; le 130306 True → MWV(T) + MWD.
-- **MDA** (Meteorological Composite) agrège pression (130314, champs 3-4 en bar) + température air (130312/Outside, champs 5-6). Une seule phrase MDA pour les deux.
-- **MTW** = température eau, depuis 130312 dont Temperature Source = "Sea Temperature".
+- **MDA** (Meteorological Composite) agrège pression (130314, champs 3-4 en bar) + température air (130316/Outside, champ "Temperature"). Une seule phrase MDA pour les deux.
+- **MTW** = température eau, depuis 130316 (Temperature Extended Range, champ "Temperature") dont Temperature Source = "Sea Temperature". 130312 (déprécié, champ "Actual Temperature") reste accepté en entrée.
 - **XDR** type pression/température/attitude. Pour 127257 : pitch + roll (pas le yaw).
 - **DPT** : profondeur = valeur minimale des deux DST810 (sécurité haut-fond), pas de moyenne.
 
@@ -395,7 +396,7 @@ Validé par injection : MMB, XDR, MDA (pression + temp air lues correctement).
 ### Discriminants observés dans le flux analyzer réel
 - 130306 : champ "Reference" = "Apparent" | "True (ground referenced to North)"
 - 127250 : champ "Reference" = "Magnetic" | "True"
-- 130312 : champ "Temperature Source" / "Source" = "Sea Temperature" | "Outside Temperature"
+- 130316 (et 130312 déprécié) : champ "Temperature Source" / "Source" = "Sea Temperature" | "Outside Temperature"
 - Ignorer : src=0 et PGN 262xxx (262161 Actisense Operating mode, 262656 CANboat Startup)
 
 ## Module (g) GUI GTK — notes

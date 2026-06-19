@@ -330,7 +330,7 @@ Le flux N2K arbitré du daemon lui-même (lecture du bus → arbitrage → YDRAW
 | 128259 | Vitesse surface | VHW |
 | 128267 | Profondeur | DPT (min des sondeurs) |
 | 128275 | Distance dans l'eau (loch) | VLW (max des sondeurs) |
-| 130312 | Température | MTW (eau) / MDA (air) |
+| 130316 | Température | MTW (eau) / MDA (air) — 130312 déprécié, accepté en entrée |
 | 130314 | Pression | MDA |
 | 129038/39/40/41, 129793/94/95/96/97/98, 129801/02, 129809/810 | AIS | !AIVDM (via n2kd) |
 

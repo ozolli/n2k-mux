@@ -29,7 +29,7 @@
  *   129025          = SCX, VER, MAD
  *   127250/Magnetic = SCX, MAD
  *   128267          = min: DST_BB, DST_TB
- *   130312/Sea      = DST_BB, DST_TB
+ *   130316/Sea      = DST_BB, DST_TB
  *   129038          = fusion: AIS, DH
  *
  *   [ignore]

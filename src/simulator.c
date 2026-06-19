@@ -149,7 +149,7 @@ static void e_identity(double t)
     (void)t;
     identity(SCX_SRC,   2000004, "Furuno",      "SCX-20",      "SCX20-SIM");
     identity(VER_SRC,    917661, "Veratron",    "Veratron GO", "917661");
-    identity(MAD_SRC,   2000005, "MadBrain",    "MADBrain",    "MAD-SIM");
+    identity(MAD_SRC,   2000005, "Madintec",    "MADBrain",    "MAD-SIM");
     identity(DSTBB_SRC, 2000020, "Airmar",      "DST810",      "DSTBB-SIM");
     identity(DSTTB_SRC, 2000021, "Airmar",      "DST810",      "DSTTB-SIM");
     identity(AIS_SRC,   2000030, "em-trak",     "B953",        "EMTRAK-SIM");
@@ -308,17 +308,19 @@ static void e_log(double t)    /* 128275 → VLW (distance dans l'eau, DST810) *
     emit(3, DSTTB_SRC, 128275, "Distance Log", f);
 }
 
-static void e_temp(double t)   /* 130312 → MTW (eau, DST) + MDA (air, SCX) */
+static void e_temp(double t)   /* 130316 → MTW (eau, DST) + MDA (air, SCX) */
 {
     char f[160];
+    /* 130316 (Temperature Extended Range) : champ valeur "Temperature".
+       DST et SCX émettent tous deux en 130316 (130312 déprécié). */
     snprintf(f, sizeof f,
              "\"Source\":\"Sea Temperature\",\"Temperature Source\":\"Sea Temperature\","
-             "\"Actual Temperature\":%.2f", 18.0 + 0.5 * sin(t / 50.0));
-    emit(5, DSTBB_SRC, 130312, "Temperature", f);
+             "\"Temperature\":%.3f", 18.0 + 0.5 * sin(t / 50.0));
+    emit(5, DSTBB_SRC, 130316, "Temperature, Extended Range", f);
     snprintf(f, sizeof f,
              "\"Source\":\"Outside Temperature\",\"Temperature Source\":\"Outside Temperature\","
-             "\"Actual Temperature\":%.2f", 22.0 + 1.0 * sin(t / 60.0));
-    emit(5, SCX_SRC, 130312, "Temperature", f);
+             "\"Temperature\":%.3f", 22.0 + 1.0 * sin(t / 60.0));
+    emit(5, SCX_SRC, 130316, "Temperature, Extended Range", f);
 }
 
 static void e_press(double t)   /* 130314 → MDA (pression) */
@@ -458,6 +460,12 @@ static void p16(uint8_t *b, int off, int v)
     b[off] = (uint8_t)(v & 0xff);
     b[off + 1] = (uint8_t)((v >> 8) & 0xff);
 }
+static void p24(uint8_t *b, int off, long v)
+{
+    b[off]     = (uint8_t)(v & 0xff);
+    b[off + 1] = (uint8_t)((v >> 8) & 0xff);
+    b[off + 2] = (uint8_t)((v >> 16) & 0xff);
+}
 static void p32(uint8_t *b, int off, long v)
 {
     b[off]     = (uint8_t)(v & 0xff);
@@ -558,12 +566,13 @@ static void a_depth(double t)      /* 128267 Water Depth */
     emit_frame(3, DSTBB_SRC, 128267, b, 8);
 }
 
-static void a_temp(double t)       /* 130312 Temperature (Sea) */
+static void a_temp(double t)       /* 130316 Temperature Extended Range (Sea) */
 {
-    uint8_t b[8] = { 0xff, 0, 0, 0, 0, 0xff, 0xff, 0xff };  /* instance 0, source Sea(0) */
+    /* SID, Instance, Source(Sea=0), Temperature(24b, 0.001K), Set Temp(16b) */
+    uint8_t b[8] = { 0xff, 0, 0, 0, 0, 0, 0xff, 0xff };
     double k = (18.0 + 0.5 * sin(t / 50.0)) + 273.15;
-    p16(b, 3, (int)lround(k / 0.01));
-    emit_frame(5, DSTBB_SRC, 130312, b, 8);
+    p24(b, 3, lround(k / 0.001));
+    emit_frame(5, DSTBB_SRC, 130316, b, 8);
 }
 
 static void a_press(double t)      /* 130314 Actual Pressure (atmosphérique) */
@@ -863,7 +872,7 @@ static sched_t SCHED[] = {
     { e_rudder,        200, 0, 0, "127245 → RSA" },
     { e_stw,           500, 0, 0, "128259 → VHW" },
     { e_log,          2000, 0, 0, "128275 → VLW" },
-    { e_temp,         2000, 0, 0, "130312 → MTW/MDA" },
+    { e_temp,         2000, 0, 0, "130316 → MTW/MDA" },
     { e_press,        2000, 0, 0, "130314 → MDA" },
     { e_depth,         500, 0, 0, "128267 → DPT" },
     { e_ais,          3000, 0, 1, "AIS 129039/794/809" },

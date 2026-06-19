@@ -42,8 +42,8 @@ DH     = 000A520AF6A0        ; DataHub PredictWind    (résolu sur banc)
 128259          = MAD                  ; VHW
 128275          = max: DST_BB, DST_TB  ; VLW (loch : max = capteur le plus avancé, l'autre hors de l'eau sous-compte)
 128267          = min: DST_BB, DST_TB  ; DPT (minimum = sécurité haut-fond)
-130312/Sea      = DST_BB, DST_TB       ; MTW (température eau)
-130312/Outside  = SCX                  ; MDA (température air)
+130316/Sea      = DST_BB, DST_TB       ; MTW (température eau)  [130312 déprécié]
+130316/Outside  = SCX                  ; MDA (température air)
 130314          = SCX                  ; MDA (pression)
 
 # AIS : dédup/fusion par MMSI, utilisée par le mode `n2k-mux --ais-json` (placé

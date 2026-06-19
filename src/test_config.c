@@ -51,8 +51,8 @@ static const char *INI =
     "130306/Apparent = MAD\n"
     "128267          = min: DST_BB, DST_TB\n"
     "128275          = max: DST_BB, DST_TB\n"
-    "130312/Sea      = DST_BB, DST_TB\n"
-    "130312/Outside  = SCX\n"
+    "130316/Sea      = DST_BB, DST_TB\n"
+    "130316/Outside  = SCX\n"
     "129038          = fusion: AIS, DH\n"
     "\n"
     "[ignore]\n"
@@ -107,11 +107,11 @@ int main(void)
     ok("128275 mode max", r && r->mode == CFG_PICK_MAX);
     ok("128275 2 DST", r && r->n_sources == 2);
 
-    /* 130312 selon Temperature Source (préfixe) */
-    r = config_rule(&c, 130312, "Sea Temperature");
-    eq_str("130312/Sea source0", r ? r->sources[0] : NULL, "DST_BB");
-    r = config_rule(&c, 130312, "Outside Temperature");
-    eq_str("130312/Outside source0", r ? r->sources[0] : NULL, "SCX");
+    /* 130316 selon Temperature Source (préfixe) */
+    r = config_rule(&c, 130316, "Sea Temperature");
+    eq_str("130316/Sea source0", r ? r->sources[0] : NULL, "DST_BB");
+    r = config_rule(&c, 130316, "Outside Temperature");
+    eq_str("130316/Outside source0", r ? r->sources[0] : NULL, "SCX");
 
     /* mode fusion (AIS) */
     r = config_rule(&c, 129038, NULL);

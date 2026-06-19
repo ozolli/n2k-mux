@@ -12,7 +12,7 @@
  * Clé d'arbitrage : (pgn, src, discriminant).
  *   - discriminant : valeur d'un champ dont le NOM dépend du PGN. La table
  *     pgn→champ est intrinsèque et codée ici (130306/127250 → "Reference",
- *     130312 → "Temperature Source"/"Source"). Les VALEURS attendues sont dans
+ *     130316/130312 → "Temperature Source"/"Source"). Les VALEURS attendues sont dans
  *     la config (clés "pgn/discriminant").
  *   - mode de la règle (config) :
  *       priority : une seule source retenue = la plus prioritaire VIVANTE ;
