@@ -21,14 +21,30 @@ set -uo pipefail
 RUN="${RUNTIME_DIRECTORY:-/run/n2k-mux}"   # fourni par systemd (RuntimeDirectory=)
 TXFIFO="$RUN/tx.fifo"     # ISO Request → actisense bidirectionnel
 AISFIFO="$RUN/ais.fifo"   # copie du flux analyzer → branche AIS
+YDFIFO="$RUN/ydraw.fifo"  # copie des trames brutes actisense → branche YDRAW
 mkfifo -m 0600 "$TXFIFO"  2>/dev/null || true
 mkfifo -m 0600 "$AISFIFO" 2>/dev/null || true
+
+# Branche N2K (YDRAW réseau pour qtVlm) — OPTIONNELLE : active seulement si le
+# binaire ydraw-bridge est présent. Tape les trames BRUTES actisense (avant
+# analyzer) et les sert en YDRAW/TCP. Port hors plage n2kd (2597-2602) : déf. 2700.
+# $YDRAW_TEE = étage du pipeline : "tee $YDFIFO" si actif, sinon "cat" (no-op).
+YDRAW="${YDRAW:-/usr/local/bin/ydraw-bridge}"
+YDRAW_PORT="${YDRAW_PORT:-2700}"
+YDRAW_TEE=cat
+if [ -x "$YDRAW" ]; then
+  mkfifo -m 0600 "$YDFIFO" 2>/dev/null || true
+  "$YDRAW" --port "$YDRAW_PORT" < "$YDFIFO" &
+  YDRAW_TEE="tee $YDFIFO"
+fi
 
 # Branche AIS : flux dupliqué (ais.fifo) → dédup MMSI → n2kd (encode le VDM, TCP 2599).
 "$N2KMUX" --ais-json "$CONF" < "$AISFIFO" | "$N2KD" &
 
-# Branche principale : acquisition → analyzer → tee(→ais.fifo) → arbitrage → kplex.
+# Branche principale : acquisition → tee(→ydraw.fifo) → analyzer → tee(→ais.fifo)
+#   → arbitrage → kplex. $YDRAW_TEE est non quoté (split "tee FIFO" en arguments).
 "$ACTISENSE" -s "$BAUD" "$DEVICE" < "$TXFIFO" \
+  | $YDRAW_TEE \
   | "$ANALYZER" -json -nv \
   | tee "$AISFIFO" \
   | "$N2KMUX" "$CONF" --tx "$TXFIFO" \

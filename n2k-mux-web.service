@@ -1,0 +1,41 @@
+# n2k-mux-web.service — interface de gestion web (consultation + édition config).
+#
+# Sépare l'UI de la chaîne de données (n2k-mux.service) : un crash/restart du web
+# ne touche pas l'acquisition. Lit les JSON publiés par le daemon dans
+# /run/n2k-mux (sources/stats) et édite /etc/n2k-mux/n2k-mux.ini ; « Enregistrer »
+# écrit le fichier puis envoie SIGHUP au daemon (rechargement à chaud, sans root
+# côté client).
+#
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now n2k-mux-web
+#   http://<hôte>:8080/
+
+[Unit]
+Description=n2k-mux — interface web de gestion
+Documentation=https://github.com/ozolli/n2k-mux
+After=n2k-mux.service
+Wants=n2k-mux.service
+
+[Service]
+Type=simple
+
+Environment=CONF=/etc/n2k-mux/n2k-mux.ini
+Environment=WEB=/usr/local/bin/n2k-mux-web
+Environment=PORT=8080 BIND=0.0.0.0
+EnvironmentFile=-/etc/default/n2k-mux
+
+# Lit les JSON du daemon dans /run/n2k-mux ; « Enregistrer » écrit la config puis
+# recharge à chaud les deux instances n2k-mux (principale + --ais-json).
+ExecStart=/bin/sh -c '"$WEB" "$CONF" --sources /run/n2k-mux/sources.json --stats /run/n2k-mux/stats.json --port "$PORT" --bind "$BIND" --reload-cmd "pkill -HUP -x n2k-mux"'
+
+Restart=always
+RestartSec=3
+
+# Durcissement : /etc reste inscriptible (ProtectSystem=true, PAS full) pour que
+# « Enregistrer » puisse écrire /etc/n2k-mux/n2k-mux.ini.
+NoNewPrivileges=true
+ProtectHome=read-only
+ProtectSystem=true
+
+[Install]
+WantedBy=multi-user.target

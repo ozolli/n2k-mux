@@ -119,11 +119,14 @@ n2k-mux-gui: $(CONFIG_OBJ) $(SOURCES_OBJ) $(BUILD)/gui.o
 # --- Installation système (daemon + service systemd) ---
 # make install            installe le daemon, le service et les exemples
 # make install GUI=1      installe aussi la GUI (doit être construite : make n2k-mux-gui)
-install: n2k-mux
+install: n2k-mux n2k-mux-web ydraw-bridge
 	install -d $(DESTDIR)$(PREFIX)/bin
 	install -m755 n2k-mux $(DESTDIR)$(PREFIX)/bin/n2k-mux
 	install -m755 n2k-mux-run $(DESTDIR)$(PREFIX)/bin/n2k-mux-run
+	install -m755 n2k-mux-web $(DESTDIR)$(PREFIX)/bin/n2k-mux-web
+	install -m755 ydraw-bridge $(DESTDIR)$(PREFIX)/bin/ydraw-bridge
 	install -Dm644 n2k-mux.service $(DESTDIR)/etc/systemd/system/n2k-mux.service
+	install -Dm644 n2k-mux-web.service $(DESTDIR)/etc/systemd/system/n2k-mux-web.service
 	install -Dm644 n2k-mux.ini.example $(DESTDIR)/etc/n2k-mux/n2k-mux.ini.example
 	install -Dm644 kplex.conf.example $(DESTDIR)/etc/n2k-mux/kplex.conf.example
 	install -Dm644 n2k-mux.env.example $(DESTDIR)/etc/default/n2k-mux.example
@@ -131,11 +134,13 @@ ifeq ($(GUI),1)
 	install -m755 n2k-mux-gui $(DESTDIR)$(PREFIX)/bin/n2k-mux-gui
 endif
 	@echo "Installé. Pense à : cp /etc/n2k-mux/n2k-mux.ini.example /etc/n2k-mux/n2k-mux.ini"
-	@echo "puis : systemctl daemon-reload && systemctl enable --now n2k-mux"
+	@echo "puis : systemctl daemon-reload && systemctl enable --now n2k-mux n2k-mux-web"
 
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/n2k-mux $(DESTDIR)$(PREFIX)/bin/n2k-mux-run $(DESTDIR)$(PREFIX)/bin/n2k-mux-gui
+	rm -f $(DESTDIR)$(PREFIX)/bin/n2k-mux-web $(DESTDIR)$(PREFIX)/bin/ydraw-bridge
 	rm -f $(DESTDIR)/etc/systemd/system/n2k-mux.service
+	rm -f $(DESTDIR)/etc/systemd/system/n2k-mux-web.service
 	rm -f $(DESTDIR)/etc/default/n2k-mux.example
 	rm -f $(DESTDIR)/etc/n2k-mux/n2k-mux.ini.example
 

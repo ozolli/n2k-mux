@@ -286,11 +286,12 @@ Modules prévus (ordre d'implémentation) :
 
 NGX-1 en mode TRANSFER (N2K brut, 230400) — surtout PAS Convert
   → actisense-serial -s 230400 /dev/ttyNGX1 < tx.fifo   (bidirectionnel pour --tx)
+  → tee ydraw.fifo ──→ ydraw-bridge --port 2700  (N2K YDRAW → qtVlm natif)  [OPTIONNEL]
   → analyzer -json -nv          (-nv requis par n2kd ; notre parser le gère)
   → tee ─┬→ n2k-mux conf --tx tx.fifo --sources sources.json --stats stats.json ─┐ (instruments → stdin kplex)
          └→ n2k-mux --ais-json conf → n2kd  (AIS → TCP 2599) ─┘
   → kplex (mode=foreground : lit stdin + client tcp 2599) → TCP 10110 / UDP / log
-  → qtVlm, tablettes
+  → qtVlm (0183 sur 10110 ET/OU N2K sur 2700), tablettes
 
 Tout est lancé par n2k-mux.service ; kplex est le DERNIER maillon du pipeline
 (plus de service kplex autonome → Conflicts=kplex.service). Voir n2k-mux.service,
@@ -301,10 +302,25 @@ Le service ne lance PAS un `bash -c` inline : il appelle le script **n2k-mux-run
 ($RUNTIME_DIRECTORY/ais.fifo) au lieu de `tee >(... | n2kd)` — l'ancienne
 substitution de process laissait survivre n2kd → collision « Address already in
 use » sur ses ports 2597-2602 au redémarrage. Le script suit tous les composants
-(`wait -n`) : si UN meurt (n2kd, kplex, analyzer, un n2k-mux), il sort → systemd
-relance TOUTE la chaîne (fini la dégradation silencieuse où n2kd mort = plus d'AIS
-sans alerte). KillMode=control-group tue le cgroup entier (0 zombie), et
-`ExecStartPre` fait un `pkill -f "[n]2kd"` de garde avant chaque démarrage.
+(`wait -n`) : si UN meurt (n2kd, kplex, analyzer, un n2k-mux, ydraw-bridge), il
+sort → systemd relance TOUTE la chaîne (fini la dégradation silencieuse où n2kd
+mort = plus d'AIS sans alerte). KillMode=control-group tue le cgroup entier (0
+zombie), et `ExecStartPre` fait un `pkill -f "[n]2kd"` de garde avant chaque
+démarrage. VALIDÉ live le 2026-06-19 : `pkill kplex` → relance complète sous ~3 s
+(NRestarts incrémenté), ports/cibles revenus.
+
+Branche N2K (ydraw-bridge) : OPTIONNELLE dans n2k-mux-run (active si le binaire
+$YDRAW = /usr/local/bin/ydraw-bridge existe). Elle tape les trames BRUTES actisense
+(via ydraw.fifo, AVANT analyzer) et les sert en YDRAW/TCP. **Port 2700** par défaut
+($YDRAW_PORT) car n2kd réquisitionne 2597-2602 (2600 inclus → collision sinon).
+qtVlm : source NMEA TCP → <hôte>:2700 (auto-détection YDRAW), AIS+nav+sat décodés
+nativement (qtVlm ≥ 5.12.27-beta2).
+
+Interface web : **n2k-mux-web.service** SÉPARÉ (un restart de l'UI ne touche pas la
+chaîne données). Lit /run/n2k-mux/sources.json+stats.json (publiés par le daemon),
+sert sur 8080, « Enregistrer » écrit /etc/n2k-mux/n2k-mux.ini puis `pkill -HUP -x
+n2k-mux` (reload à chaud des deux instances). Tourne en root (écriture config + log
+kplex /var/log/kplex OK) ; ProtectSystem=true (PAS full) pour garder /etc inscriptible.
 
 CONTEXTE (cf. /home/ozolli/CR-NMEA-O3.pdf) : l'archi d'origine était NGX-1 en
 mode Convert (N2K→0183 dans la passerelle) → kplex lisant /dev/ttyNGX1 en direct
