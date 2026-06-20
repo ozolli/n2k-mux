@@ -343,6 +343,11 @@ int main(int argc, char **argv)
                  * gate s'ouvre — sinon la pagination serait cassée. */
                 char opened[MAP_MAX_SENT][4];
                 int  n_opened = 0;
+                /* Types déjà comptés dans CETTE rafale : un type paginé (GSV)
+                 * ne compte qu'une fois pour l'intervalle, les pages suivantes
+                 * ne pèsent que sur la bande passante. */
+                char counted[MAP_MAX_SENT][4];
+                int  n_counted = 0;
                 int  wrote = 0;
                 for (int i = 0; i < out.n; i++) {
                     char ty[4];
@@ -367,7 +372,17 @@ int main(int argc, char **argv)
                     if (pass) {
                         fputs(out.s[i], stdout);
                         wrote++;
-                        stats_observe_out(&st, ty, strlen(out.s[i]));
+                        size_t len = strlen(out.s[i]);
+                        bool seen = false;
+                        for (int j = 0; j < n_counted; j++)
+                            if (strcmp(counted[j], ty) == 0) { seen = true; break; }
+                        if (ty[0] && !seen) {
+                            stats_observe_out(&st, ty, len);
+                            if (n_counted < MAP_MAX_SENT)
+                                snprintf(counted[n_counted++], 4, "%s", ty);
+                        } else {
+                            stats_observe_out_bytes(&st, len);  /* page suppl. : octets seuls */
+                        }
                     }
                 }
                 n_sent += wrote;

@@ -52,6 +52,19 @@ int main(void)
     /* charge = 50 / (4800/10) * 100 = 10.42 % */
     ok("charge 0183 ~10.4%", oload > 10.3 && oload < 10.5);
 
+    /* --- pagination : 1 rafale GSV de 3 pages → le TYPE n'est compté qu'une
+       fois (intervalle = rafale), mais les 3 pages pèsent sur la bande
+       passante (charge 0183). --- */
+    stats_observe_out(&s, "GSV", 30);    /* page 1 : type + octets */
+    stats_observe_out_bytes(&s, 30);     /* page 2 : octets seuls */
+    stats_observe_out_bytes(&s, 30);     /* page 3 : octets seuls */
+    int gsv_count = -1;
+    for (int i = 0; i < s.n_types; i++)
+        if (strcmp(s.types[i].type, "GSV") == 0) { gsv_count = (int)s.types[i].count; break; }
+    ok("GSV compté 1 fois (rafale)", gsv_count == 1);
+    stats_summary_out(&s, 3000, &osps, NULL, NULL);
+    ok("6 phrases / 2 s = 3/s (bande passante)", osps > 2.99 && osps < 3.01);
+
     /* --- JSON : contient les champs attendus --- */
     char buf[4096];
     int len = stats_to_json(&s, buf, sizeof buf, 3000);

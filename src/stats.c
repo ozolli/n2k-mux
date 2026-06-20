@@ -76,6 +76,12 @@ void stats_observe(stats_t *s, int pgn)
     }
 }
 
+void stats_observe_out_bytes(stats_t *s, size_t bytes)
+{
+    s->out_sent++;
+    s->out_bytes += (unsigned long)bytes;
+}
+
 void stats_observe_out(stats_t *s, const char *type, size_t bytes)
 {
     s->out_sent++;

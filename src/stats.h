@@ -70,6 +70,12 @@ void stats_observe(stats_t *s, int pgn);
 /* Enregistre une phrase 0183 émise (type "GLL"… + nb d'octets). */
 void stats_observe_out(stats_t *s, const char *type, size_t bytes);
 
+/* Bande passante seule : compte la phrase pour la charge 0183 mais SANS
+ * incrémenter le compteur du type. À utiliser pour les pages supplémentaires
+ * d'une rafale paginée (pages 2..N d'un GSV) → l'intervalle par type reflète
+ * la rafale et non chaque page. */
+void stats_observe_out_bytes(stats_t *s, size_t bytes);
+
 /* Nombre de trames CAN estimé pour un PGN (1 par défaut / single-frame). */
 int  stats_frames_for(int pgn);
 
