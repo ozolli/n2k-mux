@@ -72,11 +72,13 @@ static const char PAGE[] =
 "textarea::-webkit-scrollbar{width:12px;height:12px}textarea::-webkit-scrollbar-track{background:#0b0e12}textarea::-webkit-scrollbar-thumb{background:#30363d;border-radius:6px;border:2px solid #0b0e12}\n"
 ".btn{background:#238636;color:#fff;border:0;padding:.5em 1.1em;border-radius:6px;cursor:pointer;margin-right:.5em}\n"
 ".btn.sec{background:#21262d;border:1px solid #2a313a}\n"
-"#msg{margin:.6em 0;padding:.5em .8em;border-radius:6px;display:none}#msg.ok{display:block;background:#12351f;color:#7ee787}\n"
-"#msg.err{display:block;background:#3a1212;color:#ff7b72;white-space:pre-wrap}\n"
+"#msg,#arb_msg{margin:.6em 0;padding:.5em .8em;border-radius:6px;display:none}#msg.ok,#arb_msg.ok{display:block;background:#12351f;color:#7ee787}\n"
+"#msg.err,#arb_msg.err{display:block;background:#3a1212;color:#ff7b72;white-space:pre-wrap}\n"
 "small{color:#8b949e}\n"
 ".bok{color:#3fb950}.blo{color:#d29922}.bnu{color:#8b949e}\n"   /* statut : émis / supplanté / neutre */
-".dot{color:#3fb950}.dot.off{color:#444}\n"                    /* pastille vivant */
+".dot{color:#3fb950}.dotoff{color:#444}\n"                     /* pastille vivant */
+".ob{background:#21262d;color:#d8dee5;border:1px solid #2a313a;border-radius:4px;cursor:pointer;padding:0 .35em;margin:0 1px}\n"
+"select{background:#0b0e12;color:#d8dee5;border:1px solid #2a313a;border-radius:4px;padding:.1em .3em}\n"
 "</style></head><body>\n"
 "<header><b>n2k-mux</b>\n"
 "<nav><button data-t='sources' class='on'>Sources</button>"
@@ -85,7 +87,12 @@ static const char PAGE[] =
 "<small id='clock' style='margin-left:auto'></small></header>\n"
 "<main>\n"
 "<section id='sources' class='tab on'><div id='src_body'>…</div></section>\n"
-"<section id='arbitrage' class='tab'><div id='arb_body'>…</div></section>\n"
+"<section id='arbitrage' class='tab'>\n"
+"<div id='arb_msg'></div>\n"
+"<div style='margin:.2em 0 .6em'><button class='btn' id='arb_save'>Enregistrer l'arbitrage</button>"
+"<button class='btn sec' id='arb_reload'>Rafraîchir</button>"
+"<small> &nbsp;case = source retenue · ▲▼ = ordre de priorité · mode par groupe</small></div>\n"
+"<div id='arb_body'>…</div></section>\n"
 "<section id='charge' class='tab'><div id='chg_body'>…</div></section>\n"
 "<section id='config' class='tab'>\n"
 "<div id='msg'></div>\n"
@@ -105,6 +112,7 @@ static const char PAGE[] =
 "document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{\n"
 " document.querySelectorAll('nav button').forEach(x=>x.classList.remove('on'));b.classList.add('on');\n"
 " document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));$('#'+b.dataset.t).classList.add('on');\n"
+" if(b.dataset.t==='arbitrage')loadArb();\n"
 "});\n"
 "async function jget(u){const r=await fetch(u);if(!r.ok)throw new Error(r.status);return r.json()}\n"
 "async function renderSources(){try{const a=await jget('/api/sources');\n"
@@ -137,21 +145,51 @@ static const char PAGE[] =
 "$('#reload').onclick=loadIni;\n"
 "const PGNNAME={129025:'Position',129026:'COG/SOG',129029:'Position GNSS',129539:'DOP',129540:'Satellites',126992:'Heure',127250:'Cap',127251:'Giration',127257:'Attitude',130306:'Vent',127245:'Barre',129291:'Courant',128259:'Vitesse surface',128267:'Profondeur',128275:'Loch',130316:'Température',130314:'Pression',129038:'AIS pos A',129039:'AIS pos B',129040:'AIS pos B',129041:'AIS AtoN',129794:'AIS statique A',129809:'AIS statique 24A',129810:'AIS statique 24B',60928:'ISO Address Claim',126996:'Product Info',126993:'Heartbeat',59904:'ISO Request'};\n"
 "const ST={accept:['émis','bok'],reject_priority:['supplanté','blo'],not_in_rule:['hors-règle','bnu'],no_rule:['non réglé','bnu'],unconfigured:['non configuré','bnu'],unknown_src:['identité ?','bnu'],ignored:['ignoré','bnu']};\n"
-"async function renderArbitrage(){try{const d=await jget('/api/busmap');\n"
-" const u=(d.units||[]).slice().sort((a,b)=>a.pgn-b.pgn||(a.disc||'').localeCompare(b.disc||''));\n"
-" let h='';\n"
-" for(const g of u){\n"
-"  h+='<div class=card><h3>'+g.pgn+(g.disc?' / '+esc(g.disc):'')+' <small>'+(PGNNAME[g.pgn]||'')+'</small></h3>';\n"
-"  h+='<table class=fix><tr><th>source</th><th>identité</th><th>état</th></tr>';\n"
-"  for(const s of g.sources){const t=ST[s.status]||[s.status,'bnu'];\n"
-"   h+='<tr><td><span class=\\'dot'+(s.alive?'':' off')+'\\'>●</span> '+esc(s.name||('src '+s.src))+'</td><td><code>'+esc(s.ident||'—')+'</code></td><td><span class='+t[1]+'>'+t[0]+'</span></td></tr>';}\n"
-"  h+='</table></div>';\n"
-" }\n"
-" $('#arb_body').innerHTML='<div class=row>'+(u.length?h:'<p><small>busmap.json indisponible (daemon lancé avec --busmap ?).</small></p>')+'</div>';\n"
-"}catch(e){$('#arb_body').innerHTML='<p><small>busmap.json indisponible.</small></p>';}}\n"
+"let ARB=null;\n"
+"function akey(p,d){return p+'|'+(d||'')}\n"
+"function nameOf(id){const s=(ARB.sources||[]).find(x=>x.ident===id);return s?s.name:''}\n"
+"function amsg(t,cls){const m=$('#arb_msg');m.textContent=t;m.className=t?(cls||'ok'):'';}\n"
+"async function loadArb(){try{\n"
+" const r=await Promise.all([jget('/api/busmap'),jget('/api/rules')]);const bm=r[0],ru=r[1];\n"
+" const rmap={};for(const x of (ru.rules||[]))rmap[akey(x.pgn,x.disc)]=x;\n"
+" ARB={talker:ru.talker||'II',sources:ru.sources||[],rates:ru.rates||[],ignore:ru.ignore||{src:[],pgn:[]},units:[]};\n"
+" const seen={};\n"
+" for(const u of (bm.units||[])){const k=akey(u.pgn,u.disc);seen[k]=1;const x=rmap[k];\n"
+"  ARB.units.push({pgn:u.pgn,disc:u.disc,mode:x?x.mode:'priority',sel:x?x.sources.slice():[],obs:u.sources.slice()});}\n"
+" for(const x of (ru.rules||[])){const k=akey(x.pgn,x.disc);if(!seen[k]){ARB.units.push({pgn:x.pgn,disc:x.disc,mode:x.mode,sel:x.sources.slice(),obs:[]});}}\n"
+" ARB.units.sort((a,b)=>a.pgn-b.pgn||(a.disc||'').localeCompare(b.disc||''));\n"
+" amsg('');drawArb();\n"
+"}catch(e){$('#arb_body').innerHTML='<p><small>busmap/rules indisponible (daemon avec --busmap ?).</small></p>';}}\n"
+"function drawArb(){let h='';\n"
+" for(let ui=0;ui<ARB.units.length;ui++){const u=ARB.units[ui];\n"
+"  const cand=[];const add=n=>{if(n&&cand.indexOf(n)<0)cand.push(n)};\n"
+"  u.sel.forEach(add);u.obs.forEach(o=>{const nm=o.name||nameOf(o.ident);if(nm)add(nm)});u.cand=cand;\n"
+"  h+='<div class=card><h3>'+u.pgn+(u.disc?' / '+esc(u.disc):'')+' <small>'+(PGNNAME[u.pgn]||'')+'</small> '\n"
+"    +'<select data-act=mode data-u='+ui+'>'+['priority','min','max','fusion'].map(m=>'<option value='+m+(u.mode===m?' selected':'')+'>'+m+'</option>').join('')+'</select></h3><table class=fix>';\n"
+"  cand.forEach((nm,ci)=>{const si=u.sel.indexOf(nm);const o=u.obs.find(x=>(x.name||nameOf(x.ident))===nm)||{};const t=ST[o.status]||['',''];\n"
+"   h+='<tr><td><input type=checkbox data-act=tog data-u='+ui+' data-ci='+ci+(si>=0?' checked':'')+'> '\n"
+"     +'<span class='+(o.alive?'dot':'dotoff')+'>●</span> '+esc(nm)+'</td>'\n"
+"     +'<td>'+(si>=0?('<button class=ob data-act=mv data-u='+ui+' data-i='+si+' data-d=-1>▲</button><button class=ob data-act=mv data-u='+ui+' data-i='+si+' data-d=1>▼</button> '+(si+1)):'')+'</td>'\n"
+"     +'<td><span class='+(t[1]||'bnu')+'>'+(t[0]||'')+'</span></td></tr>';});\n"
+"  u.obs.filter(o=>!(o.name||nameOf(o.ident))).forEach(o=>{h+='<tr><td colspan=3><small>src '+o.src+' '+esc(o.ident||'')+' — non nommé (onglet Configuration)</small></td></tr>';});\n"
+"  if(!cand.length&&!u.obs.length)h+='<tr><td><small>—</small></td></tr>';\n"
+"  h+='</table></div>';}\n"
+" $('#arb_body').innerHTML='<div class=row>'+h+'</div>';}\n"
+"$('#arb_body').addEventListener('change',e=>{const t=e.target,u=+t.dataset.u;\n"
+" if(t.dataset.act==='tog'){const nm=ARB.units[u].cand[+t.dataset.ci],s=ARB.units[u].sel,i=s.indexOf(nm);if(i>=0)s.splice(i,1);else s.push(nm);drawArb();}\n"
+" else if(t.dataset.act==='mode'){ARB.units[u].mode=t.value;}});\n"
+"$('#arb_body').addEventListener('click',e=>{const t=e.target;if(t.dataset.act!=='mv')return;const u=+t.dataset.u,i=+t.dataset.i,d=+t.dataset.d,s=ARB.units[u].sel,j=i+d;if(j<0||j>=s.length)return;const x=s[i];s[i]=s[j];s[j]=x;drawArb();});\n"
+"function buildIni(){let o='[output]\\ntalker = '+(ARB.talker||'II')+'\\n\\n[sources]\\n';\n"
+" for(const s of ARB.sources)o+=s.name+' = '+s.ident+'\\n';\n"
+" o+='\\n[priority]\\n';\n"
+" for(const u of ARB.units){if(!u.sel.length)continue;const p=(u.mode&&u.mode!=='priority')?u.mode+': ':'';o+=u.pgn+(u.disc?'/'+u.disc:'')+' = '+p+u.sel.join(', ')+'\\n';}\n"
+" o+='\\n[ignore]\\n';if(ARB.ignore.src&&ARB.ignore.src.length)o+='src = '+ARB.ignore.src.join(', ')+'\\n';if(ARB.ignore.pgn&&ARB.ignore.pgn.length)o+='pgn = '+ARB.ignore.pgn.join(', ')+'\\n';\n"
+" o+='\\n[rate]\\n';for(const r of ARB.rates)o+=r.type+' = '+r.ms+'\\n';return o;}\n"
+"$('#arb_save').onclick=async()=>{const r=await fetch('/api/config',{method:'POST',body:buildIni()});const d=await r.json();\n"
+" d.ok?amsg('Arbitrage enregistré et rechargé.','ok'):amsg('Refusé — ligne '+(d.line||'?')+' : '+(d.err||''),'err');if(d.ok)setTimeout(loadArb,600);};\n"
+"$('#arb_reload').onclick=loadArb;\n"
 "function tick(){$('#clock').textContent=new Date().toLocaleTimeString();\n"
 " if($('#sources').classList.contains('on'))renderSources();\n"
-" if($('#arbitrage').classList.contains('on'))renderArbitrage();\n"
 " if($('#charge').classList.contains('on'))renderCharge();}\n"
 "loadIni();tick();setInterval(tick,3000);\n"
 "</script></body></html>\n";
@@ -226,6 +264,65 @@ static void serve_json_file(int fd, const char *path)
         send_resp(fd, 200, "OK", "application/json", buf, len);
     else
         send_text(fd, 200, "OK", "application/json", "{}");
+}
+
+static const char *mode_str(cfg_mode_t m)
+{
+    switch (m) {
+        case CFG_PICK_MIN:    return "min";
+        case CFG_PICK_MAX:    return "max";
+        case CFG_PICK_FUSION: return "fusion";
+        default:              return "priority";
+    }
+}
+
+/* GET /api/rules : la config courante (INI parsée) en JSON structuré, pour
+ * l'éditeur d'arbitrage. Une seule source de vérité : le parser C. */
+static void serve_rules(int fd)
+{
+    config_t c;
+    if (!config_load(&c, g_cfg_path)) {
+        send_text(fd, 200, "OK", "application/json", "{}");
+        return;
+    }
+    static char buf[16384];
+    char e[CFG_IDENT_LEN * 2];
+    size_t n = 0;
+    int w;
+#define APP(...) do { w = snprintf(buf + n, sizeof buf - n, __VA_ARGS__); \
+        if (w < 0 || (size_t)w >= sizeof buf - n) { \
+            send_text(fd, 500, "Error", "application/json", "{}"); return; } \
+        n += (size_t)w; } while (0)
+
+    json_escape(c.talker, e, sizeof e);
+    APP("{\"talker\":\"%s\",\"sources\":[", e);
+    for (int i = 0; i < c.n_sources; i++) {
+        json_escape(c.sources[i].name, e, sizeof e);  APP("%s{\"name\":\"%s\",", i ? "," : "", e);
+        json_escape(c.sources[i].ident, e, sizeof e); APP("\"ident\":\"%s\"}", e);
+    }
+    APP("],\"rules\":[");
+    for (int i = 0; i < c.n_rules; i++) {
+        const cfg_rule_t *r = &c.rules[i];
+        json_escape(r->discriminant, e, sizeof e);
+        APP("%s{\"pgn\":%d,\"disc\":\"%s\",\"mode\":\"%s\",\"sources\":[",
+            i ? "," : "", r->pgn, e, mode_str(r->mode));
+        for (int j = 0; j < r->n_sources; j++) {
+            json_escape(r->sources[j], e, sizeof e); APP("%s\"%s\"", j ? "," : "", e);
+        }
+        APP("]}");
+    }
+    APP("],\"rates\":[");
+    for (int i = 0; i < c.n_rates; i++) {
+        json_escape(c.rates[i].type, e, sizeof e);
+        APP("%s{\"type\":\"%s\",\"ms\":%d}", i ? "," : "", e, c.rates[i].min_interval_ms);
+    }
+    APP("],\"ignore\":{\"src\":[");
+    for (int i = 0; i < c.n_ignore_src; i++) APP("%s%d", i ? "," : "", c.ignore_src[i]);
+    APP("],\"pgn\":[");
+    for (int i = 0; i < c.n_ignore_pgn; i++) APP("%s%d", i ? "," : "", c.ignore_pgn[i]);
+    APP("]}}");
+#undef APP
+    send_text(fd, 200, "OK", "application/json", buf);
 }
 
 /* POST /api/validate et /api/config : `body` = texte INI. */
@@ -309,6 +406,8 @@ static void handle_client(int fd)
             serve_json_file(fd, g_stats_path);
         else if (strcmp(path, "/api/busmap") == 0)
             serve_json_file(fd, g_busmap_path);
+        else if (strcmp(path, "/api/rules") == 0)
+            serve_rules(fd);
         else if (strcmp(path, "/api/config") == 0) {
             static char buf[FILE_MAX]; size_t len = 0;
             if (g_cfg_path && read_file(g_cfg_path, buf, sizeof buf, &len) == 0)
