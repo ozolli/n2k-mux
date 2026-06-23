@@ -200,7 +200,7 @@ static const char PAGE[] =
 "   h+='<span class=chip><input type=checkbox data-act=tog data-u='+ui+' data-ci='+ci+(si>=0?' checked':'')+'>'\n"
 "     +'<span class='+(o.alive?'dot':'dotoff')+'>●</span>'+esc(nm)\n"
 "     +(si>=0?(' <button class=ob data-act=mv data-u='+ui+' data-i='+si+' data-d=-1>◀</button><button class=ob data-act=mv data-u='+ui+' data-i='+si+' data-d=1>▶</button>'):'')\n"
-"     +(t[0]?(' <span class='+(t[1]||'bnu')+'>'+t[0]+'</span>'):'')+'</span>';});\n"
+"     +((t[0]&&o.status&&o.status!=='accept')?(' <span class='+(t[1]||'bnu')+'>'+t[0]+'</span>'):'')+'</span>';});\n"
 "  u.obs.filter(o=>!(o.name||nameOf(o.ident))).forEach(o=>{h+='<span class=chip><small>src '+o.src+' '+esc(o.ident||'')+' — à nommer</small></span>';});\n"
 "  if(!cand.length&&!u.obs.length)h+='<small>—</small>';\n"
 "  h+='</td></tr>';}\n"
