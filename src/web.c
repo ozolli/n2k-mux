@@ -80,6 +80,7 @@ static const char PAGE[] =
 ".dot{color:#3fb950}.dotoff{color:#444}\n"                     /* pastille vivant */
 ".ob{background:#21262d;color:#d8dee5;border:1px solid #2a313a;border-radius:4px;cursor:pointer;padding:0 .35em;margin:0 1px}\n"
 "select{background:#0b0e12;color:#d8dee5;border:1px solid #2a313a;border-radius:4px;padding:.1em .3em}\n"
+".tg{font-size:.85em;margin-left:.7em;white-space:nowrap;color:#d8dee5}\n"
 "</style></head><body>\n"
 "<header><b>n2k-mux</b>\n"
 "<nav><button data-t='sources' class='on'>Sources</button>"
@@ -138,7 +139,7 @@ static const char PAGE[] =
 " const newName={};document.querySelectorAll('#src_body input[data-ident]').forEach(i=>{const v=i.value.trim();if(v)newName[i.dataset.ident]=v;});\n"
 " const sources=Object.keys(newName).map(id=>({ident:id,name:newName[id]}));\n"
 " const rules=(ru.rules||[]).map(r=>({pgn:r.pgn,disc:r.disc,mode:r.mode,sources:r.sources.map(n=>{const id=identByName[n];return id===undefined?n:newName[id];}).filter(Boolean)}));\n"
-" const res=await fetch('/api/config',{method:'POST',body:genIni(ru.talker,sources,rules,ru.ignore,ru.rates)});const d=await res.json();\n"
+" const res=await fetch('/api/config',{method:'POST',body:genIni(ru.talker,sources,rules,ru.ignore,ru.rates,ru.no_n2k,ru.no_0183)});const d=await res.json();\n"
 " d.ok?smsg('Noms enregistrés et rechargés.','ok'):smsg('Refusé — ligne '+(d.line||'?')+' : '+(d.err||''),'err');\n"
 " if(d.ok)setTimeout(renderSources,2500);\n"
 "}catch(e){smsg('Erreur : '+e,'err');}}\n"
@@ -165,6 +166,7 @@ static const char PAGE[] =
 "$('#reload').onclick=loadIni;\n"
 "const PGNNAME={129025:'Position',129026:'COG/SOG',129029:'Position GNSS',129539:'DOP',129540:'Satellites',126992:'Heure',127250:'Cap',127251:'Giration',127257:'Attitude',130306:'Vent',127245:'Barre',129291:'Courant',128259:'Vitesse surface',128267:'Profondeur',128275:'Loch',130316:'Température',130314:'Pression',129038:'AIS pos A',129039:'AIS pos B',129040:'AIS pos B',129041:'AIS AtoN',129794:'AIS statique A',129809:'AIS statique 24A',129810:'AIS statique 24B',60928:'ISO Address Claim',126996:'Product Info',126993:'Heartbeat',59904:'ISO Request'};\n"
 "const ST={accept:['émis','bok'],reject_priority:['supplanté','blo'],not_in_rule:['hors-règle','bnu'],no_rule:['non réglé','bnu'],unconfigured:['non configuré','bnu'],unknown_src:['identité ?','bnu'],ignored:['ignoré','bnu']};\n"
+"const PGN2SENT={129025:['GLL'],129026:['VTG'],129029:['GGA'],129539:['GSA'],129540:['GSV'],126992:['ZDA'],127250:['HDG','HDM','HDT'],127251:['ROT'],127257:['XDR'],130306:['MWV','MWD'],127245:['RSA'],129291:['VDR'],128259:['VHW'],128267:['DPT'],128275:['VLW'],130316:['MTW','MDA'],130314:['MDA']};\n"
 "let ARB=null;\n"
 "function akey(p,d){return p+'|'+(d||'')}\n"
 "function nameOf(id){const s=(ARB.sources||[]).find(x=>x.ident===id);return s?s.name:''}\n"
@@ -178,6 +180,8 @@ static const char PAGE[] =
 "  ARB.units.push({pgn:u.pgn,disc:u.disc,mode:x?x.mode:'priority',sel:x?x.sources.slice():[],obs:u.sources.slice()});}\n"
 " for(const x of (ru.rules||[])){const k=akey(x.pgn,x.disc);if(!seen[k]){ARB.units.push({pgn:x.pgn,disc:x.disc,mode:x.mode,sel:x.sources.slice(),obs:[]});}}\n"
 " ARB.units.sort((a,b)=>a.pgn-b.pgn||(a.disc||'').localeCompare(b.disc||''));\n"
+" const nn=ru.no_n2k||[],no=ru.no_0183||[];\n"
+" for(const u of ARB.units){u.n2k=nn.indexOf(u.pgn)<0;u.o183=no.indexOf(u.pgn)<0;u.mappable=PGN2SENT[u.pgn]!==undefined;}\n"
 " amsg('');drawArb();\n"
 "}catch(e){$('#arb_body').innerHTML='<p><small>busmap/rules indisponible (daemon avec --busmap ?).</small></p>';}}\n"
 "function drawArb(){let h='';\n"
@@ -185,7 +189,10 @@ static const char PAGE[] =
 "  const cand=[];const add=n=>{if(n&&cand.indexOf(n)<0)cand.push(n)};\n"
 "  u.sel.forEach(add);u.obs.forEach(o=>{const nm=o.name||nameOf(o.ident);if(nm)add(nm)});u.cand=cand;\n"
 "  h+='<div class=card><h3>'+u.pgn+(u.disc?' / '+esc(u.disc):'')+' <small>'+(PGNNAME[u.pgn]||'')+'</small> '\n"
-"    +'<select data-act=mode data-u='+ui+'>'+['priority','min','max','fusion'].map(m=>'<option value='+m+(u.mode===m?' selected':'')+'>'+m+'</option>').join('')+'</select></h3><table class=fix>';\n"
+"    +'<select data-act=mode data-u='+ui+'>'+['priority','min','max','fusion'].map(m=>'<option value='+m+(u.mode===m?' selected':'')+'>'+m+'</option>').join('')+'</select>'\n"
+"    +'<label class=tg><input type=checkbox data-act=n2k data-u='+ui+(u.n2k?' checked':'')+'> N2K</label>'\n"
+"    +(u.mappable?('<label class=tg><input type=checkbox data-act=o183 data-u='+ui+(u.o183?' checked':'')+'> 0183</label>'):'<small class=tg>0183 N/A</small>')\n"
+"    +'</h3><table class=fix>';\n"
 "  cand.forEach((nm,ci)=>{const si=u.sel.indexOf(nm);const o=u.obs.find(x=>(x.name||nameOf(x.ident))===nm)||{};const t=ST[o.status]||['',''];\n"
 "   h+='<tr><td><input type=checkbox data-act=tog data-u='+ui+' data-ci='+ci+(si>=0?' checked':'')+'> '\n"
 "     +'<span class='+(o.alive?'dot':'dotoff')+'>●</span> '+esc(nm)+'</td>'\n"
@@ -197,16 +204,22 @@ static const char PAGE[] =
 " $('#arb_body').innerHTML='<div class=row>'+h+'</div>';}\n"
 "$('#arb_body').addEventListener('change',e=>{const t=e.target,u=+t.dataset.u;\n"
 " if(t.dataset.act==='tog'){const nm=ARB.units[u].cand[+t.dataset.ci],s=ARB.units[u].sel,i=s.indexOf(nm);if(i>=0)s.splice(i,1);else s.push(nm);drawArb();}\n"
-" else if(t.dataset.act==='mode'){ARB.units[u].mode=t.value;}});\n"
+" else if(t.dataset.act==='mode'){ARB.units[u].mode=t.value;}\n"
+" else if(t.dataset.act==='n2k'){ARB.units[u].n2k=t.checked;}\n"
+" else if(t.dataset.act==='o183'){ARB.units[u].o183=t.checked;}});\n"
 "$('#arb_body').addEventListener('click',e=>{const t=e.target;if(t.dataset.act!=='mv')return;const u=+t.dataset.u,i=+t.dataset.i,d=+t.dataset.d,s=ARB.units[u].sel,j=i+d;if(j<0||j>=s.length)return;const x=s[i];s[i]=s[j];s[j]=x;drawArb();});\n"
-"function genIni(talker,sources,rules,ignore,rates){let o='[output]\\ntalker = '+(talker||'II')+'\\n\\n[sources]\\n';\n"
+"function genIni(talker,sources,rules,ignore,rates,no_n2k,no_0183){let o='[output]\\ntalker = '+(talker||'II')+'\\n';\n"
+" if(no_n2k&&no_n2k.length)o+='no_n2k = '+no_n2k.join(', ')+'\\n';\n"
+" if(no_0183&&no_0183.length)o+='no_0183 = '+no_0183.join(', ')+'\\n';\n"
+" o+='\\n[sources]\\n';\n"
 " for(const s of (sources||[]))if(s.name)o+=s.name+' = '+s.ident+'\\n';\n"
 " o+='\\n[priority]\\n';\n"
 " for(const r of (rules||[])){if(!r.sources||!r.sources.length)continue;const p=(r.mode&&r.mode!=='priority')?r.mode+': ':'';o+=r.pgn+(r.disc?'/'+r.disc:'')+' = '+p+r.sources.join(', ')+'\\n';}\n"
 " o+='\\n[ignore]\\n';if(ignore&&ignore.src&&ignore.src.length)o+='src = '+ignore.src.join(', ')+'\\n';if(ignore&&ignore.pgn&&ignore.pgn.length)o+='pgn = '+ignore.pgn.join(', ')+'\\n';\n"
 " o+='\\n[rate]\\n';for(const x of (rates||[]))o+=x.type+' = '+x.ms+'\\n';return o;}\n"
 "$('#arb_save').onclick=async()=>{const rules=ARB.units.filter(u=>u.sel.length).map(u=>({pgn:u.pgn,disc:u.disc,mode:u.mode,sources:u.sel}));\n"
-" const r=await fetch('/api/config',{method:'POST',body:genIni(ARB.talker,ARB.sources,rules,ARB.ignore,ARB.rates)});const d=await r.json();\n"
+" const noN=ARB.units.filter(u=>!u.n2k).map(u=>u.pgn),noO=ARB.units.filter(u=>u.mappable&&!u.o183).map(u=>u.pgn);\n"
+" const r=await fetch('/api/config',{method:'POST',body:genIni(ARB.talker,ARB.sources,rules,ARB.ignore,ARB.rates,noN,noO)});const d=await r.json();\n"
 " d.ok?amsg('Arbitrage enregistré et rechargé.','ok'):amsg('Refusé — ligne '+(d.line||'?')+' : '+(d.err||''),'err');if(d.ok)setTimeout(loadArb,2500);};\n"
 "$('#arb_reload').onclick=loadArb;\n"
 "$('#src_save').onclick=saveSrc;$('#src_reload').onclick=renderSources;\n"
@@ -341,7 +354,11 @@ static void serve_rules(int fd)
     for (int i = 0; i < c.n_ignore_src; i++) APP("%s%d", i ? "," : "", c.ignore_src[i]);
     APP("],\"pgn\":[");
     for (int i = 0; i < c.n_ignore_pgn; i++) APP("%s%d", i ? "," : "", c.ignore_pgn[i]);
-    APP("]}}");
+    APP("]},\"no_n2k\":[");
+    for (int i = 0; i < c.n_no_n2k; i++) APP("%s%d", i ? "," : "", c.no_n2k_pgn[i]);
+    APP("],\"no_0183\":[");
+    for (int i = 0; i < c.n_no_0183; i++) APP("%s%d", i ? "," : "", c.no_0183_pgn[i]);
+    APP("]}");
 #undef APP
     send_text(fd, 200, "OK", "application/json", buf);
 }
