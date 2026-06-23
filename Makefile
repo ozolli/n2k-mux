@@ -41,7 +41,7 @@ GTK_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 2>/dev/null)
 GTK_LIBS   := $(shell pkg-config --libs gtk+-3.0 2>/dev/null)
 
 .PHONY: all clean install uninstall
-all: n2k-mux n2k-mux-web n2k-sim ydraw-bridge test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout test_ydraw
+all: n2k-mux n2k-mux-web n2k-sim n2k-filter ydraw-bridge test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout test_ydraw
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -109,6 +109,10 @@ ydraw-bridge: $(YDRAW_OBJ) $(NETOUT_OBJ) $(BUILD)/ydraw_bridge.o
 n2k-sim: $(BUILD)/simulator.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lm
 
+# --- Filtre N2K→N2K socketcan (frame-passthrough can0 → vcan0) ---
+n2k-filter: $(BUILD)/canfilter.o
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
 # --- Module (g) : GUI GTK3 (cible séparée, nécessite libgtk-3-dev) ---
 $(BUILD)/gui.o: $(SRCDIR)/gui.c | $(BUILD)
 	$(CC) $(CFLAGS) $(GTK_CFLAGS) -MMD -MP -c $< -o $@
@@ -145,7 +149,7 @@ uninstall:
 	rm -f $(DESTDIR)/etc/n2k-mux/n2k-mux.ini.example
 
 clean:
-	rm -rf $(BUILD) n2k-mux n2k-mux-web n2k-mux-gui n2k-sim ydraw-bridge test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout test_ydraw
+	rm -rf $(BUILD) n2k-mux n2k-mux-web n2k-mux-gui n2k-sim n2k-filter ydraw-bridge test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout test_ydraw
 
 # Dépendances d'en-têtes générées par -MMD (recompile si un .h change).
 -include $(wildcard $(BUILD)/*.d)
