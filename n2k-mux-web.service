@@ -28,7 +28,7 @@ EnvironmentFile=-/etc/default/n2k-mux
 
 # Lit les JSON du daemon dans /run/n2k-mux ; « Enregistrer » écrit la config puis
 # recharge à chaud les deux instances n2k-mux (principale + --ais-json).
-ExecStart=/bin/sh -c '"$WEB" "$CONF" --sources /run/n2k-mux/sources.json --stats /run/n2k-mux/stats.json --port "$PORT" --bind "$BIND" --reload-cmd "pkill -HUP -x n2k-mux"'
+ExecStart=/bin/sh -c '"$WEB" "$CONF" --sources /run/n2k-mux/sources.json --stats /run/n2k-mux/stats.json --busmap /run/n2k-mux/busmap.json --port "$PORT" --bind "$BIND" --reload-cmd "pkill -HUP -x n2k-mux"'
 
 Restart=always
 RestartSec=3

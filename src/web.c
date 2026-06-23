@@ -43,6 +43,7 @@
 static const char *g_cfg_path    = NULL;
 static const char *g_sources_path = "/run/n2k-mux/sources.json";
 static const char *g_stats_path   = "/run/n2k-mux/stats.json";
+static const char *g_busmap_path  = "/run/n2k-mux/busmap.json";
 static const char *g_reload_cmd  = NULL;
 
 /* --- Page unique embarquée (single quotes en JS pour éviter d'échapper les "). --- */
@@ -74,13 +75,17 @@ static const char PAGE[] =
 "#msg{margin:.6em 0;padding:.5em .8em;border-radius:6px;display:none}#msg.ok{display:block;background:#12351f;color:#7ee787}\n"
 "#msg.err{display:block;background:#3a1212;color:#ff7b72;white-space:pre-wrap}\n"
 "small{color:#8b949e}\n"
+".bok{color:#3fb950}.blo{color:#d29922}.bnu{color:#8b949e}\n"   /* statut : émis / supplanté / neutre */
+".dot{color:#3fb950}.dot.off{color:#444}\n"                    /* pastille vivant */
 "</style></head><body>\n"
 "<header><b>n2k-mux</b>\n"
 "<nav><button data-t='sources' class='on'>Sources</button>"
+"<button data-t='arbitrage'>Arbitrage</button>"
 "<button data-t='charge'>Charge</button><button data-t='config'>Configuration</button></nav>\n"
 "<small id='clock' style='margin-left:auto'></small></header>\n"
 "<main>\n"
 "<section id='sources' class='tab on'><div id='src_body'>…</div></section>\n"
+"<section id='arbitrage' class='tab'><div id='arb_body'>…</div></section>\n"
 "<section id='charge' class='tab'><div id='chg_body'>…</div></section>\n"
 "<section id='config' class='tab'>\n"
 "<div id='msg'></div>\n"
@@ -130,8 +135,23 @@ static const char PAGE[] =
 "$('#save').onclick=async()=>{const d=await post('/api/config');\n"
 " d.ok?msg('Enregistré et rechargé.'+(d.reload?'':' (reload non configuré)'),'ok'):msg('Refusé — ligne '+d.line+' : '+d.err,'err');};\n"
 "$('#reload').onclick=loadIni;\n"
+"const PGNNAME={129025:'Position',129026:'COG/SOG',129029:'Position GNSS',129539:'DOP',129540:'Satellites',126992:'Heure',127250:'Cap',127251:'Giration',127257:'Attitude',130306:'Vent',127245:'Barre',129291:'Courant',128259:'Vitesse surface',128267:'Profondeur',128275:'Loch',130316:'Température',130314:'Pression',129038:'AIS pos A',129039:'AIS pos B',129040:'AIS pos B',129041:'AIS AtoN',129794:'AIS statique A',129809:'AIS statique 24A',129810:'AIS statique 24B',60928:'ISO Address Claim',126996:'Product Info',126993:'Heartbeat',59904:'ISO Request'};\n"
+"const ST={accept:['émis','bok'],reject_priority:['supplanté','blo'],not_in_rule:['hors-règle','bnu'],no_rule:['non réglé','bnu'],unconfigured:['non configuré','bnu'],unknown_src:['identité ?','bnu'],ignored:['ignoré','bnu']};\n"
+"async function renderArbitrage(){try{const d=await jget('/api/busmap');\n"
+" const u=(d.units||[]).slice().sort((a,b)=>a.pgn-b.pgn||(a.disc||'').localeCompare(b.disc||''));\n"
+" let h='';\n"
+" for(const g of u){\n"
+"  h+='<div class=card><h3>'+g.pgn+(g.disc?' / '+esc(g.disc):'')+' <small>'+(PGNNAME[g.pgn]||'')+'</small></h3>';\n"
+"  h+='<table class=fix><tr><th>source</th><th>identité</th><th>état</th></tr>';\n"
+"  for(const s of g.sources){const t=ST[s.status]||[s.status,'bnu'];\n"
+"   h+='<tr><td><span class=\\'dot'+(s.alive?'':' off')+'\\'>●</span> '+esc(s.name||('src '+s.src))+'</td><td><code>'+esc(s.ident||'—')+'</code></td><td><span class='+t[1]+'>'+t[0]+'</span></td></tr>';}\n"
+"  h+='</table></div>';\n"
+" }\n"
+" $('#arb_body').innerHTML='<div class=row>'+(u.length?h:'<p><small>busmap.json indisponible (daemon lancé avec --busmap ?).</small></p>')+'</div>';\n"
+"}catch(e){$('#arb_body').innerHTML='<p><small>busmap.json indisponible.</small></p>';}}\n"
 "function tick(){$('#clock').textContent=new Date().toLocaleTimeString();\n"
 " if($('#sources').classList.contains('on'))renderSources();\n"
+" if($('#arbitrage').classList.contains('on'))renderArbitrage();\n"
 " if($('#charge').classList.contains('on'))renderCharge();}\n"
 "loadIni();tick();setInterval(tick,3000);\n"
 "</script></body></html>\n";
@@ -287,6 +307,8 @@ static void handle_client(int fd)
             serve_json_file(fd, g_sources_path);
         else if (strcmp(path, "/api/stats") == 0)
             serve_json_file(fd, g_stats_path);
+        else if (strcmp(path, "/api/busmap") == 0)
+            serve_json_file(fd, g_busmap_path);
         else if (strcmp(path, "/api/config") == 0) {
             static char buf[FILE_MAX]; size_t len = 0;
             if (g_cfg_path && read_file(g_cfg_path, buf, sizeof buf, &len) == 0)
@@ -315,14 +337,16 @@ int main(int argc, char **argv)
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--sources") == 0 && i + 1 < argc) g_sources_path = argv[++i];
         else if (strcmp(argv[i], "--stats") == 0 && i + 1 < argc) g_stats_path = argv[++i];
+        else if (strcmp(argv[i], "--busmap") == 0 && i + 1 < argc) g_busmap_path = argv[++i];
         else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) port = atoi(argv[++i]);
         else if (strcmp(argv[i], "--bind") == 0 && i + 1 < argc) bind_addr = argv[++i];
         else if (strcmp(argv[i], "--reload-cmd") == 0 && i + 1 < argc) g_reload_cmd = argv[++i];
         else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             fprintf(stderr,
-                "Usage : %s [config.ini] [--sources P] [--stats P] [--port N]\n"
-                "          [--bind ADDR] [--reload-cmd CMD]\n"
+                "Usage : %s [config.ini] [--sources P] [--stats P] [--busmap P]\n"
+                "          [--port N] [--bind ADDR] [--reload-cmd CMD]\n"
                 "  config.ini    fichier INI édité par l'interface\n"
+                "  --busmap P    carte (pgn/disc)->sources pour l'onglet Arbitrage\n"
                 "  --port N      port d'écoute (défaut 8080)\n"
                 "  --bind ADDR   adresse d'écoute (défaut 127.0.0.1 ; 0.0.0.0 = LAN)\n"
                 "  --reload-cmd  commande lancée après sauvegarde (ex. \"pkill -HUP -x n2k-mux\")\n",
