@@ -254,6 +254,8 @@ static int run_ais_json(config_t *cfg, const char *cfg_path, int verbose)
         }
         if (!m.has_pgn || !aisdedup_is_ais(m.pgn))
             continue;                 /* non-AIS : filtré (n2k-mux gère le reste) */
+        if (!config_emit_0183(cfg, m.pgn))
+            continue;                 /* AIS de ce PGN coupé en 0183 ([output] no_0183) */
 
         n_ais++;
         uint32_t mmsi = 0;
