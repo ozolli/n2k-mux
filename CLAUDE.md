@@ -321,6 +321,37 @@ chaîne données). Lit /run/n2k-mux/sources.json+stats.json (publiés par le dae
 sert sur 8080, « Enregistrer » écrit /etc/n2k-mux/n2k-mux.ini puis `pkill -HUP -x
 n2k-mux` (reload à chaud des deux instances). Tourne en root (écriture config + log
 kplex /var/log/kplex OK) ; ProtectSystem=true (PAS full) pour garder /etc inscriptible.
+NB : le unit web n'a PAS de `Wants=` sur un service de données (sinon il le tire et,
+avec Conflicts, annule l'autre chaîne) — `After=` seul, marche NGX-1 OU socketcan.
+
+### Variante SOCKETCAN (adaptateur CAN type PEAK PCAN-USB) — prod par défaut sur o3nav
+
+Quand o3nav est relié au bus par un adaptateur **socketcan** (PEAK) au lieu du
+NGX-1, la chaîne devient (service **n2k-mux-can.service**, script **n2k-mux-can-run**) :
+
+```
+can0 (bus réel via PEAK, monté à 250 kbit/s)
+ ├─► n2k-filter --in can0 --out vcan0 --ydraw-port 2700 --drop losers.txt
+ │     trames brutes → arbitrage (jette les perdants) → vcan0 (N2K local qtVlm)
+ │                                                    + YDRAW/TCP 2700 (N2K réseau)
+ └─► candump can0 | candump2analyzer | analyzer -json -nv
+       → tee ais.fifo → n2k-mux conf --tx-can can0 --losers losers.txt → kplex (10110)
+                        n2k-mux --ais-json conf < ais.fifo → n2kd (AIS → 2599)
+```
+
+Principe = **filtre N2K→N2K (frame-passthrough)** : la couche DÉCISION (canboat +
+n2k-mux) résout les identités (ISO Request émises en `--tx-can`, écrites en
+`can_frame`) et publie les **perdants** `(pgn src)` dans `--losers losers.txt` ;
+`n2k-filter` lit ce fichier (rechargé à chaud) et **ne réémet que les trames
+retenues** sur vcan0 + YDRAW/TCP, SANS ré-encodage (recopie de la struct can_frame).
+Perdant = rejet PRIORITÉ ou HORS-RÈGLE ; tout le reste passe (fail-open). Le DLC et
+le PGN/src se lisent dans l'ID CAN 29 bits → filtrage trame par trame, fast-packet
+transparent. **Charge bus MESURÉE** : le daemon draine son socket --tx-can (qui
+reçoit tout le bus) → trames+DLC exacts → stats `"measured":true` (sinon estimée).
+`ExecStartPre` du unit monte vcan0 + can0@250k au boot. NE PAS activer n2k-mux ET
+n2k-mux-can en même temps (Conflicts). Modules : src/canfilter.c (n2k-filter),
+src/cansock.c (AF_CAN : open, ISO Request, drain charge). Le NGX-1 reste documenté
+pour qui n'a pas d'adaptateur socketcan.
 
 CONTEXTE (cf. /home/ozolli/CR-NMEA-O3.pdf) : l'archi d'origine était NGX-1 en
 mode Convert (N2K→0183 dans la passerelle) → kplex lisant /dev/ttyNGX1 en direct

@@ -144,6 +144,29 @@ systemctl is-active n2k-mux n2k-mux-web      # → active / active
 journalctl -u n2k-mux -f                     # suivre les logs
 ```
 
+### 2.4 Variante adaptateur CAN (socketcan, ex. PEAK PCAN-USB)
+
+Si o3nav est relié au bus par un **adaptateur socketcan** (PEAK PCAN-USB FD…) au
+lieu de la passerelle série NGX-1, utilisez le service **`n2k-mux-can`** à la place
+de `n2k-mux` (ne pas activer les deux). Prérequis : `sudo apt install can-utils`,
+et indiquer le chemin de `candump2analyzer` dans `/etc/default/n2k-mux`
+(`CANDUMP2ANALYZER=…`).
+
+```sh
+sudo systemctl disable --now n2k-mux 2>/dev/null || true
+sudo systemctl enable --now n2k-mux-can n2k-mux-web
+```
+
+Le service monte `can0` (250 kbit/s) et `vcan0` au démarrage, puis sert **trois
+sorties** : N2K local sur `vcan0`, N2K réseau en YDRAW/TCP **2700**, et NMEA 0183 sur
+**10110** (kplex). Il agit en **filtre N2K→N2K** : arbitrage par identité, seules les
+trames retenues sont réémises (`n2k-filter`), sans ré-encodage. La charge de bus
+affichée devient **mesurée** (vraies trames) au lieu d'estimée. Réglages socketcan
+(`CANIF`, `VCANIF`, `YDRAW_PORT`…) dans `/etc/default/n2k-mux` (voir l'exemple).
+
+> Pour qtVlm en local sur o3nav : source **socketcan → `vcan0`**. À distance :
+> source **TCP → `<hôte>:2700`**.
+
 ---
 
 ## 3. Configurer votre bord
