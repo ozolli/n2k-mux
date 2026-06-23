@@ -5,18 +5,19 @@ pour chaque donnée (position, cap, vent, profondeur, AIS…) et la redistribue 
 logiciels de navigation, **en NMEA 2000** (pour qtVlm) **et en NMEA 0183** (pour
 les tablettes et le legacy).
 
-Concrètement, une fois installé, vous obtenez sur le réseau local trois points de
-connexion :
+Une fois installé, vous disposez de quatre points de connexion :
 
 | Vous voulez… | Connectez-vous à | Format |
 |---|---|---|
-| qtVlm en **NMEA 2000 natif** | `hôte:2700` (source NMEA **TCP**) | YDRAW |
+| qtVlm **sur le PC de bord** (local) | interface **`vcan0`** (socketcan) | N2K natif |
+| qtVlm **en réseau** (N2K) | `hôte:2700` (source NMEA **TCP**) | YDRAW |
 | Tablettes / qtVlm en **NMEA 0183** | `hôte:10110` (TCP, + UDP) | 0183 |
 | **Administrer** (config, équipements, charge) | `http://hôte:8080/` | Web |
 
-> Ce mode d'emploi décrit l'installation type sur un PC de bord (Linux) relié au
-> bus N2K par une passerelle **Actisense NGX-1/NGT-1**. Pour essayer sans matériel,
-> sautez au [§7 Banc de test](#7-banc-de-test-sans-matériel).
+> Montage recommandé : PC de bord (Linux) relié au bus N2K par un **adaptateur
+> socketcan** (PEAK PCAN-USB FD…). Une passerelle série **Actisense NGX-1/NGT-1**
+> reste supportée (voir [§2.4](#24-variante-passerelle-série-ngx-1)). Pour essayer
+> **sans matériel**, voir le [§7 Banc de test](#7-banc-de-test-sans-matériel).
 
 ---
 
@@ -35,24 +36,19 @@ connexion :
 
 ## 1. Comment ça marche
 
+Avec un adaptateur socketcan (montage par défaut) :
+
 ```
-Bus NMEA 2000
-  │  passerelle Actisense NGX-1 en mode TRANSFER (N2K brut)
-  ▼
-actisense-serial ──┬─────────────────────────────► ydraw-bridge ─► TCP 2700  (N2K → qtVlm)
-                   │
-                   ▼
-              analyzer -json -nv
-                   │
-                   ▼
-        ┌──────── n2k-mux ─────────┐ arbitrage + conversion
-        │                          │
-        ▼                          ▼
-   instruments 0183          n2k-mux --ais-json ─► n2kd (AIS → VDM)
-        │                          │
-        └──────────► kplex ◄───────┘ TCP 2599
-                       │
-                       ▼  TCP 10110 + UDP  (0183 → tablettes)
+Bus NMEA 2000 ── adaptateur CAN (PEAK) ── can0
+   │
+   ├─► n2k-filter ──┬─► vcan0       (N2K local : qtVlm sur le PC de bord)
+   │  (ne réémet que │
+   │   les trames    └─► TCP 2700   (N2K réseau YDRAW : qtVlm distant)
+   │   retenues)
+   │
+   └─► candump → analyzer → n2k-mux ──► kplex ──► TCP 10110 + UDP   (0183 → tablettes)
+        (décode, résout les identités,  └─► n2k-mux --ais-json → n2kd (AIS → !AIVDM)
+         arbitre, publie les « perdants »)
 ```
 
 Les idées clés :
@@ -62,11 +58,20 @@ Les idées clés :
   un changement d'adresse sur le bus.
 - **Arbitrage par donnée.** Pour chaque type de mesure vous listez les sources
   préférées ; n2k-mux prend la première **vivante** (bascule automatique si elle se
-  tait). Des modes spéciaux existent : `min` (profondeur, par sécurité), `max`
-  (loch), `fusion` (AIS dédupliqué par MMSI).
-- **Deux sorties simultanées.** Le N2K arbitré part en YDRAW pour qtVlm ; le même
-  flux est converti en 0183 pour le reste.
-- **Tout en C11, sans dépendance** hors libc (et `canboat` pour la passerelle/AIS).
+  tait). Modes spéciaux : `min` (profondeur, sécurité), `max` (loch), `fusion`
+  (AIS dédupliqué par MMSI).
+- **Filtre N2K→N2K (frame-passthrough).** La couche *décision* (`n2k-mux`) désigne,
+  par PGN, la source retenue et publie la liste des **perdants** ; `n2k-filter`
+  recopie sur `vcan0`/TCP 2700 **uniquement les trames brutes retenues**, sans
+  ré-encodage. `vcan0` est donc un bus N2K **propre, déjà arbitré** (un seul GPS,
+  une seule position…) que `can0` n'est pas.
+- **0183 dérivé** (kplex) pour les tablettes et le legacy, AIS encodé par `n2kd`.
+- **Charge du bus mesurée** sur les vraies trames CAN (pas une estimation).
+- **Tout en C11, sans dépendance** hors libc (et `canboat` pour le décodage/AIS).
+
+> Avec une passerelle série NGX-1, le principe est le même mais l'entrée passe par
+> `actisense-serial` au lieu de socketcan (cf. §2.4) ; la sortie N2K réseau est
+> alors fournie par `ydraw-bridge`.
 
 ---
 
@@ -75,16 +80,18 @@ Les idées clés :
 ### 2.1 Prérequis
 
 - Linux, `gcc` (ou `clang`), `make`.
-- [canboat](https://github.com/canboat/canboat) compilé : `actisense-serial`,
-  `analyzer` et `n2kd`.
+- [canboat](https://github.com/canboat/canboat) compilé : `analyzer`, `n2kd`,
+  `candump2analyzer` (et `actisense-serial` si passerelle série).
+- `can-utils` (`candump`) pour la voie socketcan : `sudo apt install can-utils`.
 - `kplex` (paquet de la distribution) pour la sortie 0183.
-- La passerelle **NGX-1/NGT-1 en mode Transfer** (N2K brut), **pas** Convert.
+- **Au choix** : un adaptateur **socketcan** (PEAK PCAN-USB FD…) relié au bus N2K
+  (recommandé) **ou** une passerelle **NGX-1/NGT-1 en mode Transfer** (N2K brut).
 
 ### 2.2 Compiler
 
 ```sh
 git clone https://github.com/ozolli/n2k-mux && cd n2k-mux
-make                 # daemon + UI web + ydraw-bridge + simulateur + testeurs
+make          # daemon + filtre + UI web + ydraw-bridge + simulateur + testeurs
 ```
 
 Vérifier que tout est sain (tous les testeurs à 0 échec) :
@@ -95,15 +102,15 @@ for t in test_config test_mapper test_arbiter test_nmea0183 test_aisdedup \
 ./test_jsonl --selftest
 ```
 
-### 2.3 Installer le service
+### 2.3 Installer le service (socketcan, recommandé)
 
 ```sh
 sudo make install
 ```
 
-Cela installe les binaires dans `/usr/local/bin`, deux services systemd
-(`n2k-mux.service`, `n2k-mux-web.service`) et des fichiers d'exemple. Préparez
-ensuite la configuration :
+Cela installe les binaires dans `/usr/local/bin` (`n2k-mux`, `n2k-filter`,
+`n2k-mux-web`, scripts et `ydraw-bridge`), les services systemd et des fichiers
+d'exemple. Préparez la configuration :
 
 ```sh
 sudo cp /etc/n2k-mux/n2k-mux.ini.example /etc/n2k-mux/n2k-mux.ini
@@ -112,16 +119,16 @@ sudo cp kplex.conf.example               /etc/kplex.conf
 $EDITOR /etc/n2k-mux/n2k-mux.ini   # voir §3
 ```
 
-Dans **`/etc/default/n2k-mux`**, indiquez le port série, le baud et le chemin des
-binaires canboat s'ils ne sont pas dans le `PATH` :
+Dans **`/etc/default/n2k-mux`**, indiquez l'interface CAN et le chemin des binaires
+canboat s'ils ne sont pas dans le `PATH` :
 
 ```sh
-DEVICE=/dev/ttyNGX1
-BAUD=230400
-ACTISENSE=/home/vous/canboat/rel/linux-x86_64/actisense-serial
+CANIF=can0                 # interface de l'adaptateur (montée à 250 kbit/s par le service)
+VCANIF=vcan0               # CAN virtuel pour le flux arbitré local
+YDRAW_PORT=2700            # flux N2K arbitré servi en YDRAW/TCP (qtVlm réseau)
 ANALYZER=/home/vous/canboat/rel/linux-x86_64/analyzer
 N2KD=/home/vous/canboat/rel/linux-x86_64/n2kd
-# YDRAW_PORT=2700   # port N2K/YDRAW (défaut 2700)
+CANDUMP2ANALYZER=/home/vous/canboat/rel/linux-x86_64/candump2analyzer
 ```
 
 Désactivez un éventuel ancien service `kplex` autonome (il entrerait en conflit),
@@ -130,42 +137,31 @@ puis démarrez :
 ```sh
 sudo systemctl disable --now kplex 2>/dev/null || true
 sudo systemctl daemon-reload
-sudo systemctl enable --now n2k-mux n2k-mux-web
-```
-
-`enable --now` démarre les services **et** les relance à chaque démarrage du PC.
-En cas de défaillance d'un maillon (n2kd, kplex, analyzer…), systemd relance toute
-la chaîne automatiquement (`Restart=always`).
-
-Vérifier que ça tourne :
-
-```sh
-systemctl is-active n2k-mux n2k-mux-web      # → active / active
-journalctl -u n2k-mux -f                     # suivre les logs
-```
-
-### 2.4 Variante adaptateur CAN (socketcan, ex. PEAK PCAN-USB)
-
-Si o3nav est relié au bus par un **adaptateur socketcan** (PEAK PCAN-USB FD…) au
-lieu de la passerelle série NGX-1, utilisez le service **`n2k-mux-can`** à la place
-de `n2k-mux` (ne pas activer les deux). Prérequis : `sudo apt install can-utils`,
-et indiquer le chemin de `candump2analyzer` dans `/etc/default/n2k-mux`
-(`CANDUMP2ANALYZER=…`).
-
-```sh
-sudo systemctl disable --now n2k-mux 2>/dev/null || true
 sudo systemctl enable --now n2k-mux-can n2k-mux-web
 ```
 
-Le service monte `can0` (250 kbit/s) et `vcan0` au démarrage, puis sert **trois
-sorties** : N2K local sur `vcan0`, N2K réseau en YDRAW/TCP **2700**, et NMEA 0183 sur
-**10110** (kplex). Il agit en **filtre N2K→N2K** : arbitrage par identité, seules les
-trames retenues sont réémises (`n2k-filter`), sans ré-encodage. La charge de bus
-affichée devient **mesurée** (vraies trames) au lieu d'estimée. Réglages socketcan
-(`CANIF`, `VCANIF`, `YDRAW_PORT`…) dans `/etc/default/n2k-mux` (voir l'exemple).
+Le service **monte `can0` (250 kbit/s) et `vcan0` au démarrage**, lance la chaîne
+(filtre + décision + kplex + n2kd), redémarre tout seul en cas de défaillance d'un
+maillon (`Restart=always`) et au boot. Vérifier :
 
-> Pour qtVlm en local sur o3nav : source **socketcan → `vcan0`**. À distance :
-> source **TCP → `<hôte>:2700`**.
+```sh
+systemctl is-active n2k-mux-can n2k-mux-web   # → active / active
+journalctl -u n2k-mux-can -f                  # suivre les logs
+```
+
+### 2.4 Variante passerelle série (NGX-1)
+
+Sans adaptateur socketcan, utilisez la passerelle **NGX-1/NGT-1 en mode Transfer**
+et le service **`n2k-mux`** (au lieu de `n2k-mux-can` — ne pas activer les deux).
+Réglez `DEVICE`/`BAUD` et `ACTISENSE` dans `/etc/default/n2k-mux`, puis :
+
+```sh
+sudo systemctl enable --now n2k-mux n2k-mux-web
+```
+
+La chaîne est `actisense-serial → analyzer → n2k-mux → kplex` ; la sortie N2K
+réseau (TCP 2700) est fournie par `ydraw-bridge` (branche optionnelle du script
+`n2k-mux-run`). Le NGX-1 doit être en mode **Transfer** (N2K brut), **pas** Convert.
 
 ---
 
@@ -230,19 +226,25 @@ ce serial dans la section `[sources]`, donnez-lui un nom logique, puis enregistr
 
 ## 4. Brancher qtVlm et les tablettes
 
-### qtVlm en NMEA 2000 (recommandé)
+### qtVlm sur le PC de bord — N2K local (`vcan0`)
+
+Dans qtVlm : source NMEA → **socketcan**, interface **`vcan0`**. C'est le bus déjà
+arbitré (une seule source par donnée). C'est le branchement le plus direct quand
+qtVlm tourne sur le PC de bord lui-même.
+
+### qtVlm en réseau — N2K sur TCP 2700
 
 1. Dans qtVlm : **Configuration → NMEA → ajouter une connexion → TCP client**.
 2. Adresse = l'IP du PC de bord, **port = 2700**.
-3. Valider. qtVlm détecte automatiquement le format YDRAW et décode le N2K
+3. Valider. qtVlm détecte automatiquement le format **YDRAW** et décode le N2K
    (position, cap, vent, satellites, **cibles AIS**…).
 
 > Le N2K AIS et la constellation GPS nécessitent **qtVlm ≥ 5.12.27-beta2**.
 
-### qtVlm ou tablettes en NMEA 0183
+### qtVlm ou tablettes — NMEA 0183 sur 10110
 
-Connexion **TCP** sur **port 10110** (les instruments arbitrés + l'AIS en `!AIVDM`
-y sont déjà fusionnés). Le 10110 est aussi diffusé en **UDP** sur le LAN.
+Connexion **TCP** sur **port 10110** (instruments arbitrés + AIS en `!AIVDM` déjà
+fusionnés). Le 10110 est aussi diffusé en **UDP** sur le LAN.
 
 ### Accès depuis l'extérieur du bateau
 
@@ -258,8 +260,9 @@ Ouvrez `http://hôte:8080/`. Trois onglets :
 
 - **Sources** — les équipements vus sur le bus, leur fabricant/modèle et les PGN
   qu'ils publient. C'est ici qu'on relève les serials (§3).
-- **Charge** — charge estimée du bus N2K et du flux 0183, débit par PGN et par
-  type de phrase (intervalle moyen en ms).
+- **Charge** — charge du bus N2K (**mesurée** sur les vraies trames en socketcan,
+  estimée sinon) et du flux 0183, débit par PGN et par type de phrase (intervalle
+  moyen en ms).
 - **Configuration** — éditeur de l'INI avec **Valider** (vérifie la syntaxe) et
   **Enregistrer** (écrit le fichier *puis* recharge le daemon à chaud).
 
@@ -281,20 +284,17 @@ est journalisée). Le message de confirmation s'efface seul après 15 s.
 
 | Symptôme | Piste |
 |---|---|
-| **Rien dans qtVlm sur 2700** | Source = TCP **client** (pas la section CAN/socketcan). Vérifier `systemctl is-active n2k-mux` et `ss -ltnp \| grep 2700`. |
+| **`can0` absent** | Adaptateur branché ? `ip -br link show type can`. PEAK : pilote `peak_usb` (noyau ≥ 6.0). Le service monte `can0` ; sinon `sudo ip link set can0 up type can bitrate 250000`. |
+| **Rien sur `vcan0` / TCP 2700** | `systemctl is-active n2k-mux-can` ; `ss -ltnp \| grep 2700`. Dans qtVlm : socketcan→`vcan0` (local) **ou** TCP **client**→2700 (réseau), pas l'inverse. |
 | **Pas de cibles AIS en N2K** | Nécessite qtVlm **≥ 5.12.27-beta2**. En 0183 (10110) l'AIS passe quelle que soit la version. |
-| **Aucune phrase 0183 sur 10110** | L'arbitrage n'a pas résolu les identités : vérifier que les serials de `[sources]` correspondent à l'onglet **Sources** du web. Le `--tx` (ISO Request) doit être actif (il l'est via le service). |
-| **« Address already in use » au démarrage** | Un `n2kd` résiduel. Le service fait le ménage (`pkill -f "[n]2kd"`) ; sinon `sudo pkill -x n2kd` puis `systemctl restart n2k-mux`. |
-| **Collision de port 2600** | `n2kd` réquisitionne 2597-2602. Le N2K/YDRAW est donc sur **2700** (réglable via `YDRAW_PORT`), surtout pas 2600. |
-| **La config web ne s'enregistre pas** | Le fichier `/etc/n2k-mux/n2k-mux.ini` doit être inscriptible par l'utilisateur du service web (il tourne en root par défaut → OK). |
-| **Le NGX-1 ne donne rien** | Il doit être en mode **Transfer** (N2K brut), pas Convert. Vérifier `DEVICE`/`BAUD` dans `/etc/default/n2k-mux`. |
-| **Tout vérifier d'un coup** | `journalctl -u n2k-mux -u n2k-mux-web -f` |
+| **Une source en double sur le bus** | L'arbitrage n'a pas résolu les identités : vérifier que les serials de `[sources]` correspondent à l'onglet **Sources**. Sans identité, le filtre laisse tout passer (*fail-open*). |
+| **Aucune phrase 0183 sur 10110** | Idem : identités non résolues, ou kplex/n2kd down. `journalctl -u n2k-mux-can -f`. |
+| **« Address already in use »** | Un `n2kd` résiduel (ports 2597-2602). Le service fait le ménage au démarrage ; sinon `sudo pkill -x n2kd` puis restart. |
+| **Collision port 2600** | `n2kd` réquisitionne 2597-2602. Le N2K/YDRAW est sur **2700** (réglable `YDRAW_PORT`), surtout pas 2600. |
+| **La config web ne s'enregistre pas** | `/etc/n2k-mux/n2k-mux.ini` doit être inscriptible par l'utilisateur du service web (root par défaut → OK). |
+| **NGX-1 : rien** | Mode **Transfer** (pas Convert), `DEVICE`/`BAUD` corrects dans `/etc/default/n2k-mux`. |
 
-Test de bout en bout sans toucher au bus (relit une capture) :
-
-```sh
-cat capture.raw | actisense-serial -r -s 230400 ... | analyzer -json | ./test_jsonl
-```
+Sniff brut du bus (sans rien casser) : `candump can0` (paquet `can-utils`).
 
 ---
 
@@ -302,7 +302,7 @@ cat capture.raw | actisense-serial -r -s 230400 ... | analyzer -json | ./test_js
 
 Le simulateur `n2k-sim` rejoue un flux N2K cohérent (bateau qui avance, cap qui
 infléchit la route, cibles AIS) pour **tous les PGN compris**, sans bus ni
-passerelle. La config compagnon `n2k-sim.ini` porte les identités simulées →
+adaptateur. La config compagnon `n2k-sim.ini` porte les identités simulées →
 arbitrage résolu d'emblée.
 
 ```sh
@@ -323,31 +323,45 @@ compris) en trames N2K, servies en YDRAW par `ydraw-bridge` :
 ./n2k-sim --actisense | ./ydraw-bridge --port 2700   # qtVlm : TCP → hôte:2700
 ```
 
+> Le filtre socketcan se teste aussi sur des CAN virtuels (`vcan`) : injecter des
+> trames avec `cansend`, lire la sortie sur un second `vcan`.
+
 ---
 
 ## 8. Annexes
 
-### 8.1 Options de `n2k-mux` (pour un lancement manuel)
+### 8.1 Options des binaires
+
+**`n2k-mux`** (décision / conversion) :
 
 ```
-n2k-mux [config.ini] [--tx CHEMIN] [--tx-interval SEC]
-                     [--sources CHEMIN] [--sources-interval SEC]
-                     [--stats CHEMIN] [--stats-interval SEC]
+n2k-mux [config.ini] [--tx CHEMIN | --tx-can IFACE] [--src-addr N] [--tx-interval SEC]
+                     [--sources CHEMIN] [--stats CHEMIN] [--losers CHEMIN]
                      [--no-0183] [--ais-json] [-v]
 ```
 
 | Option | Rôle |
 |---|---|
-| `config.ini` | fichier de configuration (sinon : aucune règle) |
-| `--tx CHEMIN` | émet les ISO Request sur ce FIFO (résolution d'identité) |
-| `--tx-interval` | période d'émission (s, défaut 30) |
+| `--tx CHEMIN` | ISO Request sur un FIFO (vers `actisense-serial`, voie série) |
+| `--tx-can IFACE` | ISO Request en **socketcan** sur IFACE (écrit des `can_frame`) |
+| `--src-addr N` | adresse source des ISO Request socketcan (défaut 0) |
 | `--sources CHEMIN` | publie les équipements vus en JSON (UI web) |
-| `--stats CHEMIN` | publie débit/PGN + charge de bus estimée en JSON |
+| `--stats CHEMIN` | publie débit/PGN + charge de bus (mesurée si socketcan) |
+| `--losers CHEMIN` | publie les `(pgn src)` perdants de l'arbitrage (pour `n2k-filter`) |
 | `--no-0183` | désactive la sortie 0183 (arbitrage seul) |
 | `--ais-json` | mode filtre AIS (JSON→JSON dédupliqué) devant `n2kd` |
 | `-v` | journalise les décisions + un résumé sur stderr |
 
-`n2k-mux-web` : `[config.ini] [--sources P] [--stats P] [--port N]
+**`n2k-filter`** (filtre N2K→N2K socketcan) :
+
+```
+n2k-filter [--in IFACE] [--out IFACE] [--drop FICHIER] [--ydraw-port N] [-v]
+```
+`--in` bus réel (déf. can0), `--out` bus arbitré (déf. vcan0), `--drop` liste des
+perdants publiée par `n2k-mux --losers`, `--ydraw-port` sert aussi le flux arbitré
+en YDRAW/TCP (qtVlm réseau).
+
+**`n2k-mux-web`** : `[config.ini] [--sources P] [--stats P] [--port N]
 [--bind ADDR] [--reload-cmd CMD]` (défauts : port 8080, bind `0.0.0.0`).
 
 ### 8.2 Données converties (N2K → 0183)
@@ -372,6 +386,9 @@ n2k-mux [config.ini] [--tx CHEMIN] [--tx-interval SEC]
 | 130316 | Température | MTW (eau) / MDA (air) — 130312 déprécié, accepté en entrée |
 | 130314 | Pression | MDA |
 | 129038/39/40/41, 129793/94/95/96/97/98, 129801/02, 129809/810 | AIS | !AIVDM (via n2kd) |
+
+> En N2K (vcan0 / TCP 2700) les trames passent telles quelles (pas de conversion) ;
+> la table ci-dessus ne concerne que la sortie **0183** (kplex/10110).
 
 ### 8.3 Tests
 
