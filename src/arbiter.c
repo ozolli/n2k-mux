@@ -100,20 +100,26 @@ arb_decision_t arbiter_decide(arbiter_t *a, const jsonl_msg_t *m, uint64_t now_m
     if (disc)
         cpy(d.discriminant, sizeof d.discriminant, disc);
 
+    /* src → identité → nom logique. Résolus D'ABORD (best-effort) pour que la
+     * décision porte toujours l'identité/nom si le registre les connaît, même
+     * sans règle (utile au reporting / à la carte du bus). */
+    const reg_device_t *dev = registry_by_src(a->reg, src);
+    if (dev && dev->ident[0]) {
+        d.identity = dev->ident;
+        const char *nm = name_by_ident(a->cfg, dev->ident);
+        if (nm) d.source_name = nm;
+    }
+
     /* règle */
     const cfg_rule_t *r = config_rule(a->cfg, pgn, disc);
     if (!r) { d.result = ARB_REJECT_NO_RULE; return d; }
     d.rule = r;
     d.mode = r->mode;
 
-    /* src → identité → nom logique */
-    const reg_device_t *dev = registry_by_src(a->reg, src);
-    if (!dev || !dev->ident[0]) { d.result = ARB_REJECT_UNKNOWN_SRC; return d; }
-    d.identity = dev->ident;
-
-    const char *name = name_by_ident(a->cfg, dev->ident);
-    if (!name) { d.result = ARB_REJECT_UNCONFIGURED; return d; }
-    d.source_name = name;
+    /* arbitrage proprement dit : identité puis nom requis */
+    if (!d.identity)    { d.result = ARB_REJECT_UNKNOWN_SRC; return d; }
+    if (!d.source_name) { d.result = ARB_REJECT_UNCONFIGURED; return d; }
+    const char *name = d.source_name;
 
     /* slot de cette source dans la règle */
     int slot = -1;

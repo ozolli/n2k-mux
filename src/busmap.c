@@ -35,10 +35,23 @@ static const char *bm_status(int r)
     }
 }
 
+/* PGN de gestion réseau N2K, jamais arbitrés (identité non résolue dessus) :
+ * ISO Request/Address Claim/Heartbeat/Product/Config Info. À exclure de la carte. */
+static int is_infra_pgn(int pgn)
+{
+    return pgn == 59904 || pgn == 60928 || pgn == 126993 ||
+           pgn == 126996 || pgn == 126998;
+}
+
 void busmap_observe(busmap_t *bm, const jsonl_msg_t *m,
                     const arb_decision_t *d, uint64_t now)
 {
     if (!bm || !m || !m->has_pgn || !m->has_src)
+        return;
+    /* On ne cartographie que les unités d'arbitrage réelles : ni les PGN
+     * d'infrastructure, ni les messages exclus d'office (src<=0, PGN>=262144,
+     * liste [ignore]). */
+    if (is_infra_pgn(m->pgn) || (d && d->result == ARB_IGNORED))
         return;
     const char *disc = (d && d->discriminant[0]) ? d->discriminant : "";
 
