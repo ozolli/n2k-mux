@@ -27,6 +27,8 @@
 #include <unistd.h>
 #include <errno.h>
 #include <signal.h>
+#include <time.h>
+#include <sys/stat.h>
 #include <net/if.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
@@ -77,17 +79,49 @@ static int pgn_of(canid_t id)
 }
 static int src_of(canid_t id) { return (int)(id & 0xff); }
 
+/* --- Liste des perdants à jeter (publiée par n2k-mux --losers) ------------- */
+#define FDROP_MAX 128
+typedef struct { int pgn, src; } fdrop_t;
+
+/* (Re)charge le fichier « pgn src » (lignes # ignorées). Retourne le nombre lu. */
+static int drop_load(const char *path, fdrop_t *set, int max)
+{
+    FILE *f = fopen(path, "r");
+    if (!f) return 0;
+    int n = 0;
+    char line[128];
+    while (n < max && fgets(line, sizeof line, f)) {
+        if (line[0] == '#') continue;
+        int pgn, src;
+        if (sscanf(line, "%d %d", &pgn, &src) == 2) {
+            set[n].pgn = pgn; set[n].src = src; n++;
+        }
+    }
+    fclose(f);
+    return n;
+}
+
+static int drop_has(const fdrop_t *set, int n, int pgn, int src)
+{
+    for (int i = 0; i < n; i++)
+        if (set[i].pgn == pgn && set[i].src == src) return 1;
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
-    const char *in_if = "can0", *out_if = "vcan0";
+    const char *in_if = "can0", *out_if = "vcan0", *drop_path = NULL;
     int verbose = 0;
     for (int i = 1; i < argc; i++) {
-        if (!strcmp(argv[i], "--in") && i + 1 < argc)        in_if = argv[++i];
-        else if (!strcmp(argv[i], "--out") && i + 1 < argc)  out_if = argv[++i];
-        else if (!strcmp(argv[i], "-v"))                     verbose = 1;
+        if (!strcmp(argv[i], "--in") && i + 1 < argc)         in_if = argv[++i];
+        else if (!strcmp(argv[i], "--out") && i + 1 < argc)   out_if = argv[++i];
+        else if (!strcmp(argv[i], "--drop") && i + 1 < argc)  drop_path = argv[++i];
+        else if (!strcmp(argv[i], "-v"))                      verbose = 1;
         else {
-            fprintf(stderr, "usage : %s [--in IFACE] [--out IFACE] [-v]\n"
-                            "  défauts : --in can0 --out vcan0\n", argv[0]);
+            fprintf(stderr, "usage : %s [--in IFACE] [--out IFACE] [--drop FICHIER] [-v]\n"
+                            "  défauts : --in can0 --out vcan0\n"
+                            "  --drop : fichier des perdants (pgn src) publié par n2k-mux --losers\n",
+                    argv[0]);
             return 2;
         }
     }
@@ -100,10 +134,21 @@ int main(int argc, char **argv)
     int tx = can_open(out_if);
     if (tx < 0) { close(rx); return 1; }
 
-    fprintf(stderr, "canfilter : %s → %s (passthrough), Ctrl-C pour arrêter.\n",
-            in_if, out_if);
+    /* Liste des perdants (rechargée à chaud quand le fichier change). */
+    fdrop_t dset[FDROP_MAX];
+    int dn = 0;
+    time_t dmtime = 0;
+    if (drop_path) {
+        dn = drop_load(drop_path, dset, FDROP_MAX);
+        struct stat sb;
+        if (stat(drop_path, &sb) == 0) dmtime = sb.st_mtime;
+    }
 
-    unsigned long n_in = 0, n_out = 0;
+    fprintf(stderr, "canfilter : %s → %s%s, Ctrl-C pour arrêter.\n",
+            in_if, out_if,
+            drop_path ? " (arbitré : drop des perdants)" : " (miroir)");
+
+    unsigned long n_in = 0, n_out = 0, n_drop = 0;
     while (!g_stop) {
         struct can_frame f;
         ssize_t r = read(rx, &f, sizeof f);
@@ -115,16 +160,31 @@ int main(int argc, char **argv)
         if (r != (ssize_t)sizeof f) continue;   /* trame CAN FD ignorée ici */
         n_in++;
 
-        /* Incrément 1 : miroir intégral. (Incrément 2 : drop des perdants ici.) */
+        /* Recharge la liste des perdants si le fichier a changé (~tous les 256). */
+        if (drop_path && (n_in & 0xff) == 0) {
+            struct stat sb;
+            if (stat(drop_path, &sb) == 0 && sb.st_mtime != dmtime) {
+                dmtime = sb.st_mtime;
+                dn = drop_load(drop_path, dset, FDROP_MAX);
+            }
+        }
+
+        /* Arbitrage : on jette les (pgn, src) perdants ; tout le reste passe. */
+        if (drop_path && drop_has(dset, dn, pgn_of(f.can_id), src_of(f.can_id))) {
+            n_drop++;
+            continue;
+        }
+
         ssize_t w = write(tx, &f, sizeof f);
         if (w == (ssize_t)sizeof f) n_out++;
 
         if (verbose && (n_in % 500) == 0)
-            fprintf(stderr, "  %lu lues / %lu réémises (dernier PGN %d src %d)\n",
-                    n_in, n_out, pgn_of(f.can_id), src_of(f.can_id));
+            fprintf(stderr, "  %lu lues / %lu réémises / %lu jetées\n",
+                    n_in, n_out, n_drop);
     }
 
-    fprintf(stderr, "canfilter : %lu trames lues, %lu réémises.\n", n_in, n_out);
+    fprintf(stderr, "canfilter : %lu trames lues, %lu réémises, %lu jetées.\n",
+            n_in, n_out, n_drop);
     close(rx);
     close(tx);
     return 0;

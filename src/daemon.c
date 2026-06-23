@@ -139,6 +139,54 @@ static uint64_t *thr_last(throttle_t *t, const char *type)
     return &e->last;
 }
 
+/* --- Liste des PERDANTS (pour le filtre N2K→N2K, incrément 3) ---------------
+ * Un (pgn, src) est « perdant » s'il est rejeté par PRIORITÉ (supplanté par une
+ * source plus prioritaire vivante) ou HORS-RÈGLE (source nommée mais absente de
+ * la règle de ce PGN). Le daemon publie cette liste ; n2k-filter jette ces trames
+ * de can0 → vcan0 (fail-open : tout le reste passe). Les autres rejets
+ * (NO_RULE, UNKNOWN_SRC, UNCONFIGURED) laissent passer (prudence). */
+#define DROP_MAX         64
+#define DROP_TIMEOUT_MS  8000u   /* entrée oubliée si non rafraîchie (> failover) */
+typedef struct { int pgn; int src; uint64_t last; } drop_entry_t;
+typedef struct { drop_entry_t e[DROP_MAX]; int n; } dropset_t;
+
+static void dropset_update(dropset_t *ds, int pgn, int src,
+                           arb_result_t r, uint64_t now)
+{
+    int loser = (r == ARB_REJECT_PRIORITY || r == ARB_REJECT_NOT_IN_RULE);
+    int found = -1;
+    for (int i = 0; i < ds->n; i++)
+        if (ds->e[i].pgn == pgn && ds->e[i].src == src) { found = i; break; }
+    if (loser) {
+        if (found >= 0) ds->e[found].last = now;
+        else if (ds->n < DROP_MAX) {
+            ds->e[ds->n].pgn = pgn; ds->e[ds->n].src = src;
+            ds->e[ds->n].last = now; ds->n++;
+        }
+    } else if (r == ARB_ACCEPT && found >= 0) {
+        ds->e[found] = ds->e[--ds->n];   /* devenu gagnant (failover) → retiré */
+    }
+}
+
+/* Purge les entrées périmées puis écrit la liste (atomique tmp+rename). */
+static int dropset_write(dropset_t *ds, const char *path, uint64_t now)
+{
+    int k = 0;
+    for (int i = 0; i < ds->n; i++)
+        if (now - ds->e[i].last <= DROP_TIMEOUT_MS) ds->e[k++] = ds->e[i];
+    ds->n = k;
+
+    char tmp[1024];
+    snprintf(tmp, sizeof tmp, "%s.tmp", path);
+    FILE *f = fopen(tmp, "w");
+    if (!f) return -1;
+    fputs("# n2k-mux : perdants de l'arbitrage (pgn src) — jetés par n2k-filter\n", f);
+    for (int i = 0; i < ds->n; i++)
+        fprintf(f, "%d %d\n", ds->e[i].pgn, ds->e[i].src);
+    fclose(f);
+    return rename(tmp, path);
+}
+
 static void usage(const char *prog)
 {
     fprintf(stderr,
@@ -155,6 +203,7 @@ static void usage(const char *prog)
         "  --sources-interval N  période de publication en secondes (défaut 5)\n"
         "  --stats CHEMIN   publie le débit/PGN et la charge de bus estimée en JSON\n"
         "  --stats-interval N    période de publication des stats (défaut 5)\n"
+        "  --losers CHEMIN  publie les (pgn src) perdants de l'arbitrage (pour n2k-filter)\n"
         "  --no-0183        n'émet aucune phrase NMEA 0183 (arbitrage seul)\n"
         "  -v, --verbose    journalise les décisions + un résumé stats sur stderr\n",
         prog);
@@ -233,6 +282,7 @@ int main(int argc, char **argv)
     int         tx_can = 0;         /* mode TX retenu : 1 = socketcan, 0 = FIFO texte */
     const char *sources_path = NULL;
     const char *stats_path = NULL;
+    const char *losers_path = NULL;   /* --losers : liste des perdants pour n2k-filter */
     unsigned    tx_interval = 30;
     unsigned    sources_interval = 5;
     unsigned    stats_interval = 5;
@@ -250,6 +300,8 @@ int main(int argc, char **argv)
             if (sources_interval == 0) sources_interval = 5;
         } else if (strcmp(argv[i], "--stats") == 0 && i + 1 < argc) {
             stats_path = argv[++i];
+        } else if (strcmp(argv[i], "--losers") == 0 && i + 1 < argc) {
+            losers_path = argv[++i];
         } else if (strcmp(argv[i], "--stats-interval") == 0 && i + 1 < argc) {
             stats_interval = (unsigned)strtoul(argv[++i], NULL, 10);
             if (stats_interval == 0) stats_interval = 5;
@@ -311,6 +363,7 @@ int main(int argc, char **argv)
     int txfd = -1;
     uint64_t last_tx = 0;
     uint64_t last_sources = 0;
+    dropset_t drop = {0};   /* perdants de l'arbitrage (publiés pour n2k-filter) */
     uint64_t last_stats = now_ms();
     if (tx_can_if) {
         /* TX socketcan : ISO Request écrites en can_frame sur l'interface CAN. */
@@ -354,6 +407,8 @@ int main(int argc, char **argv)
 
             arb_decision_t d = arbiter_decide(&arb, &m, now);
             if (d.result == ARB_ACCEPT) n_accept++;
+            if (losers_path && m.has_pgn && m.has_src)
+                dropset_update(&drop, m.pgn, m.src, d.result, now);
 
             if (verbose && m.has_pgn)
                 fprintf(stderr, "src=%-3d pgn=%-6d %-18s %s%s\n",
@@ -425,8 +480,10 @@ int main(int argc, char **argv)
         }
 
         /* publication périodique des sources vues (pour la GUI) */
-        if (sources_path && now - last_sources >= (uint64_t)sources_interval * 1000u) {
-            sources_write(&reg, sources_path);
+        if ((sources_path || losers_path) &&
+            now - last_sources >= (uint64_t)sources_interval * 1000u) {
+            if (sources_path) sources_write(&reg, sources_path);
+            if (losers_path)  dropset_write(&drop, losers_path, now);
             last_sources = now;
         }
 
@@ -448,6 +505,8 @@ int main(int argc, char **argv)
 
     if (sources_path)
         sources_write(&reg, sources_path);   /* dernière publication à l'arrêt */
+    if (losers_path)
+        dropset_write(&drop, losers_path, now_ms());
     if (txfd >= 0) close(txfd);
     fprintf(stderr, "n2k-mux : %lu lignes, %lu retenues, %lu phrases émises.\n",
             n_lines, n_accept, n_sent);
