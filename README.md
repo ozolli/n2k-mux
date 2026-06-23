@@ -226,25 +226,33 @@ ce serial dans la section `[sources]`, donnez-lui un nom logique, puis enregistr
 
 ## 4. Brancher qtVlm et les tablettes
 
+Tout se passe dans qtVlm sous **Configuration → Connexions NMEA → onglet
+Entrants**. Choisir **une seule** voie pour le N2K (sinon données dupliquées).
+
 ### qtVlm sur le PC de bord — N2K local (`vcan0`)
 
-Dans qtVlm : source NMEA → **socketcan**, interface **`vcan0`**. C'est le bus déjà
-arbitré (une seule source par donnée). C'est le branchement le plus direct quand
-qtVlm tourne sur le PC de bord lui-même.
+Dans l'onglet **Entrants**, cocher **« Bus CAN direct NMEA2000 (sans passerelle) »**,
+puis **Plugin = `socketcan`**, **Interface = `vcan0`**. Laisser « Émettre données
+bateau » décoché. `vcan0` est le bus déjà **arbitré** (une seule source par donnée) —
+c'est le branchement le plus direct quand qtVlm tourne sur le PC de bord.
+
+> Attention : `vcan0`, **pas** `can0`. `can0` est le bus brut non arbitré.
 
 ### qtVlm en réseau — N2K sur TCP 2700
 
-1. Dans qtVlm : **Configuration → NMEA → ajouter une connexion → TCP client**.
-2. Adresse = l'IP du PC de bord, **port = 2700**.
-3. Valider. qtVlm détecte automatiquement le format **YDRAW** et décode le N2K
-   (position, cap, vent, satellites, **cibles AIS**…).
+Onglet **Entrants → sous-onglet Sources réseau → cadre TCP**. Sur un *Serveur*
+libre : **adresse = IP du PC de bord** (ou son IP publique si vous êtes à
+distance), **port = `2700`**, et activez-le. qtVlm détecte automatiquement le
+format **YDRAW** et décode le N2K (position, cap, vent, satellites, **cibles AIS**…).
+Laisser le « Bus CAN direct » décoché dans ce cas.
 
 > Le N2K AIS et la constellation GPS nécessitent **qtVlm ≥ 5.12.27-beta2**.
 
 ### qtVlm ou tablettes — NMEA 0183 sur 10110
 
-Connexion **TCP** sur **port 10110** (instruments arbitrés + AIS en `!AIVDM` déjà
-fusionnés). Le 10110 est aussi diffusé en **UDP** sur le LAN.
+Même endroit (**Entrants → Sources réseau → TCP**), un *Serveur* avec l'IP du PC de
+bord et **port = `10110`** (instruments arbitrés + AIS en `!AIVDM` déjà fusionnés).
+Le 10110 est aussi diffusé en **UDP** sur le LAN.
 
 ### Accès depuis l'extérieur du bateau
 
