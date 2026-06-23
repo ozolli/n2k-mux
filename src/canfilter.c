@@ -144,7 +144,7 @@ int main(int argc, char **argv)
     /* Liste des perdants (rechargée à chaud quand le fichier change). */
     fdrop_t dset[FDROP_MAX];
     int dn = 0;
-    time_t dmtime = 0;
+    time_t dmtime = 0, last_check = 0;
     if (drop_path) {
         dn = drop_load(drop_path, dset, FDROP_MAX);
         struct stat sb;
@@ -176,12 +176,17 @@ int main(int argc, char **argv)
         if (r != (ssize_t)sizeof f) continue;   /* trame CAN FD ignorée ici */
         n_in++;
 
-        /* Recharge la liste des perdants si le fichier a changé (~tous les 256). */
-        if (drop_path && (n_in & 0xff) == 0) {
-            struct stat sb;
-            if (stat(drop_path, &sb) == 0 && sb.st_mtime != dmtime) {
-                dmtime = sb.st_mtime;
-                dn = drop_load(drop_path, dset, FDROP_MAX);
+        /* Recharge la liste des perdants si le fichier a changé — vérifié au plus
+         * une fois par seconde (indépendant du débit du bus). */
+        if (drop_path) {
+            time_t now_s = time(NULL);
+            if (now_s != last_check) {
+                last_check = now_s;
+                struct stat sb;
+                if (stat(drop_path, &sb) == 0 && sb.st_mtime != dmtime) {
+                    dmtime = sb.st_mtime;
+                    dn = drop_load(drop_path, dset, FDROP_MAX);
+                }
             }
         }
 
