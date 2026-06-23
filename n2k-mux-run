@@ -49,7 +49,7 @@ fi
   | tee "$AISFIFO" \
   | "$N2KMUX" "$CONF" --tx "$TXFIFO" \
         --sources "$RUN/sources.json" --stats "$RUN/stats.json" \
-        --busmap "$RUN/busmap.json" \
+        --busmap "$RUN/busmap.json" --sources-interval 2 \
   | "$KPLEX" -f "$KPLEX_CONF" &
 
 # Dès qu'un composant (n2kd, kplex, analyzer, un n2k-mux…) s'arrête, on sort :
