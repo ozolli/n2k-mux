@@ -1,0 +1,61 @@
+# n2k-mux-can.service — chaîne de production NMEA 2000 via SOCKETCAN (PEAK/CAN).
+#
+# Variante socketcan de n2k-mux.service (qui, lui, lit la passerelle Actisense
+# NGX-1). À utiliser quand o3nav est relié au bus par un adaptateur CAN (PEAK
+# PCAN-USB…). Ne pas activer les DEUX en même temps.
+#
+#   sudo systemctl daemon-reload
+#   sudo systemctl disable --now n2k-mux        # désactive la chaîne NGX-1
+#   sudo systemctl enable --now n2k-mux-can
+#   journalctl -u n2k-mux-can -f
+#
+# Sorties : vcan0 (N2K local), YDRAW/TCP 2700 (N2K réseau), kplex TCP 10110 (0183).
+
+[Unit]
+Description=n2k-mux — multiplexeur NMEA 2000 (entrée socketcan)
+Documentation=https://github.com/ozolli/n2k-mux
+After=local-fs.target
+Conflicts=kplex.service n2k-mux.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+
+# Valeurs par défaut, surchargées par /etc/default/n2k-mux s'il existe.
+Environment=CANIF=can0 VCANIF=vcan0 YDRAW_PORT=2700 SRC_ADDR=0
+Environment=CAN_BITRATE=250000
+Environment=CONF=/etc/n2k-mux/n2k-mux.ini KPLEX_CONF=/etc/kplex.conf
+Environment=CANDUMP=/usr/bin/candump
+Environment=CANDUMP2ANALYZER=/usr/local/bin/candump2analyzer
+Environment=ANALYZER=/usr/local/bin/analyzer
+Environment=N2KD=/usr/local/bin/n2kd
+Environment=N2KMUX=/usr/local/bin/n2k-mux
+Environment=NFILTER=/usr/local/bin/n2k-filter
+Environment=KPLEX=/usr/bin/kplex
+EnvironmentFile=-/etc/default/n2k-mux
+
+# /run/n2k-mux : FIFO AIS, losers.txt, sources.json, stats.json (lus par le web).
+RuntimeDirectory=n2k-mux
+RuntimeDirectoryMode=0755
+
+# Mise en route des interfaces CAN (idempotent ; erreurs tolérées) :
+#   - vcan0 (CAN virtuel pour le flux arbitré local) ;
+#   - can0 monté au débit N2K (250 kbit/s).
+ExecStartPre=/bin/sh -c 'modprobe vcan 2>/dev/null; ip link add dev "$VCANIF" type vcan 2>/dev/null; ip link set "$VCANIF" up 2>/dev/null; ip link set "$CANIF" up type can bitrate "$CAN_BITRATE" 2>/dev/null; true'
+# Garde-fou : tue tout n2kd résiduel (collision ports 2597-2602).
+ExecStartPre=-/bin/sh -c 'pkill -f "[n]2kd" 2>/dev/null || true'
+
+ExecStart=/usr/local/bin/n2k-mux-can-run
+
+Restart=always
+RestartSec=3
+
+# Accès aux interfaces CAN (mise up) : CAP_NET_ADMIN. Service en root par défaut.
+NoNewPrivileges=true
+ProtectHome=read-only
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

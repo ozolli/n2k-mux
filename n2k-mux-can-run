@@ -1,0 +1,49 @@
+#!/bin/bash
+# n2k-mux-can-run — chaîne de production SOCKETCAN (adaptateur CAN, ex. PEAK).
+#
+# Remplace la chaîne NGX-1/actisense-serial (cf. n2k-mux-run) par une entrée
+# socketcan. Trois sorties depuis le bus ARBITRÉ :
+#   - N2K local   : vcan0 (CAN virtuel, qtVlm en socketcan)
+#   - N2K réseau  : YDRAW/TCP (n2k-filter --ydraw-port, qtVlm distant)
+#   - NMEA 0183   : kplex TCP 10110 (+ AIS via n2kd)
+#
+# Décision (identités + arbitrage + 0183) par n2k-mux, alimenté par
+# candump | candump2analyzer | analyzer. n2k-filter relit la liste des perdants
+# publiée par n2k-mux (--losers) et ne réémet que les trames retenues.
+#
+# Variables (Environment / EnvironmentFile du service) :
+#   CANIF VCANIF YDRAW_PORT SRC_ADDR CONF KPLEX_CONF
+#   CANDUMP CANDUMP2ANALYZER ANALYZER N2KD N2KMUX NFILTER KPLEX
+
+set -uo pipefail
+
+: "${CONF:?}" "${KPLEX_CONF:?}"
+: "${CANDUMP:?}" "${CANDUMP2ANALYZER:?}" "${ANALYZER:?}" "${N2KD:?}"
+: "${N2KMUX:?}" "${NFILTER:?}" "${KPLEX:?}"
+CANIF="${CANIF:-can0}"
+VCANIF="${VCANIF:-vcan0}"
+YDRAW_PORT="${YDRAW_PORT:-2700}"
+SRC_ADDR="${SRC_ADDR:-0}"
+
+RUN="${RUNTIME_DIRECTORY:-/run/n2k-mux}"
+AISFIFO="$RUN/ais.fifo"      # copie du flux décodé → branche AIS
+LOSERS="$RUN/losers.txt"     # perdants publiés par n2k-mux, lus par n2k-filter
+mkfifo -m 0600 "$AISFIFO" 2>/dev/null || true
+
+# Branche N2K : trames brutes du bus → arbitrage (drop perdants) → vcan0 + YDRAW/TCP.
+"$NFILTER" --in "$CANIF" --out "$VCANIF" --ydraw-port "$YDRAW_PORT" --drop "$LOSERS" &
+
+# Branche AIS : flux décodé dupliqué → dédup MMSI → n2kd (VDM sur TCP 2599).
+"$N2KMUX" --ais-json "$CONF" < "$AISFIFO" | "$N2KD" &
+
+# Branche principale : décodage socketcan → tee(ais) → décision (ISO Request en
+# TX socketcan, 0183 + publication des perdants) → kplex.
+"$CANDUMP" "$CANIF" | "$CANDUMP2ANALYZER" | "$ANALYZER" -json -nv \
+  | tee "$AISFIFO" \
+  | "$N2KMUX" "$CONF" --tx-can "$CANIF" --src-addr "$SRC_ADDR" --losers "$LOSERS" \
+        --sources "$RUN/sources.json" --stats "$RUN/stats.json" \
+  | "$KPLEX" -f "$KPLEX_CONF" &
+
+# Si un étage meurt, on sort → systemd relance toute la chaîne.
+wait -n
+exit 1
