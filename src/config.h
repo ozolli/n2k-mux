@@ -101,6 +101,14 @@ typedef struct {
     int          ignore_pgn[CFG_MAX_IGNORE];
     int          n_ignore_pgn;
 
+    /* Sorties désactivées par PGN ([output] no_n2k / no_0183). Défaut : tout
+     * émis. Un PGN listé n'est PAS réémis en N2K (vcan0/YDRAW) resp. converti en
+     * 0183 — indépendamment de l'arbitrage. */
+    int          no_n2k_pgn[CFG_MAX_IGNORE];
+    int          n_no_n2k;
+    int          no_0183_pgn[CFG_MAX_IGNORE];
+    int          n_no_0183;
+
     cfg_rate_t   rates[CFG_MAX_RATES];
     int          n_rates;
 
@@ -131,6 +139,10 @@ const cfg_rule_t *config_rule(const config_t *c, int pgn, const char *disc);
 /* Règles d'exclusion explicites (listées dans [ignore]). */
 bool config_ignore_src(const config_t *c, int src);
 bool config_ignore_pgn(const config_t *c, int pgn);
+
+/* Sorties par PGN ([output] no_n2k / no_0183). true = à émettre (défaut). */
+bool config_emit_n2k(const config_t *c, int pgn);
+bool config_emit_0183(const config_t *c, int pgn);
 
 /* Intervalle minimum (ms) entre deux phrases d'un type donné ([rate]).
  * 0 si le type n'est pas limité. La casse du type est ignorée. */

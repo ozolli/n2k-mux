@@ -107,7 +107,8 @@ static int drop_load(const char *path, fdrop_t *set, int max)
 static int drop_has(const fdrop_t *set, int n, int pgn, int src)
 {
     for (int i = 0; i < n; i++)
-        if (set[i].pgn == pgn && set[i].src == src) return 1;
+        if (set[i].pgn == pgn && (set[i].src == src || set[i].src == -1))
+            return 1;   /* src -1 = wildcard : PGN coupé en N2K (no_n2k) */
     return 0;
 }
 

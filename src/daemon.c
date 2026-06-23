@@ -170,7 +170,8 @@ static void dropset_update(dropset_t *ds, int pgn, int src,
 }
 
 /* Purge les entrées périmées puis écrit la liste (atomique tmp+rename). */
-static int dropset_write(dropset_t *ds, const char *path, uint64_t now)
+static int dropset_write(dropset_t *ds, const char *path, uint64_t now,
+                         const config_t *cfg)
 {
     int k = 0;
     for (int i = 0; i < ds->n; i++)
@@ -181,9 +182,14 @@ static int dropset_write(dropset_t *ds, const char *path, uint64_t now)
     snprintf(tmp, sizeof tmp, "%s.tmp", path);
     FILE *f = fopen(tmp, "w");
     if (!f) return -1;
-    fputs("# n2k-mux : perdants de l'arbitrage (pgn src) — jetés par n2k-filter\n", f);
+    fputs("# n2k-mux : trames à jeter par n2k-filter — perdants (pgn src) et\n"
+          "# PGN coupés en N2K (pgn -1 = toutes sources)\n", f);
     for (int i = 0; i < ds->n; i++)
         fprintf(f, "%d %d\n", ds->e[i].pgn, ds->e[i].src);
+    /* PGN désactivés en sortie N2K ([output] no_n2k) : src -1 = wildcard. */
+    if (cfg)
+        for (int i = 0; i < cfg->n_no_n2k; i++)
+            fprintf(f, "%d -1\n", cfg->no_n2k_pgn[i]);
     fclose(f);
     return rename(tmp, path);
 }
@@ -433,7 +439,8 @@ int main(int argc, char **argv)
                         d.discriminant[0] ? d.discriminant : "");
 
             map_out_t out;
-            if (gen_0183 && mapper_map(&mp, &m, &d, now, &out) > 0) {
+            if (gen_0183 && config_emit_0183(&cfg, m.pgn) &&
+                mapper_map(&mp, &m, &d, now, &out) > 0) {
                 /* Throttle par type. Une rafale d'un même type produite dans le
                  * même mapper_map (ex. les pages GSV) passe en entier dès que le
                  * gate s'ouvre — sinon la pagination serait cassée. */
@@ -499,7 +506,7 @@ int main(int argc, char **argv)
         if ((sources_path || losers_path || busmap_path) &&
             now - last_sources >= (uint64_t)sources_interval * 1000u) {
             if (sources_path) sources_write(&reg, sources_path);
-            if (losers_path)  dropset_write(&drop, losers_path, now);
+            if (losers_path)  dropset_write(&drop, losers_path, now, &cfg);
             if (busmap_path)  busmap_write(&bm, busmap_path, now);
             last_sources = now;
         }
@@ -523,7 +530,7 @@ int main(int argc, char **argv)
     if (sources_path)
         sources_write(&reg, sources_path);   /* dernière publication à l'arrêt */
     if (losers_path)
-        dropset_write(&drop, losers_path, now_ms());
+        dropset_write(&drop, losers_path, now_ms(), &cfg);
     if (busmap_path)
         busmap_write(&bm, busmap_path, now_ms());
     if (txfd >= 0) close(txfd);

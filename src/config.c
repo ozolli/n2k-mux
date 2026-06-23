@@ -174,6 +174,12 @@ static bool feed(config_t *c, int *section, char *line, int lineno)
         case SEC_OUTPUT:
             if (strcasecmp(key, "talker") == 0)
                 cpy(c->talker, sizeof c->talker, val);
+            else if (strcasecmp(key, "no_n2k") == 0)
+                return add_int_list(c, lineno, val, c->no_n2k_pgn,
+                                    &c->n_no_n2k, CFG_MAX_IGNORE);
+            else if (strcasecmp(key, "no_0183") == 0)
+                return add_int_list(c, lineno, val, c->no_0183_pgn,
+                                    &c->n_no_0183, CFG_MAX_IGNORE);
             return true;
         case SEC_SOURCES:
             return add_source(c, lineno, key, val);
@@ -299,6 +305,16 @@ bool config_ignore_src(const config_t *c, int src)
 bool config_ignore_pgn(const config_t *c, int pgn)
 {
     return in_list(c->ignore_pgn, c->n_ignore_pgn, pgn);
+}
+
+bool config_emit_n2k(const config_t *c, int pgn)
+{
+    return !in_list(c->no_n2k_pgn, c->n_no_n2k, pgn);
+}
+
+bool config_emit_0183(const config_t *c, int pgn)
+{
+    return !in_list(c->no_0183_pgn, c->n_no_0183, pgn);
 }
 
 int config_rate_ms(const config_t *c, const char *type)
