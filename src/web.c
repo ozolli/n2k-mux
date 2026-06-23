@@ -137,7 +137,7 @@ static const char PAGE[] =
 " const identByName={};for(const s of (ru.sources||[]))identByName[s.name]=s.ident;\n"
 " const newName={};document.querySelectorAll('#src_body input[data-ident]').forEach(i=>{const v=i.value.trim();if(v)newName[i.dataset.ident]=v;});\n"
 " const sources=Object.keys(newName).map(id=>({ident:id,name:newName[id]}));\n"
-" const rules=(ru.rules||[]).map(r=>({pgn:r.pgn,disc:r.disc,mode:r.mode,sources:r.sources.map(n=>newName[identByName[n]]).filter(Boolean)}));\n"
+" const rules=(ru.rules||[]).map(r=>({pgn:r.pgn,disc:r.disc,mode:r.mode,sources:r.sources.map(n=>{const id=identByName[n];return id===undefined?n:newName[id];}).filter(Boolean)}));\n"
 " const res=await fetch('/api/config',{method:'POST',body:genIni(ru.talker,sources,rules,ru.ignore,ru.rates)});const d=await res.json();\n"
 " d.ok?smsg('Noms enregistrés et rechargés.','ok'):smsg('Refusé — ligne '+(d.line||'?')+' : '+(d.err||''),'err');\n"
 " if(d.ok)setTimeout(renderSources,600);\n"
