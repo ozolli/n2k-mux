@@ -94,7 +94,7 @@ test_ydraw: $(YDRAW_OBJ) $(BUILD)/test_ydraw.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 # --- Module (f) : daemon (binaire final) ---
-n2k-mux: $(CORE_OBJ) $(DAEMON_OBJ)
+n2k-mux: $(CORE_OBJ) $(BUILD)/cansock.o $(DAEMON_OBJ)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lm
 
 # --- Interface web de gestion (remplace à terme la GUI GTK ; zéro dépendance) ---

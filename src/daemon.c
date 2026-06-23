@@ -34,6 +34,7 @@
 #include "aisdedup.h"
 #include "sources.h"
 #include "stats.h"
+#include "cansock.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -85,10 +86,16 @@ static bool config_reload(config_t *cfg, const char *path)
     return true;
 }
 
-static void emit_iso_requests(int txfd)
+static void emit_iso_requests(int txfd, int tx_can, int src_addr)
 {
     if (txfd < 0)
         return;
+    if (tx_can) {
+        /* socketcan : on écrit directement les trames N2K (PEAK et autres). */
+        cansock_send_iso_request(txfd, src_addr, 60928);   /* ISO Address Claim */
+        cansock_send_iso_request(txfd, src_addr, 126996);  /* Product Information */
+        return;
+    }
     for (size_t i = 0; i < sizeof ISO_REQUESTS / sizeof *ISO_REQUESTS; i++) {
         ssize_t n = write(txfd, ISO_REQUESTS[i], strlen(ISO_REQUESTS[i]));
         (void)n;   /* best-effort : pas de lecteur / FIFO pleine → on ignore */
@@ -135,9 +142,12 @@ static uint64_t *thr_last(throttle_t *t, const char *type)
 static void usage(const char *prog)
 {
     fprintf(stderr,
-        "Usage : %s [config.ini] [--tx CHEMIN] [--tx-interval SEC] [--ais-json] [-v]\n"
+        "Usage : %s [config.ini] [--tx CHEMIN | --tx-can IFACE] [--src-addr N]\n"
+        "        [--tx-interval SEC] [--ais-json] [-v]\n"
         "  config.ini       sources nommées, priorités, exclusions\n"
         "  --tx CHEMIN      émet des ISO Request sur CHEMIN (FIFO vers actisense-serial)\n"
+        "  --tx-can IFACE   émet des ISO Request en socketcan sur IFACE (ex. can0)\n"
+        "  --src-addr N     adresse source des ISO Request socketcan (défaut 0)\n"
         "  --tx-interval N  période d'émission en secondes (défaut 30)\n"
         "  --ais-json       mode filtre AIS : JSON->JSON dédupliqué par MMSI,\n"
         "                   à brancher devant n2kd (cf. fusion des sources AIS)\n"
@@ -218,6 +228,9 @@ int main(int argc, char **argv)
 {
     const char *cfg_path = NULL;
     const char *tx_path  = NULL;
+    const char *tx_can_if = NULL;   /* --tx-can : ISO Request en socketcan */
+    int         tx_src_addr = 0;    /* --src-addr : adresse source des ISO Request */
+    int         tx_can = 0;         /* mode TX retenu : 1 = socketcan, 0 = FIFO texte */
     const char *sources_path = NULL;
     const char *stats_path = NULL;
     unsigned    tx_interval = 30;
@@ -242,6 +255,10 @@ int main(int argc, char **argv)
             if (stats_interval == 0) stats_interval = 5;
         } else if (strcmp(argv[i], "--tx") == 0 && i + 1 < argc) {
             tx_path = argv[++i];
+        } else if (strcmp(argv[i], "--tx-can") == 0 && i + 1 < argc) {
+            tx_can_if = argv[++i];
+        } else if (strcmp(argv[i], "--src-addr") == 0 && i + 1 < argc) {
+            tx_src_addr = (int)strtoul(argv[++i], NULL, 10);
         } else if (strcmp(argv[i], "--tx-interval") == 0 && i + 1 < argc) {
             tx_interval = (unsigned)strtoul(argv[++i], NULL, 10);
             if (tx_interval == 0) tx_interval = 30;
@@ -295,12 +312,20 @@ int main(int argc, char **argv)
     uint64_t last_tx = 0;
     uint64_t last_sources = 0;
     uint64_t last_stats = now_ms();
-    if (tx_path) {
+    if (tx_can_if) {
+        /* TX socketcan : ISO Request écrites en can_frame sur l'interface CAN. */
+        txfd = cansock_open(tx_can_if);
+        if (txfd >= 0) {
+            tx_can = 1;
+            emit_iso_requests(txfd, tx_can, tx_src_addr);   /* requête initiale */
+            last_tx = now_ms();
+        }
+    } else if (tx_path) {
         txfd = open(tx_path, O_RDWR | O_NONBLOCK);
         if (txfd < 0)
             fprintf(stderr, "n2k-mux : --tx %s : %s\n", tx_path, strerror(errno));
         else {
-            emit_iso_requests(txfd);   /* requête initiale */
+            emit_iso_requests(txfd, tx_can, tx_src_addr);   /* requête initiale */
             last_tx = now_ms();
         }
     }
@@ -395,7 +420,7 @@ int main(int argc, char **argv)
 
         /* émission périodique des ISO Request (best-effort) */
         if (txfd >= 0 && now - last_tx >= (uint64_t)tx_interval * 1000u) {
-            emit_iso_requests(txfd);
+            emit_iso_requests(txfd, tx_can, tx_src_addr);
             last_tx = now;
         }
 
