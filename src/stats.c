@@ -44,11 +44,21 @@ void stats_init(stats_t *s, uint64_t now)
     s->window_start = now;
 }
 
+void stats_observe_frame(stats_t *s, int dlc)
+{
+    if (dlc < 0) dlc = 0;
+    if (dlc > 8) dlc = 8;
+    s->meas_frames++;
+    s->meas_bits += (unsigned long long)(STATS_CAN_FRAME_OVERHEAD + 8 * dlc);
+}
+
 void stats_reset(stats_t *s, uint64_t now)
 {
     s->window_start = now;
     s->msgs = 0;
     s->frames = 0;
+    s->meas_frames = 0;
+    s->meas_bits = 0;
     for (int i = 0; i < s->n_pgns; i++)
         s->pgns[i].count = 0;
     s->out_sent = 0;
@@ -120,8 +130,16 @@ void stats_summary(const stats_t *s, uint64_t now,
 {
     double dt = (now > s->window_start) ? (double)(now - s->window_start) / 1000.0 : 0.0;
     double mps = dt > 0 ? (double)s->msgs / dt : 0.0;
-    double fps = dt > 0 ? (double)s->frames / dt : 0.0;
-    double load = fps * STATS_BITS_PER_FRAME / STATS_BUS_BPS * 100.0;
+    double fps, load;
+    if (s->meas_frames > 0) {
+        /* MESURÉ : trames et bits réels du bus. */
+        fps  = dt > 0 ? (double)s->meas_frames / dt : 0.0;
+        load = dt > 0 ? (double)s->meas_bits / (STATS_BUS_BPS * dt) * 100.0 : 0.0;
+    } else {
+        /* ESTIMÉ : trames déduites des messages × table fast-packet. */
+        fps  = dt > 0 ? (double)s->frames / dt : 0.0;
+        load = fps * STATS_BITS_PER_FRAME / STATS_BUS_BPS * 100.0;
+    }
     if (msg_per_s)    *msg_per_s    = mps;
     if (frames_per_s) *frames_per_s = fps;
     if (load_pct)     *load_pct     = load;
@@ -139,9 +157,10 @@ int stats_to_json(const stats_t *s, char *buf, size_t sz, uint64_t now)
     size_t n = 0;
     int w = snprintf(buf, sz,
                      "{\"window_s\":%.1f,\"msg_per_s\":%.1f,\"frames_per_s\":%.1f,"
-                     "\"bus_load_pct\":%.1f,"
+                     "\"bus_load_pct\":%.1f,\"measured\":%s,"
                      "\"out_sent_per_s\":%.1f,\"out_bytes_per_s\":%.1f,\"out_load_pct\":%.1f,"
-                     "\"pgns\":[\n", dt, mps, fps, load, osps, obps, oload);
+                     "\"pgns\":[\n", dt, mps, fps, load,
+                     s->meas_frames > 0 ? "true" : "false", osps, obps, oload);
     if (w < 0 || (size_t)w >= sz) return -1;
     n += (size_t)w;
 

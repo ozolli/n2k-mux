@@ -62,3 +62,14 @@ int cansock_send_iso_request(int fd, int src_addr, int req_pgn)
     ssize_t w = write(fd, &f, sizeof f);
     return (w == (ssize_t)sizeof f) ? 0 : -1;
 }
+
+int cansock_recv_dlc(int fd, int *dlc)
+{
+    struct can_frame f;
+    ssize_t r = recv(fd, &f, sizeof f, MSG_DONTWAIT);
+    if (r == (ssize_t)sizeof f) {
+        if (dlc) *dlc = f.can_dlc;
+        return 1;
+    }
+    return 0;
+}

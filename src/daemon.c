@@ -389,6 +389,14 @@ int main(int argc, char **argv)
     while (fgets(line, sizeof line, stdin)) {
         uint64_t now = now_ms();
 
+        /* Charge MESURÉE : le socket TX socketcan reçoit aussi tout le bus ;
+         * on draine les trames en attente (DLC exact) à chaque tour. */
+        if (tx_can) {
+            int dlc;
+            while (cansock_recv_dlc(txfd, &dlc))
+                stats_observe_frame(&st, dlc);
+        }
+
         if (g_reload) {
             g_reload = 0;
             if (config_reload(&cfg, cfg_path)) {

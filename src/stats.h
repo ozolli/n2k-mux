@@ -28,6 +28,9 @@
 #define STATS_MAX_TYPES        48      /* types de phrases 0183 distincts */
 #define STATS_BUS_BPS         250000   /* NMEA 2000 : 250 kbit/s */
 #define STATS_BITS_PER_FRAME  130      /* trame CAN étendue ~130 bits (approx) */
+/* Charge MESURÉE : bits sur le fil d'une trame CAN 2.0B = SOF..EOF (64) + données
+ * (8×DLC) + IFS (3). Nominal hors bit-stuffing (qui ajoute ~0-15 % réels). */
+#define STATS_CAN_FRAME_OVERHEAD 67
 #define STATS_0183_REF_BAUD   4800     /* liaison 0183 classique → réf. de charge */
 
 typedef struct {
@@ -48,6 +51,10 @@ typedef struct {
     /* entrée NMEA 2000 */
     unsigned long msgs;                /* messages dans la fenêtre */
     unsigned long frames;              /* trames CAN estimées dans la fenêtre */
+    /* charge MESURÉE : alimentée par les vraies trames CAN (socketcan). Si
+     * meas_frames > 0, la charge/fréquence trames est exacte plutôt qu'estimée. */
+    unsigned long      meas_frames;    /* trames CAN exactes dans la fenêtre */
+    unsigned long long meas_bits;      /* bits sur le bus (67 + 8×DLC par trame) */
     stats_pgn_t   pgns[STATS_MAX_PGNS];
     int           n_pgns;
 
@@ -66,6 +73,10 @@ void stats_reset(stats_t *s, uint64_t now);
 
 /* Enregistre un message d'un PGN (trames estimées en interne). */
 void stats_observe(stats_t *s, int pgn);
+
+/* Enregistre une trame CAN RÉELLE (DLC exact) pour la charge mesurée. À appeler
+ * depuis une source socketcan ; bascule la charge d'« estimée » à « mesurée ». */
+void stats_observe_frame(stats_t *s, int dlc);
 
 /* Enregistre une phrase 0183 émise (type "GLL"… + nb d'octets). */
 void stats_observe_out(stats_t *s, const char *type, size_t bytes);

@@ -112,7 +112,7 @@ static const char PAGE[] =
 "function bar(p){p=Math.max(0,Math.min(100,p));return '<span class=bar><i style=\\'width:'+p+'%\\'></i></span> '+H(1,p)+'%';}\n"
 "async function renderCharge(){try{const d=await jget('/api/stats');\n"
 " let h='<table>'+\n"
-"  '<tr><th>Bus N2K (estimé)</th><td>'+bar(d.bus_load_pct)+' &nbsp;<small>'+H(1,d.msg_per_s)+' msg/s, '+H(1,d.frames_per_s)+' trames/s</small></td></tr>'+\n"
+"  '<tr><th>Bus N2K ('+(d.measured?'mesuré':'estimé')+')</th><td>'+bar(d.bus_load_pct)+' &nbsp;<small>'+H(1,d.msg_per_s)+' msg/s, '+H(1,d.frames_per_s)+' trames/s</small></td></tr>'+\n"
 "  '<tr><th>Sortie 0183</th><td>'+bar(d.out_load_pct)+' &nbsp;<small>'+H(1,d.out_sent_per_s)+' phrases/s, '+H(0,d.out_bytes_per_s)+' o/s</small></td></tr></table>';\n"
 " h+='<div class=row><div class=card><h3>PGN reçus</h3><table class=fix><tr><th>PGN</th><th class=n>intervalle</th><th class=n>total</th></tr>';\n"
 " for(const p of (d.pgns||[]).slice().sort((a,b)=>a.pgn-b.pgn))h+='<tr><td>'+p.pgn+'</td><td class=n>'+ms(p.hz)+'</td><td class=n>'+p.total+'</td></tr>';\n"

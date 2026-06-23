@@ -13,8 +13,10 @@
 [Unit]
 Description=n2k-mux — interface web de gestion
 Documentation=https://github.com/ozolli/n2k-mux
-After=n2k-mux.service
-Wants=n2k-mux.service
+# Ordonnancement seulement (pas de Wants) : l'UI ne doit PAS tirer un service de
+# données — sinon, avec Conflicts, elle annule l'autre chaîne. Elle lit
+# /run/n2k-mux (sources/stats), gracieux si absents. Marche avec NGX-1 OU socketcan.
+After=n2k-mux.service n2k-mux-can.service
 
 [Service]
 Type=simple
