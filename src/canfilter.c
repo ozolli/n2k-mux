@@ -35,6 +35,9 @@
 #include <linux/can.h>
 #include <linux/can/raw.h>
 
+#include "ydraw.h"
+#include "netout.h"
+
 static volatile sig_atomic_t g_stop = 0;
 static void on_sig(int s) { (void)s; g_stop = 1; }
 
@@ -111,17 +114,21 @@ static int drop_has(const fdrop_t *set, int n, int pgn, int src)
 int main(int argc, char **argv)
 {
     const char *in_if = "can0", *out_if = "vcan0", *drop_path = NULL;
+    int ydraw_port = 0;
     int verbose = 0;
     for (int i = 1; i < argc; i++) {
-        if (!strcmp(argv[i], "--in") && i + 1 < argc)         in_if = argv[++i];
-        else if (!strcmp(argv[i], "--out") && i + 1 < argc)   out_if = argv[++i];
-        else if (!strcmp(argv[i], "--drop") && i + 1 < argc)  drop_path = argv[++i];
-        else if (!strcmp(argv[i], "-v"))                      verbose = 1;
+        if (!strcmp(argv[i], "--in") && i + 1 < argc)            in_if = argv[++i];
+        else if (!strcmp(argv[i], "--out") && i + 1 < argc)      out_if = argv[++i];
+        else if (!strcmp(argv[i], "--drop") && i + 1 < argc)     drop_path = argv[++i];
+        else if (!strcmp(argv[i], "--ydraw-port") && i + 1 < argc) ydraw_port = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "-v"))                         verbose = 1;
         else {
-            fprintf(stderr, "usage : %s [--in IFACE] [--out IFACE] [--drop FICHIER] [-v]\n"
-                            "  défauts : --in can0 --out vcan0\n"
-                            "  --drop : fichier des perdants (pgn src) publié par n2k-mux --losers\n",
-                    argv[0]);
+            fprintf(stderr,
+                "usage : %s [--in IFACE] [--out IFACE] [--drop FICHIER] [--ydraw-port N] [-v]\n"
+                "  défauts : --in can0 --out vcan0\n"
+                "  --drop       : fichier des perdants (pgn src) publié par n2k-mux --losers\n"
+                "  --ydraw-port : sert aussi le flux arbitré en YDRAW/TCP (ex. 2700, qtVlm réseau)\n",
+                argv[0]);
             return 2;
         }
     }
@@ -144,9 +151,18 @@ int main(int argc, char **argv)
         if (stat(drop_path, &sb) == 0) dmtime = sb.st_mtime;
     }
 
-    fprintf(stderr, "canfilter : %s → %s%s, Ctrl-C pour arrêter.\n",
+    /* Serveur YDRAW/TCP optionnel : diffuse le flux arbitré en réseau (qtVlm). */
+    netout_t no;
+    int have_net = 0;
+    if (ydraw_port > 0) {
+        if (netout_open(&no, ydraw_port) == 0) have_net = 1;
+        else fprintf(stderr, "canfilter : YDRAW/TCP port %d indisponible\n", ydraw_port);
+    }
+
+    fprintf(stderr, "canfilter : %s → %s%s%s, Ctrl-C pour arrêter.\n",
             in_if, out_if,
-            drop_path ? " (arbitré : drop des perdants)" : " (miroir)");
+            drop_path ? " (arbitré)" : " (miroir)",
+            have_net ? " + YDRAW/TCP" : "");
 
     unsigned long n_in = 0, n_out = 0, n_drop = 0;
     while (!g_stop) {
@@ -178,6 +194,16 @@ int main(int argc, char **argv)
         ssize_t w = write(tx, &f, sizeof f);
         if (w == (ssize_t)sizeof f) n_out++;
 
+        /* Même trame arbitrée, servie en YDRAW/TCP (qtVlm réseau). Chaque trame
+         * CAN devient une ligne YDRAW ; qtVlm réassemble le fast-packet. */
+        if (have_net) {
+            netout_accept(&no);
+            char yd[YDRAW_MAX_LEN];
+            int m = ydraw_format(yd, sizeof yd, f.can_id & CAN_EFF_MASK,
+                                 f.data, f.can_dlc, ydraw_tod_ms_now());
+            if (m > 0) netout_broadcast(&no, yd, (size_t)m);
+        }
+
         if (verbose && (n_in % 500) == 0)
             fprintf(stderr, "  %lu lues / %lu réémises / %lu jetées\n",
                     n_in, n_out, n_drop);
@@ -185,6 +211,7 @@ int main(int argc, char **argv)
 
     fprintf(stderr, "canfilter : %lu trames lues, %lu réémises, %lu jetées.\n",
             n_in, n_out, n_drop);
+    if (have_net) netout_close(&no);
     close(rx);
     close(tx);
     return 0;

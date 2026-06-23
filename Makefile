@@ -109,8 +109,8 @@ ydraw-bridge: $(YDRAW_OBJ) $(NETOUT_OBJ) $(BUILD)/ydraw_bridge.o
 n2k-sim: $(BUILD)/simulator.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lm
 
-# --- Filtre N2K→N2K socketcan (frame-passthrough can0 → vcan0) ---
-n2k-filter: $(BUILD)/canfilter.o
+# --- Filtre N2K→N2K socketcan (frame-passthrough can0 → vcan0 + YDRAW/TCP) ---
+n2k-filter: $(BUILD)/canfilter.o $(YDRAW_OBJ) $(NETOUT_OBJ)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 # --- Module (g) : GUI GTK3 (cible séparée, nécessite libgtk-3-dev) ---
