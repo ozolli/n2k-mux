@@ -35,6 +35,7 @@
 #include "sources.h"
 #include "stats.h"
 #include "cansock.h"
+#include "busmap.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -204,6 +205,7 @@ static void usage(const char *prog)
         "  --stats CHEMIN   publie le débit/PGN et la charge de bus estimée en JSON\n"
         "  --stats-interval N    période de publication des stats (défaut 5)\n"
         "  --losers CHEMIN  publie les (pgn src) perdants de l'arbitrage (pour n2k-filter)\n"
+        "  --busmap CHEMIN  publie la carte (pgn/disc)->sources en JSON (pour l'UI web)\n"
         "  --no-0183        n'émet aucune phrase NMEA 0183 (arbitrage seul)\n"
         "  -v, --verbose    journalise les décisions + un résumé stats sur stderr\n",
         prog);
@@ -283,6 +285,7 @@ int main(int argc, char **argv)
     const char *sources_path = NULL;
     const char *stats_path = NULL;
     const char *losers_path = NULL;   /* --losers : liste des perdants pour n2k-filter */
+    const char *busmap_path = NULL;   /* --busmap : carte (pgn/disc)→sources pour l'UI */
     unsigned    tx_interval = 30;
     unsigned    sources_interval = 5;
     unsigned    stats_interval = 5;
@@ -302,6 +305,8 @@ int main(int argc, char **argv)
             stats_path = argv[++i];
         } else if (strcmp(argv[i], "--losers") == 0 && i + 1 < argc) {
             losers_path = argv[++i];
+        } else if (strcmp(argv[i], "--busmap") == 0 && i + 1 < argc) {
+            busmap_path = argv[++i];
         } else if (strcmp(argv[i], "--stats-interval") == 0 && i + 1 < argc) {
             stats_interval = (unsigned)strtoul(argv[++i], NULL, 10);
             if (stats_interval == 0) stats_interval = 5;
@@ -364,6 +369,7 @@ int main(int argc, char **argv)
     uint64_t last_tx = 0;
     uint64_t last_sources = 0;
     dropset_t drop = {0};   /* perdants de l'arbitrage (publiés pour n2k-filter) */
+    static busmap_t bm;     /* carte (pgn/disc)→sources pour l'UI (statique : ~64 Ko) */
     uint64_t last_stats = now_ms();
     if (tx_can_if) {
         /* TX socketcan : ISO Request écrites en can_frame sur l'interface CAN. */
@@ -417,6 +423,8 @@ int main(int argc, char **argv)
             if (d.result == ARB_ACCEPT) n_accept++;
             if (losers_path && m.has_pgn && m.has_src)
                 dropset_update(&drop, m.pgn, m.src, d.result, now);
+            if (busmap_path)
+                busmap_observe(&bm, &m, &d, now);
 
             if (verbose && m.has_pgn)
                 fprintf(stderr, "src=%-3d pgn=%-6d %-18s %s%s\n",
@@ -488,10 +496,11 @@ int main(int argc, char **argv)
         }
 
         /* publication périodique des sources vues (pour la GUI) */
-        if ((sources_path || losers_path) &&
+        if ((sources_path || losers_path || busmap_path) &&
             now - last_sources >= (uint64_t)sources_interval * 1000u) {
             if (sources_path) sources_write(&reg, sources_path);
             if (losers_path)  dropset_write(&drop, losers_path, now);
+            if (busmap_path)  busmap_write(&bm, busmap_path, now);
             last_sources = now;
         }
 
@@ -515,6 +524,8 @@ int main(int argc, char **argv)
         sources_write(&reg, sources_path);   /* dernière publication à l'arrêt */
     if (losers_path)
         dropset_write(&drop, losers_path, now_ms());
+    if (busmap_path)
+        busmap_write(&bm, busmap_path, now_ms());
     if (txfd >= 0) close(txfd);
     fprintf(stderr, "n2k-mux : %lu lignes, %lu retenues, %lu phrases émises.\n",
             n_lines, n_accept, n_sent);

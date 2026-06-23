@@ -42,6 +42,7 @@ mkfifo -m 0600 "$AISFIFO" 2>/dev/null || true
   | tee "$AISFIFO" \
   | "$N2KMUX" "$CONF" --tx-can "$CANIF" --src-addr "$SRC_ADDR" --losers "$LOSERS" \
         --sources "$RUN/sources.json" --stats "$RUN/stats.json" \
+        --busmap "$RUN/busmap.json" \
   | "$KPLEX" -f "$KPLEX_CONF" &
 
 # Si un étage meurt, on sort → systemd relance toute la chaîne.
