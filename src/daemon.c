@@ -441,6 +441,8 @@ int main(int argc, char **argv)
                         d.discriminant[0] ? d.discriminant : "");
 
             map_out_t out;
+            if (gen_0183 && config_emit_0183(&cfg, m.pgn))
+                snprintf(mp.talker, sizeof mp.talker, "%s", config_talker(&cfg, m.pgn));
             if (gen_0183 && config_emit_0183(&cfg, m.pgn) &&
                 mapper_map(&mp, &m, &d, now, &out) > 0) {
                 /* Throttle par type. Une rafale d'un même type produite dans le

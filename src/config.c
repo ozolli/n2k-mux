@@ -15,7 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-enum { SEC_NONE = 0, SEC_OUTPUT, SEC_SOURCES, SEC_PRIORITY, SEC_IGNORE, SEC_RATE, SEC_OTHER };
+enum { SEC_NONE = 0, SEC_OUTPUT, SEC_SOURCES, SEC_PRIORITY, SEC_IGNORE, SEC_RATE, SEC_TALKER, SEC_OTHER };
 
 /* Copie bornée, toujours terminée NUL. */
 static void cpy(char *dst, size_t sz, const char *src)
@@ -46,6 +46,7 @@ static int section_of(const char *n)
         strcasecmp(n, "priorites") == 0) return SEC_PRIORITY;
     if (strcasecmp(n, "ignore") == 0)   return SEC_IGNORE;
     if (strcasecmp(n, "rate") == 0 || strcasecmp(n, "rates") == 0) return SEC_RATE;
+    if (strcasecmp(n, "talker") == 0 || strcasecmp(n, "talkers") == 0) return SEC_TALKER;
     return SEC_OTHER;
 }
 
@@ -90,6 +91,19 @@ static bool add_rate(config_t *c, int lineno, const char *type, const char *val)
     cfg_rate_t *r = &c->rates[c->n_rates++];
     cpy(r->type, sizeof r->type, type);
     r->min_interval_ms = ms;
+    return true;
+}
+
+static bool add_talker(config_t *c, int lineno, const char *key, const char *val)
+{
+    if (c->n_talkers >= CFG_MAX_TALKERS)
+        return fail(c, lineno, "trop d'entrées ([talker])");
+    int pgn = (int)strtol(key, NULL, 10);
+    if (pgn <= 0)
+        return fail(c, lineno, "PGN invalide ([talker])");
+    c->talkers[c->n_talkers].pgn = pgn;
+    cpy(c->talkers[c->n_talkers].talker, sizeof c->talkers[0].talker, val);
+    c->n_talkers++;
     return true;
 }
 
@@ -195,6 +209,8 @@ static bool feed(config_t *c, int *section, char *line, int lineno)
             return true;        /* clé inconnue dans [ignore] : ignorée */
         case SEC_RATE:
             return add_rate(c, lineno, key, val);
+        case SEC_TALKER:
+            return add_talker(c, lineno, key, val);
         default:
             return true;        /* section inconnue : ignorée */
     }
@@ -324,4 +340,12 @@ int config_rate_ms(const config_t *c, const char *type)
         if (strcasecmp(c->rates[i].type, type) == 0)
             return c->rates[i].min_interval_ms;
     return 0;
+}
+
+const char *config_talker(const config_t *c, int pgn)
+{
+    for (int i = 0; i < c->n_talkers; i++)
+        if (c->talkers[i].pgn == pgn && c->talkers[i].talker[0])
+            return c->talkers[i].talker;
+    return c->talker[0] ? c->talker : "II";
 }

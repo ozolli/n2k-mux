@@ -55,6 +55,7 @@
 #define CFG_MAX_PRIO       8    /* sources par règle */
 #define CFG_MAX_IGNORE    16
 #define CFG_MAX_RATES     32   /* limites de débit par type de phrase */
+#define CFG_MAX_TALKERS   32   /* talker 0183 spécifique par PGN */
 #define CFG_NAME_LEN      24
 #define CFG_IDENT_LEN     64
 #define CFG_DISC_LEN      32
@@ -112,6 +113,10 @@ typedef struct {
     cfg_rate_t   rates[CFG_MAX_RATES];
     int          n_rates;
 
+    /* Talker 0183 par PGN ([talker] pgn = TK) ; à défaut, talker global. */
+    struct { int pgn; char talker[3]; } talkers[CFG_MAX_TALKERS];
+    int          n_talkers;
+
     char         err[160];  /* message de la dernière erreur de parsing */
     int          err_line;  /* ligne fautive (0 si aucune) */
 } config_t;
@@ -147,5 +152,9 @@ bool config_emit_0183(const config_t *c, int pgn);
 /* Intervalle minimum (ms) entre deux phrases d'un type donné ([rate]).
  * 0 si le type n'est pas limité. La casse du type est ignorée. */
 int config_rate_ms(const config_t *c, const char *type);
+
+/* Talker 0183 à utiliser pour un PGN ([talker] pgn = TK), ou le talker global
+ * par défaut. Jamais NULL. */
+const char *config_talker(const config_t *c, int pgn);
 
 #endif /* N2KMUX_CONFIG_H */
