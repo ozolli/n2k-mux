@@ -264,15 +264,29 @@ pare-feu/redirection maîtrisé sur votre box.
 
 ## 5. Administrer par le web
 
-Ouvrez `http://hôte:8080/`. Trois onglets :
+Ouvrez `http://hôte:8080/`. **Deux onglets** : toute la configuration s'édite ici,
+sans jamais toucher au fichier INI à la main.
 
-- **Sources** — les équipements vus sur le bus, leur fabricant/modèle et les PGN
-  qu'ils publient. C'est ici qu'on relève les serials (§3).
-- **Charge** — charge du bus N2K (**mesurée** sur les vraies trames en socketcan,
-  estimée sinon) et du flux 0183, débit par PGN et par type de phrase (intervalle
-  moyen en ms).
-- **Configuration** — éditeur de l'INI avec **Valider** (vérifie la syntaxe) et
-  **Enregistrer** (écrit le fichier *puis* recharge le daemon à chaud).
+### Sources
+
+![Onglet Sources](docs/Sources.png)
+
+Les équipements vus sur le bus : adresse, **nom logique éditable**, case
+**Ignorer**, identité stable, fabricant/modèle et PGN publiés. Nommer une source
+(puis **Enregistrer les noms**) la rend utilisable dans l'onglet Arbitrage ; c'est
+aussi ici qu'on relève les serials (§3).
+
+### Arbitrage
+
+![Onglet Arbitrage](docs/Arbitrage.png)
+
+Une ligne par PGN. De gauche à droite : **Mode** d'arbitrage (priority / min / max
+/ fusion), **N2K** (réémission sur le bus arbitré), **Talker** 0183, **Phrases
+0183** (cases à cocher — choix des phrases émises pour ce PGN), **intervalle**
+minimum (ms), **Sources** vues (cochées = retenues, ◀▶ = ordre de priorité),
+**Total reçu** et **Hz**. La **charge** (bus N2K mesurée/estimée + flux 0183) est
+en tête de tableau. La case **ignorer** sous un PGN le retire complètement. Les
+en-têtes portent une info-bulle d'aide au survol.
 
 **Reload à chaud.** « Enregistrer » applique la nouvelle config **sans
 redémarrage** : le fichier est validé, écrit, puis le daemon reçoit `SIGHUP` et
