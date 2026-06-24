@@ -1,102 +1,102 @@
-# n2k-mux — mode d'emploi
+# n2k-mux — user guide
 
-**Français** · [English](README.en.md)
+[Français](README.fr.md) · **English**
 
-`n2k-mux` lit le réseau **NMEA 2000** du bord, choisit **la meilleure source**
-pour chaque donnée (position, cap, vent, profondeur, AIS…) et la redistribue à vos
-logiciels de navigation, **en NMEA 2000** (pour qtVlm) **et en NMEA 0183** (pour
-les tablettes et le legacy).
+`n2k-mux` reads the boat's **NMEA 2000** network, picks **the best source** for each
+piece of data (position, heading, wind, depth, AIS…) and redistributes it to your
+navigation software, **in NMEA 2000** (for qtVlm) **and in NMEA 0183** (for tablets
+and legacy gear).
 
-Une fois installé, vous disposez de quatre points de connexion :
+Once installed, you get four connection points:
 
-| Vous voulez… | Connectez-vous à | Format |
+| You want… | Connect to | Format |
 |---|---|---|
-| qtVlm **sur le PC de bord** (local) | interface **`vcan0`** (socketcan) | N2K natif |
-| qtVlm **en réseau** (N2K) | `hôte:2700` (source NMEA **TCP**) | YDRAW |
-| Tablettes / qtVlm en **NMEA 0183** | `hôte:10110` (TCP, + UDP) | 0183 |
-| **Administrer** (config, équipements, charge) | `http://hôte:8080/` | Web |
+| qtVlm **on the onboard PC** (local) | **`vcan0`** interface (socketcan) | native N2K |
+| qtVlm **over the network** (N2K) | `host:2700` (**TCP** NMEA source) | YDRAW |
+| Tablets / qtVlm in **NMEA 0183** | `host:10110` (TCP, + UDP) | 0183 |
+| **Administer** (config, devices, load) | `http://host:8080/` | Web |
 
-> Montage recommandé : PC de bord (Linux) relié au bus N2K par un **adaptateur
-> socketcan** (PEAK PCAN-USB FD…). Une passerelle série **Actisense NGX-1/NGT-1**
-> reste supportée (voir [§2.4](#24-variante-passerelle-série-ngx-1)). Pour essayer
-> **sans matériel**, voir le [§7 Banc de test](#7-banc-de-test-sans-matériel).
+> Recommended setup: an onboard PC (Linux) connected to the N2K bus through a
+> **socketcan adapter** (PEAK PCAN-USB FD…). An **Actisense NGX-1/NGT-1** serial
+> gateway is still supported (see [§2.4](#24-serial-gateway-variant-ngx-1)). To try
+> it **without hardware**, see [§7 Test bench](#7-test-bench-without-hardware).
 
 ---
 
-## Sommaire
+## Contents
 
-1. [Comment ça marche](#1-comment-ça-marche)
+1. [How it works](#1-how-it-works)
 2. [Installation](#2-installation)
-3. [Configurer votre bord](#3-configurer-votre-bord)
-4. [Brancher qtVlm et les tablettes](#4-brancher-qtvlm-et-les-tablettes)
-5. [Administrer par le web](#5-administrer-par-le-web)
-6. [Dépannage](#6-dépannage)
-7. [Banc de test sans matériel](#7-banc-de-test-sans-matériel)
-8. [Annexes](#8-annexes) — options, PGN convertis, modes d'arbitrage, tests
+3. [Configure your boat](#3-configure-your-boat)
+4. [Connect qtVlm and tablets](#4-connect-qtvlm-and-tablets)
+5. [Administer from the web](#5-administer-from-the-web)
+6. [Troubleshooting](#6-troubleshooting)
+7. [Test bench without hardware](#7-test-bench-without-hardware)
+8. [Appendix](#8-appendix) — options, converted PGNs, arbitration modes, tests
 
 ---
 
-## 1. Comment ça marche
+## 1. How it works
 
-Avec un adaptateur socketcan (montage par défaut) :
+With a socketcan adapter (default setup):
 
 ```
-Bus NMEA 2000 ── adaptateur CAN (PEAK) ── can0
+NMEA 2000 bus ── CAN adapter (PEAK) ── can0
    │
-   ├─► n2k-filter ──┬─► vcan0       (N2K local : qtVlm sur le PC de bord)
-   │  (ne réémet que │
-   │   les trames    └─► TCP 2700   (N2K réseau YDRAW : qtVlm distant)
-   │   retenues)
+   ├─► n2k-filter ──┬─► vcan0       (local N2K: qtVlm on the onboard PC)
+   │  (forwards only │
+   │   the retained  └─► TCP 2700   (network N2K, YDRAW: remote qtVlm)
+   │   frames)
    │
-   └─► candump → analyzer → n2k-mux ──► kplex ──► TCP 10110 + UDP   (0183 → tablettes)
-        (décode, résout les identités,  └─► n2k-mux --ais-json → n2kd (AIS → !AIVDM)
-         arbitre, publie les « perdants »)
+   └─► candump → analyzer → n2k-mux ──► kplex ──► TCP 10110 + UDP   (0183 → tablets)
+        (decodes, resolves identities,  └─► n2k-mux --ais-json → n2kd (AIS → !AIVDM)
+         arbitrates, publishes "losers")
 ```
 
-Les idées clés :
+Key ideas:
 
-- **Identité stable.** Les équipements sont suivis par leur numéro de série
-  (*Model Serial Code*), pas par leur adresse N2K. Vos priorités survivent donc à
-  un changement d'adresse sur le bus.
-- **Arbitrage par donnée.** Pour chaque type de mesure vous listez les sources
-  préférées ; n2k-mux prend la première **vivante** (bascule automatique si elle se
-  tait). Modes spéciaux : `min` (profondeur, sécurité), `max` (loch), `fusion`
-  (AIS dédupliqué par MMSI).
-- **Filtre N2K→N2K (frame-passthrough).** La couche *décision* (`n2k-mux`) désigne,
-  par PGN, la source retenue et publie la liste des **perdants** ; `n2k-filter`
-  recopie sur `vcan0`/TCP 2700 **uniquement les trames brutes retenues**, sans
-  ré-encodage. `vcan0` est donc un bus N2K **propre, déjà arbitré** (un seul GPS,
-  une seule position…) que `can0` n'est pas.
-- **0183 dérivé** (kplex) pour les tablettes et le legacy, AIS encodé par `n2kd`.
-- **Charge du bus mesurée** sur les vraies trames CAN (pas une estimation).
-- **Tout en C11, sans dépendance** hors libc (et `canboat` pour le décodage/AIS).
+- **Stable identity.** Devices are tracked by their serial number (*Model Serial
+  Code*), not by their N2K address. Your priorities therefore survive an address
+  change on the bus.
+- **Per-datum arbitration.** For each kind of measurement you list the preferred
+  sources; n2k-mux takes the first **live** one (automatic failover when it goes
+  silent). Special modes: `min` (depth, safety), `max` (log), `fusion` (AIS
+  deduplicated by MMSI).
+- **N2K→N2K filter (frame passthrough).** The *decision* layer (`n2k-mux`)
+  designates, per PGN, the retained source and publishes the list of **losers**;
+  `n2k-filter` copies **only the retained raw frames** to `vcan0`/TCP 2700, without
+  re-encoding. `vcan0` is therefore a **clean, already-arbitrated** N2K bus (a single
+  GPS, a single position…) which `can0` is not.
+- **Derived 0183** (kplex) for tablets and legacy gear, AIS encoded by `n2kd`.
+- **Bus load measured** on the real CAN frames (not an estimate).
+- **All in C11, no dependency** beyond libc (and `canboat` for decoding/AIS).
 
-> Avec une passerelle série NGX-1, le principe est le même mais l'entrée passe par
-> `actisense-serial` au lieu de socketcan (cf. §2.4) ; la sortie N2K réseau est
-> alors fournie par `ydraw-bridge`.
+> With an NGX-1 serial gateway the principle is the same, but the input goes through
+> `actisense-serial` instead of socketcan (see §2.4); the network N2K output is then
+> provided by `ydraw-bridge`.
 
 ---
 
 ## 2. Installation
 
-### 2.1 Prérequis
+### 2.1 Prerequisites
 
-- Linux, `gcc` (ou `clang`), `make`.
-- [canboat](https://github.com/canboat/canboat) compilé : `analyzer`, `n2kd`,
-  `candump2analyzer` (et `actisense-serial` si passerelle série).
-- `can-utils` (`candump`) pour la voie socketcan : `sudo apt install can-utils`.
-- `kplex` (paquet de la distribution) pour la sortie 0183.
-- **Au choix** : un adaptateur **socketcan** (PEAK PCAN-USB FD…) relié au bus N2K
-  (recommandé) **ou** une passerelle **NGX-1/NGT-1 en mode Transfer** (N2K brut).
+- Linux, `gcc` (or `clang`), `make`.
+- [canboat](https://github.com/canboat/canboat) built: `analyzer`, `n2kd`,
+  `candump2analyzer` (and `actisense-serial` for a serial gateway).
+- `can-utils` (`candump`) for the socketcan path: `sudo apt install can-utils`.
+- `kplex` (distribution package) for the 0183 output.
+- **Either**: a **socketcan** adapter (PEAK PCAN-USB FD…) connected to the N2K bus
+  (recommended) **or** an **NGX-1/NGT-1 gateway in Transfer mode** (raw N2K).
 
-### 2.2 Compiler
+### 2.2 Build
 
 ```sh
 git clone https://github.com/ozolli/n2k-mux && cd n2k-mux
-make          # daemon + filtre + UI web + ydraw-bridge + simulateur + testeurs
+make          # daemon + filter + web UI + ydraw-bridge + simulator + test harnesses
 ```
 
-Vérifier que tout est sain (tous les testeurs à 0 échec) :
+Check that everything is healthy (all harnesses report 0 failures):
 
 ```sh
 for t in test_config test_mapper test_arbiter test_nmea0183 test_aisdedup \
@@ -104,37 +104,36 @@ for t in test_config test_mapper test_arbiter test_nmea0183 test_aisdedup \
 ./test_jsonl --selftest
 ```
 
-### 2.3 Installer le service (socketcan, recommandé)
+### 2.3 Install the service (socketcan, recommended)
 
 ```sh
 sudo make install
 ```
 
-Cela installe les binaires dans `/usr/local/bin` (`n2k-mux`, `n2k-filter`,
-`n2k-mux-web`, scripts et `ydraw-bridge`), les services systemd et des fichiers
-d'exemple. Préparez la configuration :
+This installs the binaries into `/usr/local/bin` (`n2k-mux`, `n2k-filter`,
+`n2k-mux-web`, scripts and `ydraw-bridge`), the systemd services and example files.
+Prepare the configuration:
 
 ```sh
 sudo cp /etc/n2k-mux/n2k-mux.ini.example /etc/n2k-mux/n2k-mux.ini
-sudo cp /etc/default/n2k-mux.example     /etc/default/n2k-mux       # réglages
+sudo cp /etc/default/n2k-mux.example     /etc/default/n2k-mux       # settings
 sudo cp kplex.conf.example               /etc/kplex.conf
-$EDITOR /etc/n2k-mux/n2k-mux.ini   # voir §3
+$EDITOR /etc/n2k-mux/n2k-mux.ini   # see §3
 ```
 
-Dans **`/etc/default/n2k-mux`**, indiquez l'interface CAN et le chemin des binaires
-canboat s'ils ne sont pas dans le `PATH` :
+In **`/etc/default/n2k-mux`**, set the CAN interface and the path to the canboat
+binaries if they are not in the `PATH`:
 
 ```sh
-CANIF=can0                 # interface de l'adaptateur (montée à 250 kbit/s par le service)
-VCANIF=vcan0               # CAN virtuel pour le flux arbitré local
-YDRAW_PORT=2700            # flux N2K arbitré servi en YDRAW/TCP (qtVlm réseau)
-ANALYZER=/home/vous/canboat/rel/linux-x86_64/analyzer
-N2KD=/home/vous/canboat/rel/linux-x86_64/n2kd
-CANDUMP2ANALYZER=/home/vous/canboat/rel/linux-x86_64/candump2analyzer
+CANIF=can0                 # adapter interface (brought up at 250 kbit/s by the service)
+VCANIF=vcan0               # virtual CAN for the local arbitrated stream
+YDRAW_PORT=2700            # arbitrated N2K stream served as YDRAW/TCP (network qtVlm)
+ANALYZER=/home/you/canboat/rel/linux-x86_64/analyzer
+N2KD=/home/you/canboat/rel/linux-x86_64/n2kd
+CANDUMP2ANALYZER=/home/you/canboat/rel/linux-x86_64/candump2analyzer
 ```
 
-Désactivez un éventuel ancien service `kplex` autonome (il entrerait en conflit),
-puis démarrez :
+Disable any old standalone `kplex` service (it would conflict), then start:
 
 ```sh
 sudo systemctl disable --now kplex 2>/dev/null || true
@@ -142,292 +141,291 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now n2k-mux-can n2k-mux-web
 ```
 
-Le service **monte `can0` (250 kbit/s) et `vcan0` au démarrage**, lance la chaîne
-(filtre + décision + kplex + n2kd), redémarre tout seul en cas de défaillance d'un
-maillon (`Restart=always`) et au boot. Vérifier :
+The service **brings up `can0` (250 kbit/s) and `vcan0` at startup**, launches the
+chain (filter + decision + kplex + n2kd), restarts itself if a link in the chain
+fails (`Restart=always`) and at boot. Check:
 
 ```sh
 systemctl is-active n2k-mux-can n2k-mux-web   # → active / active
-journalctl -u n2k-mux-can -f                  # suivre les logs
+journalctl -u n2k-mux-can -f                  # follow the logs
 ```
 
-### 2.4 Variante passerelle série (NGX-1)
+### 2.4 Serial gateway variant (NGX-1)
 
-Sans adaptateur socketcan, utilisez la passerelle **NGX-1/NGT-1 en mode Transfer**
-et le service **`n2k-mux`** (au lieu de `n2k-mux-can` — ne pas activer les deux).
-Réglez `DEVICE`/`BAUD` et `ACTISENSE` dans `/etc/default/n2k-mux`, puis :
+Without a socketcan adapter, use the **NGX-1/NGT-1 gateway in Transfer mode** and
+the **`n2k-mux`** service (instead of `n2k-mux-can` — do not enable both). Set
+`DEVICE`/`BAUD` and `ACTISENSE` in `/etc/default/n2k-mux`, then:
 
 ```sh
 sudo systemctl enable --now n2k-mux n2k-mux-web
 ```
 
-La chaîne est `actisense-serial → analyzer → n2k-mux → kplex` ; la sortie N2K
-réseau (TCP 2700) est fournie par `ydraw-bridge` (branche optionnelle du script
-`n2k-mux-run`). Le NGX-1 doit être en mode **Transfer** (N2K brut), **pas** Convert.
+The chain is `actisense-serial → analyzer → n2k-mux → kplex`; the network N2K
+output (TCP 2700) is provided by `ydraw-bridge` (an optional branch of the
+`n2k-mux-run` script). The NGX-1 must be in **Transfer** mode (raw N2K), **not**
+Convert.
 
 ---
 
-## 3. Configurer votre bord
+## 3. Configure your boat
 
-La configuration est un fichier INI (`/etc/n2k-mux/n2k-mux.ini`). Modèle complet
-commenté : `n2k-mux.ini.example`.
+The configuration is an INI file (`/etc/n2k-mux/n2k-mux.ini`). Full commented
+template: `n2k-mux.ini.example`.
 
 ```ini
 [output]
-talker = II                 ; talker des phrases 0183 (qtVlm l'ignore)
+talker = II                 ; talker of the 0183 sentences (qtVlm ignores it)
 
 [sources]
-; nom logique = Model Serial Code (ou Unique Number) de l'équipement
-SCX = 4830123               ; Furuno SCX-20 (cap/attitude/position)
+; logical name = Model Serial Code (or Unique Number) of the device
+SCX = 4830123               ; Furuno SCX-20 (heading/attitude/position)
 VER = 917661                ; Veratron GO (GPS)
-DH  = 000A520AF6A0          ; DataHub PredictWind (AIS, capteurs)
+DH  = 000A520AF6A0          ; DataHub PredictWind (AIS, sensors)
 
 [priority]
-; clé = pgn[/discriminant]   |   valeur = [mode:] liste de sources
-129025          = SCX, VER            ; position : SCX d'abord, sinon VER
-127250/Magnetic = SCX                 ; cap magnétique
-128267          = min: DST_BB, DST_TB ; profondeur = la plus faible (sécurité)
-128275          = max: DST_BB, DST_TB ; loch = le capteur le plus avancé
-129039          = fusion: AIS, DH     ; AIS : em-trak prioritaire sur DataHub
+; key = pgn[/discriminant]   |   value = [mode:] list of sources
+129025          = SCX, VER            ; position: SCX first, else VER
+127250/Magnetic = SCX                 ; magnetic heading
+128267          = min: DST_BB, DST_TB ; depth = the shallowest (safety)
+128275          = max: DST_BB, DST_TB ; log = the furthest-advanced sensor
+129039          = fusion: AIS, DH     ; AIS: em-trak takes priority over DataHub
 
 [ignore]
-src = 0                     ; ignorer l'adresse 0
-pgn = 262161, 262656        ; messages de contrôle Actisense/CANboat
+src = 0                     ; ignore address 0
+pgn = 262161, 262656        ; Actisense/CANboat control messages
 
 [rate]
-; type de phrase = intervalle minimum en ms (limite le débit 0183)
+; sentence type = minimum interval in ms (throttles the 0183 output)
 GLL = 1000
 GSV = 5000
 ```
 
-**Les modes d'arbitrage :**
+**Arbitration modes:**
 
-| Mode | Quand | Effet |
+| Mode | When | Effect |
 |---|---|---|
-| `priority` (défaut) | cap, position, vent… | 1ʳᵉ source vivante, bascule auto |
-| `min:` | profondeur | la valeur la plus faible (sécurité haut-fond) |
-| `max:` | loch (distance dans l'eau) | la valeur la plus avancée (capteur hors d'eau sous-compte) |
-| `fusion:` | AIS | toutes les sources fusionnées, dédup par MMSI |
+| `priority` (default) | heading, position, wind… | 1st live source, auto failover |
+| `min:` | depth | the smallest value (shoal safety) |
+| `max:` | log (distance through water) | the furthest-advanced value (a sensor out of the water under-counts) |
+| `fusion:` | AIS | all sources merged, deduplicated by MMSI |
 
-Le `/discriminant` route selon un champ : `Reference` (Magnetic/True pour le cap,
-Apparent/True pour le vent), `Temperature Source` (Sea/Outside).
+The `/discriminant` routes on a field: `Reference` (Magnetic/True for heading,
+Apparent/True for wind), `Temperature Source` (Sea/Outside).
 
-### Trouver les *Model Serial Code* de vos équipements
+### Finding the *Model Serial Codes* of your devices
 
-Les identités ne circulent pas spontanément : le daemon les réclame au bus (ISO
-Request), c'est automatique une fois le service lancé. Laissez tourner une minute,
-puis ouvrez l'**interface web** (`http://hôte:8080/`, onglet **Sources**) : chaque
-équipement vu y figure avec son fabricant, son modèle et son **serial**. Reportez
-ce serial dans la section `[sources]`, donnez-lui un nom logique, puis enregistrez
-(la config se recharge à chaud, voir §5).
+Identities are not broadcast spontaneously: the daemon requests them from the bus
+(ISO Request), which is automatic once the service is running. Let it run for a
+minute, then open the **web interface** (`http://host:8080/`, **Sources** tab): each
+device seen appears with its manufacturer, model and **serial**. Copy that serial
+into the `[sources]` section, give it a logical name, then save (the config reloads
+live, see §5).
 
-> Après avoir nommé vos sources, **Enregistrer** dans le web suffit — pas besoin de
-> redémarrer le service.
-
----
-
-## 4. Brancher qtVlm et les tablettes
-
-Tout se passe dans qtVlm sous **Configuration → Connexions NMEA → onglet
-Entrants**. Choisir **une seule** voie pour le N2K (sinon données dupliquées).
-
-### qtVlm sur le PC de bord — N2K local (`vcan0`)
-
-Dans l'onglet **Entrants**, cocher **« Bus CAN direct NMEA2000 (sans passerelle) »**,
-puis **Plugin = `socketcan`**, **Interface = `vcan0`**. Laisser « Émettre données
-bateau » décoché. `vcan0` est le bus déjà **arbitré** (une seule source par donnée) —
-c'est le branchement le plus direct quand qtVlm tourne sur le PC de bord.
-
-> Attention : `vcan0`, **pas** `can0`. `can0` est le bus brut non arbitré.
-
-### qtVlm en réseau — N2K sur TCP 2700
-
-Onglet **Entrants → sous-onglet Sources réseau → cadre TCP**. Sur un *Serveur*
-libre : **adresse = IP du PC de bord** (ou son IP publique si vous êtes à
-distance), **port = `2700`**, et activez-le. qtVlm détecte automatiquement le
-format **YDRAW** et décode le N2K (position, cap, vent, satellites, **cibles AIS**…).
-Laisser le « Bus CAN direct » décoché dans ce cas.
-
-> Le N2K AIS et la constellation GPS nécessitent **qtVlm ≥ 5.12.27-beta2**.
-
-### qtVlm ou tablettes — NMEA 0183 sur 10110
-
-Même endroit (**Entrants → Sources réseau → TCP**), un *Serveur* avec l'IP du PC de
-bord et **port = `10110`** (instruments arbitrés + AIS en `!AIVDM` déjà fusionnés).
-Le 10110 est aussi diffusé en **UDP** sur le LAN.
-
-### Accès depuis l'extérieur du bateau
-
-Le 8080 (admin) et les ports de données ne doivent pas être exposés en clair sur
-Internet. Passez par un tunnel SSH (`ssh -L 8080:127.0.0.1:8080 hôte`) ou un
-pare-feu/redirection maîtrisé sur votre box.
+> After naming your sources, **Save** in the web UI is enough — no need to restart
+> the service.
 
 ---
 
-## 5. Administrer par le web
+## 4. Connect qtVlm and tablets
 
-Ouvrez `http://hôte:8080/`. **Deux onglets** : toute la configuration s'édite ici,
-sans jamais toucher au fichier INI à la main. Deux bascules en haut à droite :
-**langue** (FR/EN, initialisée d'après celle du navigateur) et **thème**
-(sombre/clair, initialisé d'après la préférence système), mémorisées dans le
-navigateur.
+Everything happens in qtVlm under **Configuration → NMEA Connections → Incoming
+tab**. Choose **a single** path for N2K (otherwise data is duplicated).
+
+### qtVlm on the onboard PC — local N2K (`vcan0`)
+
+In the **Incoming** tab, tick **"Direct NMEA2000 CAN bus (no gateway)"**, then
+**Plugin = `socketcan`**, **Interface = `vcan0`**. Leave "Transmit boat data"
+unchecked. `vcan0` is the already-**arbitrated** bus (a single source per datum) —
+it is the most direct connection when qtVlm runs on the onboard PC.
+
+> Careful: `vcan0`, **not** `can0`. `can0` is the raw, un-arbitrated bus.
+
+### qtVlm over the network — N2K on TCP 2700
+
+**Incoming → Network sources sub-tab → TCP frame**. On a free *Server*: **address =
+IP of the onboard PC** (or its public IP if you are remote), **port = `2700`**, and
+enable it. qtVlm automatically detects the **YDRAW** format and decodes N2K
+(position, heading, wind, satellites, **AIS targets**…). Leave "Direct CAN bus"
+unchecked in this case.
+
+> N2K AIS and the GPS constellation require **qtVlm ≥ 5.12.27-beta2**.
+
+### qtVlm or tablets — NMEA 0183 on 10110
+
+Same place (**Incoming → Network sources → TCP**), a *Server* with the IP of the
+onboard PC and **port = `10110`** (arbitrated instruments + AIS as already-merged
+`!AIVDM`). Port 10110 is also broadcast over **UDP** on the LAN.
+
+### Access from off the boat
+
+Port 8080 (admin) and the data ports must not be exposed in the clear on the
+Internet. Use an SSH tunnel (`ssh -L 8080:127.0.0.1:8080 host`) or a controlled
+firewall/port-forward on your router.
+
+---
+
+## 5. Administer from the web
+
+Open `http://host:8080/`. **Two tabs**: the whole configuration is edited here,
+without ever touching the INI file by hand. Two toggles at the top right:
+**language** (FR/EN, initialised from the browser's) and **theme** (dark/light,
+initialised from the system preference), remembered in the browser.
 
 ### Sources
 
-![Onglet Sources](docs/Sources.png)
+![Sources tab](docs/Sources.png)
 
-Les équipements vus sur le bus : adresse, **nom logique éditable**, case
-**Ignorer**, identité stable, fabricant/modèle et PGN publiés. Nommer une source
-(puis **Enregistrer les noms**) la rend utilisable dans l'onglet Arbitrage ; c'est
-aussi ici qu'on relève les serials (§3).
+The devices seen on the bus: address, **editable logical name**, **Ignore**
+checkbox, stable identity, manufacturer/model and published PGNs. Naming a source
+(then **Save names**) makes it usable in the Arbitration tab; this is also where you
+read the serials (§3).
 
-### Arbitrage
+### Arbitration
 
-![Onglet Arbitrage](docs/Arbitrage.png)
+![Arbitration tab](docs/Arbitrage.png)
 
-Une ligne par PGN. De gauche à droite : **Mode** d'arbitrage (priority / min / max
-/ fusion), **N2K** (réémission sur le bus arbitré), **Talker** 0183, **Phrases
-0183** (cases à cocher — choix des phrases émises pour ce PGN), **intervalle**
-minimum (ms), **Sources** vues (cochées = retenues, ◀▶ = ordre de priorité),
-**Total reçu** et **Hz**. La **charge** (bus N2K mesurée/estimée + flux 0183) est
-en tête de tableau. La case **ignorer** sous un PGN le retire complètement. Les
-en-têtes portent une info-bulle d'aide au survol.
+One row per PGN. From left to right: arbitration **Mode** (priority / min / max /
+fusion), **N2K** (re-emission on the arbitrated bus), 0183 **Talker**, **0183
+sentences** (checkboxes — which sentences are emitted for this PGN), minimum
+**interval** (ms), **Sources** seen (checked = selected, ◀▶ = priority order),
+**Total recv** and **Hz**. The **load** (N2K bus measured/estimated + 0183 stream)
+is at the top of the table. The **ignore** checkbox under a PGN removes it
+completely. Hover the headers for help tooltips.
 
-**Reload à chaud.** « Enregistrer » applique la nouvelle config **sans
-redémarrage** : le fichier est validé, écrit, puis le daemon reçoit `SIGHUP` et
-relit sa config (si le fichier est invalide, l'ancienne reste active et l'erreur
-est journalisée). Le message de confirmation s'efface seul après 15 s.
+**Live reload.** "Save" applies the new config **without a restart**: the file is
+validated, written, then the daemon receives `SIGHUP` and re-reads its config (if
+the file is invalid, the old one stays active and the error is logged). The
+confirmation message clears itself after 15 s.
 
-> **Sécurité** : l'API web écrit la config et déclenche un rechargement. Le
-> service écoute par défaut sur le LAN (`0.0.0.0:8080`) ; réservez-le à un réseau
-> de confiance et ajoutez une authentification avant toute exposition plus large.
+> **Security**: the web API writes the config and triggers a reload. The service
+> listens on the LAN by default (`0.0.0.0:8080`); restrict it to a trusted network
+> and add authentication before any wider exposure.
 
 ---
 
-## 6. Dépannage
+## 6. Troubleshooting
 
-| Symptôme | Piste |
+| Symptom | Lead |
 |---|---|
-| **`can0` absent** | Adaptateur branché ? `ip -br link show type can`. PEAK : pilote `peak_usb` (noyau ≥ 6.0). Le service monte `can0` ; sinon `sudo ip link set can0 up type can bitrate 250000`. |
-| **Rien sur `vcan0` / TCP 2700** | `systemctl is-active n2k-mux-can` ; `ss -ltnp \| grep 2700`. Dans qtVlm : socketcan→`vcan0` (local) **ou** TCP **client**→2700 (réseau), pas l'inverse. |
-| **Pas de cibles AIS en N2K** | Nécessite qtVlm **≥ 5.12.27-beta2**. En 0183 (10110) l'AIS passe quelle que soit la version. |
-| **Une source en double sur le bus** | L'arbitrage n'a pas résolu les identités : vérifier que les serials de `[sources]` correspondent à l'onglet **Sources**. Sans identité, le filtre laisse tout passer (*fail-open*). |
-| **Aucune phrase 0183 sur 10110** | Idem : identités non résolues, ou kplex/n2kd down. `journalctl -u n2k-mux-can -f`. |
-| **« Address already in use »** | Un `n2kd` résiduel (ports 2597-2602). Le service fait le ménage au démarrage ; sinon `sudo pkill -x n2kd` puis restart. |
-| **Collision port 2600** | `n2kd` réquisitionne 2597-2602. Le N2K/YDRAW est sur **2700** (réglable `YDRAW_PORT`), surtout pas 2600. |
-| **La config web ne s'enregistre pas** | `/etc/n2k-mux/n2k-mux.ini` doit être inscriptible par l'utilisateur du service web (root par défaut → OK). |
-| **NGX-1 : rien** | Mode **Transfer** (pas Convert), `DEVICE`/`BAUD` corrects dans `/etc/default/n2k-mux`. |
+| **`can0` missing** | Adapter plugged in? `ip -br link show type can`. PEAK: `peak_usb` driver (kernel ≥ 6.0). The service brings `can0` up; otherwise `sudo ip link set can0 up type can bitrate 250000`. |
+| **Nothing on `vcan0` / TCP 2700** | `systemctl is-active n2k-mux-can`; `ss -ltnp \| grep 2700`. In qtVlm: socketcan→`vcan0` (local) **or** TCP **client**→2700 (network), not the other way round. |
+| **No AIS targets in N2K** | Requires qtVlm **≥ 5.12.27-beta2**. In 0183 (10110) AIS works regardless of version. |
+| **A source appears twice on the bus** | Arbitration did not resolve the identities: check that the `[sources]` serials match the **Sources** tab. Without an identity, the filter lets everything through (*fail-open*). |
+| **No 0183 sentence on 10110** | Same: unresolved identities, or kplex/n2kd down. `journalctl -u n2k-mux-can -f`. |
+| **"Address already in use"** | A leftover `n2kd` (ports 2597-2602). The service cleans up at startup; otherwise `sudo pkill -x n2kd` then restart. |
+| **Port 2600 collision** | `n2kd` reserves 2597-2602. N2K/YDRAW is on **2700** (configurable `YDRAW_PORT`), definitely not 2600. |
+| **The web config won't save** | `/etc/n2k-mux/n2k-mux.ini` must be writable by the web service's user (root by default → OK). |
+| **NGX-1: nothing** | **Transfer** mode (not Convert), correct `DEVICE`/`BAUD` in `/etc/default/n2k-mux`. |
 
-Sniff brut du bus (sans rien casser) : `candump can0` (paquet `can-utils`).
-
----
-
-## 7. Banc de test sans matériel
-
-Le simulateur `n2k-sim` rejoue un flux N2K cohérent (bateau qui avance, cap qui
-infléchit la route, cibles AIS) pour **tous les PGN compris**, sans bus ni
-adaptateur. La config compagnon `n2k-sim.ini` porte les identités simulées →
-arbitrage résolu d'emblée.
-
-```sh
-./n2k-sim | ./n2k-mux n2k-sim.ini -v          # instruments → phrases 0183
-./n2k-sim --once | ./n2k-mux n2k-sim.ini      # un de chaque PGN puis fin
-./n2k-sim | ./n2k-mux --ais-json n2k-sim.ini  # AIS → dédup par MMSI
-```
-
-Options : `--once`, `--duration SEC`, `--no-ais`, `--tick MS`, `--actisense`.
-
-**Chaîne 0183 complète sans matériel** — `./n2k-sim-run` monte
-`n2k-sim → n2k-mux (+ --ais-json → n2kd) → kplex` et expose qtVlm sur **TCP 10110**.
-
-**N2K vers qtVlm sans matériel** — le mode `--actisense` encode les PGN (AIS
-compris) en trames N2K, servies en YDRAW par `ydraw-bridge` :
-
-```sh
-./n2k-sim --actisense | ./ydraw-bridge --port 2700   # qtVlm : TCP → hôte:2700
-```
-
-> Le filtre socketcan se teste aussi sur des CAN virtuels (`vcan`) : injecter des
-> trames avec `cansend`, lire la sortie sur un second `vcan`.
+Raw bus sniff (harmless): `candump can0` (`can-utils` package).
 
 ---
 
-## 8. Annexes
+## 7. Test bench without hardware
 
-### 8.1 Options des binaires
+The `n2k-sim` simulator replays a coherent N2K stream (a boat moving, heading
+bending the course, AIS targets) for **every PGN it understands**, with no bus or
+adapter. The companion config `n2k-sim.ini` carries the simulated identities →
+arbitration resolved right away.
 
-**`n2k-mux`** (décision / conversion) :
+```sh
+./n2k-sim | ./n2k-mux n2k-sim.ini -v          # instruments → 0183 sentences
+./n2k-sim --once | ./n2k-mux n2k-sim.ini      # one of each PGN then exit
+./n2k-sim | ./n2k-mux --ais-json n2k-sim.ini  # AIS → dedup by MMSI
+```
+
+Options: `--once`, `--duration SEC`, `--no-ais`, `--tick MS`, `--actisense`.
+
+**Full 0183 chain without hardware** — `./n2k-sim-run` wires up
+`n2k-sim → n2k-mux (+ --ais-json → n2kd) → kplex` and exposes qtVlm on **TCP 10110**.
+
+**N2K to qtVlm without hardware** — the `--actisense` mode encodes the PGNs (AIS
+included) into N2K frames, served as YDRAW by `ydraw-bridge`:
+
+```sh
+./n2k-sim --actisense | ./ydraw-bridge --port 2700   # qtVlm: TCP → host:2700
+```
+
+> The socketcan filter can also be tested on virtual CANs (`vcan`): inject frames
+> with `cansend`, read the output on a second `vcan`.
+
+---
+
+## 8. Appendix
+
+### 8.1 Binary options
+
+**`n2k-mux`** (decision / conversion):
 
 ```
-n2k-mux [config.ini] [--tx CHEMIN | --tx-can IFACE] [--src-addr N] [--tx-interval SEC]
-                     [--sources CHEMIN] [--stats CHEMIN] [--losers CHEMIN]
+n2k-mux [config.ini] [--tx PATH | --tx-can IFACE] [--src-addr N] [--tx-interval SEC]
+                     [--sources PATH] [--stats PATH] [--losers PATH]
                      [--no-0183] [--ais-json] [-v]
 ```
 
-| Option | Rôle |
+| Option | Role |
 |---|---|
-| `--tx CHEMIN` | ISO Request sur un FIFO (vers `actisense-serial`, voie série) |
-| `--tx-can IFACE` | ISO Request en **socketcan** sur IFACE (écrit des `can_frame`) |
-| `--src-addr N` | adresse source des ISO Request socketcan (défaut 0) |
-| `--sources CHEMIN` | publie les équipements vus en JSON (UI web) |
-| `--stats CHEMIN` | publie débit/PGN + charge de bus (mesurée si socketcan) |
-| `--losers CHEMIN` | publie les `(pgn src)` perdants de l'arbitrage (pour `n2k-filter`) |
-| `--no-0183` | désactive la sortie 0183 (arbitrage seul) |
-| `--ais-json` | mode filtre AIS (JSON→JSON dédupliqué) devant `n2kd` |
-| `-v` | journalise les décisions + un résumé sur stderr |
+| `--tx PATH` | ISO Request on a FIFO (to `actisense-serial`, serial path) |
+| `--tx-can IFACE` | ISO Request over **socketcan** on IFACE (writes `can_frame`s) |
+| `--src-addr N` | source address of the socketcan ISO Requests (default 0) |
+| `--sources PATH` | publishes the devices seen as JSON (web UI) |
+| `--stats PATH` | publishes per-PGN rate + bus load (measured if socketcan) |
+| `--losers PATH` | publishes the arbitration `(pgn src)` losers (for `n2k-filter`) |
+| `--no-0183` | disables the 0183 output (arbitration only) |
+| `--ais-json` | AIS filter mode (deduplicated JSON→JSON) in front of `n2kd` |
+| `-v` | logs the decisions + a summary on stderr |
 
-**`n2k-filter`** (filtre N2K→N2K socketcan) :
+**`n2k-filter`** (N2K→N2K socketcan filter):
 
 ```
-n2k-filter [--in IFACE] [--out IFACE] [--drop FICHIER] [--ydraw-port N] [-v]
+n2k-filter [--in IFACE] [--out IFACE] [--drop FILE] [--ydraw-port N] [-v]
 ```
-`--in` bus réel (déf. can0), `--out` bus arbitré (déf. vcan0), `--drop` liste des
-perdants publiée par `n2k-mux --losers`, `--ydraw-port` sert aussi le flux arbitré
-en YDRAW/TCP (qtVlm réseau).
+`--in` real bus (def. can0), `--out` arbitrated bus (def. vcan0), `--drop` the
+losers list published by `n2k-mux --losers`, `--ydraw-port` also serves the
+arbitrated stream as YDRAW/TCP (network qtVlm).
 
-**`n2k-mux-web`** : `[config.ini] [--sources P] [--stats P] [--port N]
-[--bind ADDR] [--reload-cmd CMD]` (défauts : port 8080, bind `0.0.0.0`).
+**`n2k-mux-web`**: `[config.ini] [--sources P] [--stats P] [--port N]
+[--bind ADDR] [--reload-cmd CMD]` (defaults: port 8080, bind `0.0.0.0`).
 
-### 8.2 Données converties (N2K → 0183)
+### 8.2 Converted data (N2K → 0183)
 
-| PGN | Donnée | Phrases 0183 |
+| PGN | Datum | 0183 sentences |
 |---|---|---|
 | 129025 | Position | GLL |
 | 129026 | COG/SOG | VTG |
-| 129029 | Position GNSS | GGA |
-| 129539 | DOP / mode de fix | GSA |
-| 129540 | Satellites en vue | GSV (paginé) |
-| 126992 | Heure système | ZDA |
-| 127250 | Cap | HDG + HDM (mag) / HDT (vrai) |
-| 127251 | Taux de giration | ROT |
+| 129029 | GNSS position | GGA |
+| 129539 | DOP / fix mode | GSA |
+| 129540 | Satellites in view | GSV (paged) |
+| 126992 | System time | ZDA |
+| 127250 | Heading | HDG + HDM (mag) / HDT (true) |
+| 127251 | Rate of turn | ROT |
 | 127257 | Attitude | XDR (pitch/roll) |
-| 130306 | Vent | MWV(R) / MWV(T) + MWD |
-| 127245 | Barre | RSA |
-| 129291 | Courant (set/drift) | VDR |
-| 128259 | Vitesse surface | VHW |
-| 128267 | Profondeur | DPT (min des sondeurs) |
-| 128275 | Distance dans l'eau (loch) | VLW (max des sondeurs) |
-| 130316 | Température | MTW (eau) / MDA (air) — 130312 déprécié, accepté en entrée |
-| 130314 | Pression | MDA |
+| 130306 | Wind | MWV(R) / MWV(T) + MWD |
+| 127245 | Rudder | RSA |
+| 129291 | Current (set/drift) | VDR |
+| 128259 | Water speed | VHW |
+| 128267 | Depth | DPT (min of the sounders) |
+| 128275 | Distance through water (log) | VLW (max of the sounders) |
+| 130316 | Temperature | MTW (water) / MDA (air) — 130312 deprecated, accepted as input |
+| 130314 | Pressure | MDA |
 | 129038/39/40/41, 129793/94/95/96/97/98, 129801/02, 129809/810 | AIS | !AIVDM (via n2kd) |
 
-> En N2K (vcan0 / TCP 2700) les trames passent telles quelles (pas de conversion) ;
-> la table ci-dessus ne concerne que la sortie **0183** (kplex/10110).
+> In N2K (vcan0 / TCP 2700) the frames pass through unchanged (no conversion); the
+> table above concerns only the **0183** output (kplex/10110).
 
 ### 8.3 Tests
 
-Chaque module a son testeur autonome (`test_jsonl`, `test_registry`,
+Each module has its own standalone harness (`test_jsonl`, `test_registry`,
 `test_nmea0183`, `test_config`, `test_arbiter`, `test_mapper`, `test_aisdedup`,
 `test_sources`, `test_stats`, `test_netout`, `test_ydraw`). `./test_jsonl
---selftest` vérifie le typage des champs du parser sans entrée.
+--selftest` checks the parser's field typing without input.
 
 ---
 
-## Licence
+## License
 
-Distribué sous licence **Apache 2.0** — voir [`LICENSE`](LICENSE).
+Distributed under the **Apache 2.0** license — see [`LICENSE`](LICENSE).
 © 2026 Olivier Zolli.
 
-n2k-mux **n'inclut pas de code de canboat** : il consomme la sortie de
-l'`analyzer` et délègue l'AIS à `n2kd` (process séparé). canboat est lui aussi
-sous Apache 2.0.
+n2k-mux **does not include canboat code**: it consumes the output of `analyzer` and
+delegates AIS to `n2kd` (a separate process). canboat is also under Apache 2.0.
