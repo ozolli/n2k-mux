@@ -384,8 +384,10 @@ Notes câblage AIS :
   A) pour le 129041 → n2kd émet !AIVDM → l'AtoN s'affiche avec son titre complet
   (nom + Name Extension ; n2kd encode déjà l'extension). Le nom complet est dans
   le STRINGLAU du N2K ; côté N2K natif (port 2700) qtVlm tronque l'affichage à 20
-  (limite qtVlm). L'AIS 6-bit est MAJUSCULES seulement (casse mixte perdue dès le
-  0183). Validé : payload identique VDO↔VDM, seul le talker change.
+  (limite qtVlm). L'AIS 6-bit est MAJUSCULES seulement : n2kd transforme les
+  minuscules en espaces, donc --ais-json met le nom de l'AtoN en MAJUSCULES avant
+  n2kd (a-z→A-Z, en place). Validé : « Grand dauphin Whale Age 352 Hrs » →
+  « GRAND DAUPHIN WHALE AGE 352 HRS », payload VDM complet.
 
 ## Règles d'arbitrage
 

@@ -242,6 +242,18 @@ static void aton_force_vdm(char *line)
     if (*v == '2' || *v == '3' || *v == '4') *v = '0';
 }
 
+/* L'AIS 6-bit n'a QUE des majuscules : n2kd remplace les minuscules par des
+ * espaces (« Grand dauphin Whale » → « G             W     »). On met le nom de
+ * l'AtoN en MAJUSCULES avant n2kd pour qu'il reste lisible (les majuscules
+ * conviennent à l'usage). En place, même longueur ; seul a-z → A-Z. */
+static void aton_upcase_name(char *line)
+{
+    char *f = strstr(line, "\"AtoN Name\":\"");
+    if (!f) return;
+    for (char *p = f + 13; *p && *p != '"'; p++)  /* 13 = longueur de "AtoN Name":" */
+        if (*p >= 'a' && *p <= 'z') *p -= 32;
+}
+
 static int run_ais_json(config_t *cfg, const char *cfg_path, int verbose)
 {
     registry_t reg;
@@ -293,7 +305,10 @@ static int run_ais_json(config_t *cfg, const char *cfg_path, int verbose)
                     mmsi, src, m.pgn, fwd ? "FWD" : "drop");
 
         if (fwd) {
-            if (m.pgn == 129041) aton_force_vdm(line);  /* AtoN → !AIVDM (cf. ci-dessus) */
+            if (m.pgn == 129041) {                      /* AtoN : cf. fonctions ci-dessus */
+                aton_force_vdm(line);                   /* !AIVDO → !AIVDM (cible affichée) */
+                aton_upcase_name(line);                 /* minuscules → MAJUSCULES (lisible) */
+            }
             fputs(line, stdout);
             if (fflush(stdout) != 0) break;
             n_fwd++;
