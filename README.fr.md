@@ -188,6 +188,16 @@ Ensuite, suivez le §2.3 (`enable --now n2k-mux-can n2k-mux-web`).
 > l'activez que si le Pi est en bout de bus non terminé. Alimentez le Pi à part,
 > pas par le bus.
 
+### 2.6 HALPI2 / ordinateurs de bord intégrés
+
+Le **HALPI2** de Hat Labs (Raspberry Pi CM5, interface NMEA 2000 isolée) expose
+directement le bus en socketcan `can0` via son image `halpi2-firmware` — **aucun
+overlay device-tree à ajouter** (sautez le §2.5). Son nœud CAN est isolé et n'est
+pas un bout de bus : pas de cavalier de terminaison à gérer. Installez simplement
+canboat + kplex + can-utils, puis `make install` et `enable --now n2k-mux-can
+n2k-mux-web` comme au §2.3. Idem pour tout ordinateur de bord présentant déjà le
+bus en `can0`.
+
 ---
 
 ## 3. Configurer votre bord

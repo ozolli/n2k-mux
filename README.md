@@ -187,6 +187,16 @@ follow §2.3 (`enable --now n2k-mux-can n2k-mux-web`).
 > is already terminated at both ends — **leave the jumper off**. Enable it only if
 > the Pi sits at an unterminated bus end. Power the Pi separately, not from the bus.
 
+### 2.6 HALPI2 / integrated marine computers
+
+The Hat Labs **HALPI2** (Raspberry Pi CM5, isolated NMEA 2000 interface) exposes
+the bus directly as socketcan `can0` through its `halpi2-firmware` image — **no
+device-tree overlay needed** (skip §2.5). Its CAN node is isolated and not a bus
+end, so there is no termination jumper to worry about. Just install canboat +
+kplex + can-utils, then `make install` and `enable --now n2k-mux-can n2k-mux-web`
+as in §2.3. The same goes for any marine computer that already presents the bus
+as `can0`.
+
 ---
 
 ## 3. Configure your boat
