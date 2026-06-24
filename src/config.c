@@ -15,7 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-enum { SEC_NONE = 0, SEC_OUTPUT, SEC_SOURCES, SEC_PRIORITY, SEC_IGNORE, SEC_RATE, SEC_TALKER, SEC_OTHER };
+enum { SEC_NONE = 0, SEC_OUTPUT, SEC_SOURCES, SEC_PRIORITY, SEC_IGNORE, SEC_RATE, SEC_TALKER, SEC_SENTENCE, SEC_OTHER };
 
 /* Copie bornée, toujours terminée NUL. */
 static void cpy(char *dst, size_t sz, const char *src)
@@ -47,6 +47,7 @@ static int section_of(const char *n)
     if (strcasecmp(n, "ignore") == 0)   return SEC_IGNORE;
     if (strcasecmp(n, "rate") == 0 || strcasecmp(n, "rates") == 0) return SEC_RATE;
     if (strcasecmp(n, "talker") == 0 || strcasecmp(n, "talkers") == 0) return SEC_TALKER;
+    if (strcasecmp(n, "sentence") == 0 || strcasecmp(n, "sentences") == 0) return SEC_SENTENCE;
     return SEC_OTHER;
 }
 
@@ -104,6 +105,25 @@ static bool add_talker(config_t *c, int lineno, const char *key, const char *val
     c->talkers[c->n_talkers].pgn = pgn;
     cpy(c->talkers[c->n_talkers].talker, sizeof c->talkers[0].talker, val);
     c->n_talkers++;
+    return true;
+}
+
+/* [sentence] pgn = TYPE,...  → ajoute un (pgn,type) par type listé. */
+static bool add_sentence(config_t *c, int lineno, const char *key, char *val)
+{
+    int pgn = (int)strtol(key, NULL, 10);
+    if (pgn <= 0)
+        return fail(c, lineno, "PGN invalide ([sentence])");
+    char *save = NULL;
+    for (char *tok = strtok_r(val, ",", &save); tok; tok = strtok_r(NULL, ",", &save)) {
+        char *t = trim(tok);
+        if (!*t) continue;
+        if (c->n_sentences >= CFG_MAX_SENTENCES)
+            return fail(c, lineno, "trop d'entrées ([sentence])");
+        c->sentences[c->n_sentences].pgn = pgn;
+        cpy(c->sentences[c->n_sentences].type, sizeof c->sentences[0].type, t);
+        c->n_sentences++;
+    }
     return true;
 }
 
@@ -211,6 +231,8 @@ static bool feed(config_t *c, int *section, char *line, int lineno)
             return add_rate(c, lineno, key, val);
         case SEC_TALKER:
             return add_talker(c, lineno, key, val);
+        case SEC_SENTENCE:
+            return add_sentence(c, lineno, key, val);
         default:
             return true;        /* section inconnue : ignorée */
     }
@@ -348,4 +370,15 @@ const char *config_talker(const config_t *c, int pgn)
         if (c->talkers[i].pgn == pgn && c->talkers[i].talker[0])
             return c->talkers[i].talker;
     return c->talker[0] ? c->talker : "II";
+}
+
+bool config_sentence_ok(const config_t *c, int pgn, const char *type)
+{
+    bool has = false;
+    for (int i = 0; i < c->n_sentences; i++) {
+        if (c->sentences[i].pgn != pgn) continue;
+        has = true;
+        if (strcasecmp(c->sentences[i].type, type) == 0) return true;
+    }
+    return !has;   /* aucune liste pour ce PGN → tout autorisé */
 }

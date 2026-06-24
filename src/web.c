@@ -86,6 +86,7 @@ static const char PAGE[] =
 "td.c,th.c{text-align:center}\n"
 ".arb td:last-child,.arb th:last-child{white-space:normal;width:100%}\n"
 ".chip{display:inline-block;border:1px solid #2a313a;border-radius:6px;padding:.1em .45em;margin:.12em .2em;background:#0d1117;white-space:nowrap;font-size:.9em}\n"
+".sl{display:inline-block;font-size:.82em;white-space:nowrap;margin:0 .35em .1em 0}\n"
 "</style></head><body>\n"
 "<header><b>n2k-mux</b>\n"
 "<nav><button data-t='sources' class='on'>Sources</button>"
@@ -148,7 +149,7 @@ static const char PAGE[] =
 " const rules=(ru.rules||[]).map(r=>({pgn:r.pgn,disc:r.disc,mode:r.mode,sources:r.sources.map(n=>{const id=identByName[n];return id===undefined?n:newName[id];}).filter(Boolean)}));\n"
 " const igs=[];document.querySelectorAll('#src_body input.ig:checked').forEach(i=>igs.push(+i.dataset.src));\n"
 " const ignore={src:igs,pgn:(ru.ignore&&ru.ignore.pgn)||[]};\n"
-" const res=await fetch('/api/config',{method:'POST',body:genIni(ru.talker,sources,rules,ignore,ru.rates,ru.no_n2k,ru.no_0183,ru.talkers)});const d=await res.json();\n"
+" const res=await fetch('/api/config',{method:'POST',body:genIni(ru.talker,sources,rules,ignore,ru.rates,ru.no_n2k,ru.no_0183,ru.talkers,ru.sentences)});const d=await res.json();\n"
 " d.ok?smsg('Noms enregistrés et rechargés.','ok'):smsg('Refusé — ligne '+(d.line||'?')+' : '+(d.err||''),'err');\n"
 " if(d.ok)setTimeout(renderSources,2500);\n"
 "}catch(e){smsg('Erreur : '+e,'err');}}\n"
@@ -173,6 +174,7 @@ static const char PAGE[] =
 "const PGN2SENT={129025:['GLL'],129026:['VTG'],129029:['GGA'],129539:['GSA'],129540:['GSV'],126992:['ZDA'],127250:['HDG','HDM','HDT'],127251:['ROT'],127257:['XDR'],130306:['MWV','MWD'],127245:['RSA'],129291:['VDR'],128259:['VHW'],128267:['DPT'],128275:['VLW'],130316:['MTW','MDA'],130314:['MDA']};\n"
 "const AISPGN=[129038,129039,129040,129041,129793,129794,129795,129796,129797,129798,129801,129802,129809,129810];\n"
 "function has0183(p){return PGN2SENT[p]!==undefined||AISPGN.indexOf(p)>=0}\n"
+"function typesOf(p){return PGN2SENT[p]||(AISPGN.indexOf(p)>=0?['VDM']:[])}\n"
 "let ARB=null;\n"
 "function akey(p,d){return p+'|'+(d||'')}\n"
 "function nameOf(id){const s=(ARB.sources||[]).find(x=>x.ident===id);return s?s.name:''}\n"
@@ -191,19 +193,21 @@ static const char PAGE[] =
 "  ARB.units.push({pgn:u.pgn,disc:u.disc,mode:x?x.mode:'priority',sel:x?x.sources.slice():[],obs:u.sources.slice()});}\n"
 " for(const x of (ru.rules||[])){const k=akey(x.pgn,x.disc);if(!seen[k]){ARB.units.push({pgn:x.pgn,disc:x.disc,mode:x.mode,sel:x.sources.slice(),obs:[]});}}\n"
 " ARB.units.sort((a,b)=>a.pgn-b.pgn||(a.disc||'').localeCompare(b.disc||''));\n"
-" const nn=ru.no_n2k||[],no=ru.no_0183||[],tkm={};for(const t of (ru.talkers||[]))tkm[t.pgn]=t.tk;\n"
-" for(const u of ARB.units){u.n2k=nn.indexOf(u.pgn)<0;u.o183=no.indexOf(u.pgn)<0;u.mappable=has0183(u.pgn);\n"
+" const nn=ru.no_n2k||[],no=ru.no_0183||[],tkm={},sm={};\n"
+" for(const t of (ru.talkers||[]))tkm[t.pgn]=t.tk;for(const s of (ru.sentences||[]))sm[s.pgn]=s.types;\n"
+" for(const u of ARB.units){u.n2k=nn.indexOf(u.pgn)<0;u.types=typesOf(u.pgn);u.mappable=u.types.length>0;\n"
+"  const off=no.indexOf(u.pgn)>=0;u.on={};u.types.forEach(t=>{u.on[t]=!off&&(sm[u.pgn]===undefined||sm[u.pgn].indexOf(t)>=0);});\n"
 "  u.hasRate=PGN2SENT[u.pgn]!==undefined;u.o183ms=u.hasRate?rateOf(PGN2SENT[u.pgn][0]):'';u.tk=tkm[u.pgn]||'';}\n"
 " amsg('');drawArb();updateLoad();\n"
 "}catch(e){$('#arb_body').innerHTML='<p><small>busmap/rules indisponible (daemon avec --busmap ?).</small></p>';}}\n"
-"function drawArb(){const dtk=ARB.talker||'II';let h='<table class=arb><tr><th>PGN</th><th>Mode</th><th class=c>N2K</th><th class=c>0183</th><th class=c>0183 ms</th><th class=c>Talker</th><th class=c>Hz</th><th>Sources <small>(gauche = prioritaire)</small></th></tr>';\n"
+"function drawArb(){const dtk=ARB.talker||'II';let h='<table class=arb><tr><th>PGN</th><th>Mode</th><th class=c>N2K</th><th class=c>Phrases 0183</th><th class=c>ms</th><th class=c>Talker</th><th class=c>Hz</th><th>Sources <small>(gauche = prioritaire)</small></th></tr>';\n"
 " for(let ui=0;ui<ARB.units.length;ui++){const u=ARB.units[ui];\n"
 "  const cand=[];const add=n=>{if(n&&cand.indexOf(n)<0)cand.push(n)};\n"
 "  u.sel.forEach(add);u.obs.forEach(o=>{const nm=o.name||nameOf(o.ident);if(nm)add(nm)});u.cand=cand;\n"
 "  h+='<tr><td>'+u.pgn+(u.disc?' /'+esc(u.disc):'')+'<br><small>'+(PGNNAME[u.pgn]||'')+'</small></td>';\n"
 "  h+='<td><select data-act=mode data-u='+ui+'>'+['priority','min','max','fusion'].map(m=>'<option value='+m+(u.mode===m?' selected':'')+'>'+m+'</option>').join('')+'</select></td>';\n"
 "  h+='<td class=c><input type=checkbox data-act=n2k data-u='+ui+(u.n2k?' checked':'')+'></td>';\n"
-"  h+='<td class=c>'+(u.mappable?('<input type=checkbox data-act=o183 data-u='+ui+(u.o183?' checked':'')+'>'):'<small>—</small>')+'</td>';\n"
+"  h+='<td class=c>'+(u.types.length?u.types.map(t=>'<label class=sl><input type=checkbox data-act=o183 data-u='+ui+' data-ty='+t+(u.on[t]?' checked':'')+'>'+t+'</label>').join(''):'<small>—</small>')+'</td>';\n"
 "  h+='<td class=c>'+(u.hasRate?('<input class=ri type=number min=0 data-act=int data-u='+ui+' value='+(u.o183ms||'')+'>'):'<small>—</small>')+'</td>';\n"
 "  h+='<td class=c>'+(u.hasRate?('<input class=ri style=\"width:3.2em;text-align:center\" maxlength=2 data-act=tk data-u='+ui+' value=\"'+esc(u.tk||'')+'\" placeholder=\"'+esc(dtk)+'\">'):'<small>—</small>')+'</td>';\n"
 "  h+='<td class=c id=ld'+ui+'></td><td>';\n"
@@ -220,11 +224,11 @@ static const char PAGE[] =
 " if(t.dataset.act==='tog'){const nm=ARB.units[u].cand[+t.dataset.ci],s=ARB.units[u].sel,i=s.indexOf(nm);if(i>=0)s.splice(i,1);else s.push(nm);drawArb();}\n"
 " else if(t.dataset.act==='mode'){ARB.units[u].mode=t.value;}\n"
 " else if(t.dataset.act==='n2k'){ARB.units[u].n2k=t.checked;}\n"
-" else if(t.dataset.act==='o183'){ARB.units[u].o183=t.checked;}\n"
+" else if(t.dataset.act==='o183'){ARB.units[u].on[t.dataset.ty]=t.checked;}\n"
 " else if(t.dataset.act==='int'){setInt(u,t.value);}\n"
 " else if(t.dataset.act==='tk'){ARB.units[u].tk=(t.value||'').trim().toUpperCase();}});\n"
 "$('#arb_body').addEventListener('click',e=>{const t=e.target;if(t.dataset.act!=='mv')return;const u=+t.dataset.u,i=+t.dataset.i,d=+t.dataset.d,s=ARB.units[u].sel,j=i+d;if(j<0||j>=s.length)return;const x=s[i];s[i]=s[j];s[j]=x;drawArb();});\n"
-"function genIni(talker,sources,rules,ignore,rates,no_n2k,no_0183,talkers){let o='[output]\\ntalker = '+(talker||'II')+'\\n';\n"
+"function genIni(talker,sources,rules,ignore,rates,no_n2k,no_0183,talkers,sentences){let o='[output]\\ntalker = '+(talker||'II')+'\\n';\n"
 " if(no_n2k&&no_n2k.length)o+='no_n2k = '+no_n2k.join(', ')+'\\n';\n"
 " if(no_0183&&no_0183.length)o+='no_0183 = '+no_0183.join(', ')+'\\n';\n"
 " o+='\\n[sources]\\n';\n"
@@ -234,11 +238,14 @@ static const char PAGE[] =
 " o+='\\n[ignore]\\n';if(ignore&&ignore.src&&ignore.src.length)o+='src = '+ignore.src.join(', ')+'\\n';if(ignore&&ignore.pgn&&ignore.pgn.length)o+='pgn = '+ignore.pgn.join(', ')+'\\n';\n"
 " o+='\\n[rate]\\n';for(const x of (rates||[]))o+=x.type+' = '+x.ms+'\\n';\n"
 " if(talkers&&talkers.length){o+='\\n[talker]\\n';for(const t of talkers)o+=t.pgn+' = '+t.tk+'\\n';}\n"
+" if(sentences&&sentences.length){o+='\\n[sentence]\\n';for(const s of sentences)o+=s.pgn+' = '+s.types.join(', ')+'\\n';}\n"
 " return o;}\n"
 "$('#arb_save').onclick=async()=>{const rules=ARB.units.filter(u=>u.sel.length).map(u=>({pgn:u.pgn,disc:u.disc,mode:u.mode,sources:u.sel}));\n"
-" const noN=ARB.units.filter(u=>!u.n2k).map(u=>u.pgn),noO=ARB.units.filter(u=>u.mappable&&!u.o183).map(u=>u.pgn);\n"
+" const noN=ARB.units.filter(u=>!u.n2k).map(u=>u.pgn),noO=[],sents=[];\n"
+" for(const u of ARB.units){if(!u.types.length)continue;const on=u.types.filter(t=>u.on[t]);\n"
+"  if(!on.length)noO.push(u.pgn);else if(on.length<u.types.length)sents.push({pgn:u.pgn,types:on});}\n"
 " const tks=ARB.units.filter(u=>u.tk&&u.tk!==(ARB.talker||'II')).map(u=>({pgn:u.pgn,tk:u.tk}));\n"
-" const r=await fetch('/api/config',{method:'POST',body:genIni(ARB.talker,ARB.sources,rules,ARB.ignore,ARB.rates,noN,noO,tks)});const d=await r.json();\n"
+" const r=await fetch('/api/config',{method:'POST',body:genIni(ARB.talker,ARB.sources,rules,ARB.ignore,ARB.rates,noN,noO,tks,sents)});const d=await r.json();\n"
 " d.ok?amsg('Arbitrage enregistré et rechargé.','ok'):amsg('Refusé — ligne '+(d.line||'?')+' : '+(d.err||''),'err');if(d.ok)setTimeout(loadArb,2500);};\n"
 "$('#arb_reload').onclick=loadArb;\n"
 "$('#src_save').onclick=saveSrc;$('#src_reload').onclick=renderSources;\n"
@@ -381,6 +388,27 @@ static void serve_rules(int fd)
     for (int i = 0; i < c.n_talkers; i++) {
         json_escape(c.talkers[i].talker, e, sizeof e);
         APP("%s{\"pgn\":%d,\"tk\":\"%s\"}", i ? "," : "", c.talkers[i].pgn, e);
+    }
+    /* Listes blanches de phrases [sentence], regroupées par PGN. */
+    APP("],\"sentences\":[");
+    {
+        int first = 1;
+        for (int i = 0; i < c.n_sentences; i++) {
+            int pgn = c.sentences[i].pgn, seen = 0;
+            for (int j = 0; j < i; j++)
+                if (c.sentences[j].pgn == pgn) { seen = 1; break; }
+            if (seen) continue;
+            APP("%s{\"pgn\":%d,\"types\":[", first ? "" : ",", pgn);
+            first = 0;
+            int nt = 0;
+            for (int j = 0; j < c.n_sentences; j++) {
+                if (c.sentences[j].pgn != pgn) continue;
+                json_escape(c.sentences[j].type, e, sizeof e);
+                APP("%s\"%s\"", nt ? "," : "", e);
+                nt++;
+            }
+            APP("]}");
+        }
     }
     APP("]}");
 #undef APP

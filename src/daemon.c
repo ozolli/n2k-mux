@@ -459,6 +459,10 @@ int main(int argc, char **argv)
                 for (int i = 0; i < out.n; i++) {
                     char ty[4];
                     sentence_type(out.s[i], ty);
+                    /* Liste blanche de phrases par PGN ([sentence]) : un type
+                     * non sélectionné pour ce PGN n'est pas émis. */
+                    if (ty[0] && !config_sentence_ok(&cfg, m.pgn, ty))
+                        continue;
                     int iv = ty[0] ? config_rate_ms(&cfg, ty) : 0;
                     bool pass = true;
                     if (iv > 0) {

@@ -41,6 +41,16 @@
  *   GLL = 1000              ; au plus une GLL par seconde
  *   GSV = 5000
  *
+ *   [talker]
+ *   ; talker 0183 spécifique par PGN (à défaut : talker global de [output])
+ *   127250 = HE
+ *
+ *   [sentence]
+ *   ; liste blanche de phrases 0183 par PGN (PGN absent = toutes émises).
+ *   ; un PGN multi-phrases n'émet alors QUE les types listés.
+ *   127250 = HDG, HDT       ; pas de HDM
+ *   130306 = MWV            ; pas de MWD
+ *
  * Commentaires : ';' ou '#' jusqu'à la fin de ligne. Espaces tolérés partout.
  * Sections/clés inconnues ignorées. Stockage fixe, zéro allocation dynamique.
  */
@@ -56,6 +66,7 @@
 #define CFG_MAX_IGNORE    16
 #define CFG_MAX_RATES     32   /* limites de débit par type de phrase */
 #define CFG_MAX_TALKERS   32   /* talker 0183 spécifique par PGN */
+#define CFG_MAX_SENTENCES 64   /* (pgn,type) de la liste blanche de phrases 0183 */
 #define CFG_NAME_LEN      24
 #define CFG_IDENT_LEN     64
 #define CFG_DISC_LEN      32
@@ -117,6 +128,13 @@ typedef struct {
     struct { int pgn; char talker[3]; } talkers[CFG_MAX_TALKERS];
     int          n_talkers;
 
+    /* Liste blanche de phrases 0183 par PGN ([sentence] pgn = TYPE,...).
+     * Un PGN qui peut produire plusieurs phrases (127250→HDG/HDM/HDT,
+     * 130306→MWV/MWD, 130316→MTW/MDA) n'émet que les types listés. Si AUCUNE
+     * entrée pour le PGN : tous ses types sont émis (défaut). */
+    struct { int pgn; char type[CFG_TYPE_LEN]; } sentences[CFG_MAX_SENTENCES];
+    int          n_sentences;
+
     char         err[160];  /* message de la dernière erreur de parsing */
     int          err_line;  /* ligne fautive (0 si aucune) */
 } config_t;
@@ -156,5 +174,11 @@ int config_rate_ms(const config_t *c, const char *type);
 /* Talker 0183 à utiliser pour un PGN ([talker] pgn = TK), ou le talker global
  * par défaut. Jamais NULL. */
 const char *config_talker(const config_t *c, int pgn);
+
+/* Phrase 0183 `type` autorisée pour `pgn` ? ([sentence] liste blanche).
+ * true si le PGN n'a aucune entrée [sentence] (défaut : tout émis) ou si `type`
+ * y figure ; false si une liste existe et que `type` n'en fait pas partie.
+ * Casse du type ignorée. */
+bool config_sentence_ok(const config_t *c, int pgn, const char *type);
 
 #endif /* N2KMUX_CONFIG_H */

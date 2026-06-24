@@ -57,7 +57,13 @@ static const char *INI =
     "\n"
     "[ignore]\n"
     "src = 0\n"
-    "pgn = 262161, 262656\n";
+    "pgn = 262161, 262656\n"
+    "\n"
+    "[talker]\n"
+    "127250 = HE\n"
+    "\n"
+    "[sentence]\n"
+    "127250 = HDG, HDT\n";
 
 int main(void)
 {
@@ -126,6 +132,14 @@ int main(void)
     ok("ignore pgn 262161", config_ignore_pgn(&c, 262161));
     ok("ignore pgn 262656", config_ignore_pgn(&c, 262656));
     ok("pas ignore 129025", !config_ignore_pgn(&c, 129025));
+
+    /* talker par PGN + liste blanche de phrases [sentence] */
+    eq_str("talker 127250 = HE", config_talker(&c, 127250), "HE");
+    eq_str("talker défaut autre PGN", config_talker(&c, 129025), "SD");
+    ok("127250 HDG autorisée", config_sentence_ok(&c, 127250, "HDG"));
+    ok("127250 HDT autorisée", config_sentence_ok(&c, 127250, "HDT"));
+    ok("127250 HDM refusée",  !config_sentence_ok(&c, 127250, "HDM"));
+    ok("PGN sans [sentence] → tout OK", config_sentence_ok(&c, 129025, "GLL"));
 
     /* config_load depuis un fichier temporaire */
     const char *path = "/tmp/n2kmux_test.ini";
