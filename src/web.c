@@ -111,7 +111,7 @@ static const char PAGE[] =
 "<div id='arb_body'>…</div></section>\n"
 "</main>\n"
 "<script>\n"
-"let lang=localStorage.getItem('lang')||'fr';\n"
+"let lang=localStorage.getItem('lang')||((navigator.language||'fr').toLowerCase().startsWith('fr')?'fr':'en');\n"
 "let theme=localStorage.getItem('theme')||'dark';\n"
 "const L={fr:{\n"
 "tab_sources:'Sources',tab_arb:'Arbitrage',save_names:'Enregistrer les noms',save_arb:'Enregistrer l’arbitrage',refresh:'Rafraîchir',\n"

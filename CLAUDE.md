@@ -272,8 +272,9 @@ Modules prévus (ordre d'implémentation) :
                 avec la direction « tout réseau ».
                 Bascules en-tête : langue FR/EN (dictionnaire L{fr,en} + T(clé),
                 textes statiques via data-i18n) et thème sombre/clair (couleurs en
-                variables CSS, palette .light) ; choix mémorisés en localStorage,
-                défauts FR + sombre.
+                variables CSS, palette .light) ; choix mémorisés en localStorage.
+                Langue par défaut = celle du navigateur (navigator.language : FR si
+                préfixe « fr », sinon EN) ; thème sombre par défaut.
 
 ## Chaîne de production
 

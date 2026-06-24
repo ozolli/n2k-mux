@@ -266,7 +266,8 @@ pare-feu/redirection maîtrisé sur votre box.
 
 Ouvrez `http://hôte:8080/`. **Deux onglets** : toute la configuration s'édite ici,
 sans jamais toucher au fichier INI à la main. Deux bascules en haut à droite :
-**langue** (FR/EN) et **thème** (sombre/clair), mémorisées dans le navigateur.
+**langue** (FR/EN, initialisée d'après celle du navigateur) et **thème**
+(sombre/clair), mémorisées dans le navigateur.
 
 ### Sources
 
