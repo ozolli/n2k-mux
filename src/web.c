@@ -322,6 +322,8 @@ static const char PAGE[] =
 "function applyLang(){$('#lang').textContent=lang==='fr'?'EN':'FR';applyI18n();if($('#arbitrage').classList.contains('on'))loadArb();else renderSources();}\n"
 "$('#lang').onclick=()=>{lang=(lang==='fr')?'en':'fr';localStorage.setItem('lang',lang);applyLang();};\n"
 "$('#theme').onclick=()=>{theme=(theme==='dark')?'light':'dark';localStorage.setItem('theme',theme);applyTheme();};\n"
+"if(window.matchMedia)matchMedia('(prefers-color-scheme: light)').addEventListener('change',e=>{\n"
+" if(!localStorage.getItem('theme')){theme=e.matches?'light':'dark';applyTheme();}});\n"
 "applyTheme();$('#lang').textContent=lang==='fr'?'EN':'FR';applyI18n();\n"
 "renderSources();tick();setInterval(tick,3000);\n"
 "</script></body></html>\n";
