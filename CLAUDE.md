@@ -263,7 +263,11 @@ Modules prévus (ordre d'implémentation) :
                 relit à chaud (cf. SIGHUP plus haut). Plus de pkexec/systemctl.
                 usage : n2k-mux-web [config.ini] [--sources P] [--stats P]
                   [--port N (défaut 8080)] [--bind ADDR (défaut 127.0.0.1 ;
-                  0.0.0.0 = LAN)] [--reload-cmd CMD].
+                  0.0.0.0 = LAN)] [--reload-cmd CMD] [--auth user:pass].
+                --auth : authentification HTTP Basic (toutes routes) ; le mot de
+                passe attendu est encodé en base64 au démarrage et comparé à temps
+                constant ; 401 + WWW-Authenticate sinon. HTTP Basic n'est PAS
+                chiffré (LAN/tunnel/terminateur TLS). Service : variable WEB_AUTH.
                 Pont daemon→web : module sources (src/sources.{h,c}, testeur
                 ./test_sources) → JSON (défaut /run/n2k-mux/sources.json) ; chaque
                 source porte sa liste de PGN publiés (registry suit pgn→compteur

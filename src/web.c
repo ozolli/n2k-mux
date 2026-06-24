@@ -45,6 +45,8 @@ static const char *g_sources_path = "/run/n2k-mux/sources.json";
 static const char *g_stats_path   = "/run/n2k-mux/stats.json";
 static const char *g_busmap_path  = "/run/n2k-mux/busmap.json";
 static const char *g_reload_cmd  = NULL;
+static const char *g_auth        = NULL;   /* "user:pass" attendu (NULL = pas d'auth) */
+static char        g_auth_b64[160];        /* base64("user:pass"), calculé au démarrage */
 
 /* --- Page unique embarquée (single quotes en JS pour éviter d'échapper les "). --- */
 static const char PAGE[] =
@@ -384,6 +386,62 @@ static void send_text(int fd, int code, const char *status, const char *ctype,
     send_resp(fd, code, status, ctype, body, strlen(body));
 }
 
+/* base64 standard de `in` (terminée NUL) dans `out`. */
+static void b64encode(const char *in, char *out, size_t cap)
+{
+    static const char T[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    size_t n = strlen(in), i = 0, o = 0;
+    while (i < n && o + 4 < cap) {
+        unsigned v = (unsigned char)in[i++] << 16; int rem = 1;
+        if (i < n) { v |= (unsigned char)in[i++] << 8; rem = 2; }
+        if (i < n) { v |= (unsigned char)in[i++];      rem = 3; }
+        out[o++] = T[(v >> 18) & 63];
+        out[o++] = T[(v >> 12) & 63];
+        out[o++] = rem >= 2 ? T[(v >> 6) & 63] : '=';
+        out[o++] = rem >= 3 ? T[v & 63]        : '=';
+    }
+    out[o] = '\0';
+}
+
+/* Comparaison à temps constant (évite le timing-oracle sur le mot de passe). */
+static int ct_eq(const char *a, const char *b)
+{
+    size_t la = strlen(a), lb = strlen(b), n = la < lb ? la : lb;
+    unsigned d = (unsigned)(la ^ lb);
+    for (size_t i = 0; i < n; i++) d |= (unsigned)(a[i] ^ b[i]);
+    return d == 0;
+}
+
+/* 401 avec en-tête WWW-Authenticate (déclenche le prompt du navigateur). */
+static void send_401(int fd)
+{
+    static const char *r =
+        "HTTP/1.1 401 Unauthorized\r\n"
+        "WWW-Authenticate: Basic realm=\"n2k-mux\", charset=\"UTF-8\"\r\n"
+        "Content-Type: text/plain\r\nContent-Length: 16\r\n"
+        "Cache-Control: no-store\r\nConnection: close\r\n\r\n"
+        "401 Unauthorized";
+    ssize_t w = write(fd, r, strlen(r)); (void)w;
+}
+
+/* Requête authentifiée ? (Authorization: Basic <base64> == g_auth_b64). */
+static int authed(const char *req)
+{
+    if (!g_auth) return 1;                 /* auth désactivée */
+    const char *h = strcasestr(req, "Authorization:");
+    if (!h) return 0;
+    const char *b = strcasestr(h, "Basic ");
+    if (!b) return 0;
+    b += 6;
+    char tok[160]; size_t i = 0;
+    while (b[i] && b[i] != '\r' && b[i] != '\n' && b[i] != ' ' && i < sizeof tok - 1) {
+        tok[i] = b[i]; i++;
+    }
+    tok[i] = '\0';
+    return ct_eq(tok, g_auth_b64);
+}
+
 /* Relaie un fichier JSON ; {} si absent (le daemon ne l'a pas encore écrit). */
 static void serve_json_file(int fd, const char *path)
 {
@@ -537,6 +595,8 @@ static void handle_client(int fd)
     char method[8] = "", path[256] = "";
     sscanf(req, "%7s %255s", method, path);
 
+    if (!authed(req)) { send_401(fd); return; }
+
     char *hdr_end = strstr(req, "\r\n\r\n");
     char *body = hdr_end ? hdr_end + 4 : NULL;
     /* Corps complet ? (Content-Length) */
@@ -599,19 +659,28 @@ int main(int argc, char **argv)
         else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) port = atoi(argv[++i]);
         else if (strcmp(argv[i], "--bind") == 0 && i + 1 < argc) bind_addr = argv[++i];
         else if (strcmp(argv[i], "--reload-cmd") == 0 && i + 1 < argc) g_reload_cmd = argv[++i];
+        else if (strcmp(argv[i], "--auth") == 0 && i + 1 < argc) g_auth = argv[++i];
         else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             fprintf(stderr,
                 "Usage : %s [config.ini] [--sources P] [--stats P] [--busmap P]\n"
-                "          [--port N] [--bind ADDR] [--reload-cmd CMD]\n"
+                "          [--port N] [--bind ADDR] [--reload-cmd CMD] [--auth user:pass]\n"
                 "  config.ini    fichier INI édité par l'interface\n"
                 "  --busmap P    carte (pgn/disc)->sources pour l'onglet Arbitrage\n"
                 "  --port N      port d'écoute (défaut 8080)\n"
                 "  --bind ADDR   adresse d'écoute (défaut 127.0.0.1 ; 0.0.0.0 = LAN)\n"
-                "  --reload-cmd  commande lancée après sauvegarde (ex. \"pkill -HUP -x n2k-mux\")\n",
+                "  --reload-cmd  commande lancée après sauvegarde (ex. \"pkill -HUP -x n2k-mux\")\n"
+                "  --auth        exige une authentification HTTP Basic (user:pass)\n",
                 argv[0]);
             return 0;
         } else if (argv[i][0] != '-') g_cfg_path = argv[i];
         else { fprintf(stderr, "option inconnue : %s\n", argv[i]); return 2; }
+    }
+
+    if (g_auth) {
+        if (!strchr(g_auth, ':')) {
+            fprintf(stderr, "--auth attend le format user:pass\n"); return 2;
+        }
+        b64encode(g_auth, g_auth_b64, sizeof g_auth_b64);
     }
 
     signal(SIGPIPE, SIG_IGN);
@@ -629,8 +698,9 @@ int main(int argc, char **argv)
     if (bind(ls, (struct sockaddr *)&a, sizeof a) != 0) { perror("bind"); return 1; }
     if (listen(ls, 8) != 0) { perror("listen"); return 1; }
 
-    fprintf(stderr, "n2k-mux-web : http://%s:%d/  (config: %s)\n",
-            bind_addr, port, g_cfg_path ? g_cfg_path : "(aucune)");
+    fprintf(stderr, "n2k-mux-web : http://%s:%d/  (config: %s, auth: %s)\n",
+            bind_addr, port, g_cfg_path ? g_cfg_path : "(aucune)",
+            g_auth ? "oui" : "non");
 
     for (;;) {
         int fd = accept(ls, NULL, NULL);

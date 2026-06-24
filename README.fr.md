@@ -300,7 +300,9 @@ est journalisée). Le message de confirmation s'efface seul après 15 s.
 
 > **Sécurité** : l'API web écrit la config et déclenche un rechargement. Le
 > service écoute par défaut sur le LAN (`0.0.0.0:8080`) ; réservez-le à un réseau
-> de confiance et ajoutez une authentification avant toute exposition plus large.
+> de confiance. Activez l'**authentification HTTP Basic** avec `--auth user:pass`
+> (ou `WEB_AUTH=user:pass` dans `/etc/default/n2k-mux`). HTTP Basic n'étant **pas
+> chiffré**, gardez-le sur le LAN ou derrière un tunnel SSH / un terminateur TLS.
 
 ---
 
@@ -386,7 +388,9 @@ perdants publiée par `n2k-mux --losers`, `--ydraw-port` sert aussi le flux arbi
 en YDRAW/TCP (qtVlm réseau).
 
 **`n2k-mux-web`** : `[config.ini] [--sources P] [--stats P] [--port N]
-[--bind ADDR] [--reload-cmd CMD]` (défauts : port 8080, bind `0.0.0.0`).
+[--bind ADDR] [--reload-cmd CMD] [--auth user:pass]` (défauts : port 8080, bind
+`0.0.0.0`, pas d'auth). `--auth` active l'authentification HTTP Basic sur toutes
+les routes.
 
 ### 8.2 Données converties (N2K → 0183)
 

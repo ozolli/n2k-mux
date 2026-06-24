@@ -298,8 +298,10 @@ the file is invalid, the old one stays active and the error is logged). The
 confirmation message clears itself after 15 s.
 
 > **Security**: the web API writes the config and triggers a reload. The service
-> listens on the LAN by default (`0.0.0.0:8080`); restrict it to a trusted network
-> and add authentication before any wider exposure.
+> listens on the LAN by default (`0.0.0.0:8080`); restrict it to a trusted network.
+> Enable **HTTP Basic authentication** with `--auth user:pass` (or
+> `WEB_AUTH=user:pass` in `/etc/default/n2k-mux`). Since HTTP Basic is **not
+> encrypted**, keep it on the LAN or behind an SSH tunnel / a TLS terminator.
 
 ---
 
@@ -385,7 +387,8 @@ losers list published by `n2k-mux --losers`, `--ydraw-port` also serves the
 arbitrated stream as YDRAW/TCP (network qtVlm).
 
 **`n2k-mux-web`**: `[config.ini] [--sources P] [--stats P] [--port N]
-[--bind ADDR] [--reload-cmd CMD]` (defaults: port 8080, bind `0.0.0.0`).
+[--bind ADDR] [--reload-cmd CMD] [--auth user:pass]` (defaults: port 8080, bind
+`0.0.0.0`, no auth). `--auth` enables HTTP Basic authentication on all routes.
 
 ### 8.2 Converted data (N2K → 0183)
 

@@ -28,7 +28,9 @@ EnvironmentFile=-/etc/default/n2k-mux
 
 # Lit les JSON du daemon dans /run/n2k-mux ; « Enregistrer » écrit la config puis
 # recharge à chaud les deux instances n2k-mux (principale + --ais-json).
-ExecStart=/bin/sh -c '"$WEB" "$CONF" --sources /run/n2k-mux/sources.json --stats /run/n2k-mux/stats.json --busmap /run/n2k-mux/busmap.json --port "$PORT" --bind "$BIND" --reload-cmd "pkill -HUP -x n2k-mux"'
+# WEB_AUTH=user:pass (dans /etc/default/n2k-mux) active l'authentification HTTP
+# Basic ; absent/vide = pas d'auth. ${WEB_AUTH:+...} n'ajoute --auth que si défini.
+ExecStart=/bin/sh -c '"$WEB" "$CONF" --sources /run/n2k-mux/sources.json --stats /run/n2k-mux/stats.json --busmap /run/n2k-mux/busmap.json --port "$PORT" --bind "$BIND" --reload-cmd "pkill -HUP -x n2k-mux" ${WEB_AUTH:+--auth "$WEB_AUTH"}'
 
 Restart=always
 RestartSec=3
