@@ -8,8 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 designed to consume the JSON-lines output of canboat's `analyzer -json` (one JSON
 object per line) and process NMEA 2000 messages.
 
-Modules (a)–(f) are implemented (parser → registry → nmea0183 → config → arbiter
-→ daemon); the GTK GUI (g) remains. The final binary `n2k-mux` runs the full
+Modules (a)–(g) are implemented (parser → registry → nmea0183 → config → arbiter
+→ daemon → web). The final binary `n2k-mux` runs the full
 pipeline and is validated live on the bench. Each module ships its own test
 harness (`test_*`). The Makefile and source comments are written incrementally
 ("livrés au fur et à mesure").
@@ -58,7 +58,7 @@ Options : `--once` (couverture : un de chaque PGN puis sort), `--duration SEC`,
 `--no-ais`, `--tick MS`. La config compagnon **`n2k-sim.ini`** porte les Model
 Serial Code émis par le simulateur (SCX/VER/MAD/DST_BB/DST_TB/AIS/DH) → arbitrage
 résolu d'emblée, toute la table de conversion sort. Sert de test bout-en-bout
-(daemon, --ais-json, GUI) sans bus ni passerelle réels.
+(daemon, --ais-json, web) sans bus ni passerelle réels.
 
 L'**état bateau** est cohérent (position intégrée VERS L'AVANT le long du COG, cap
 ≈ COG, ROT = dérivée du COG) : qtVlm affiche le bateau cap en avant qui infléchit
@@ -205,7 +205,7 @@ Modules prévus (ordre d'implémentation) :
                 → effet à la ligne suivante (sans objet pour un flux vivant).
                 C'est ce que l'UI web utilise pour « Enregistrer » sans root.
                 --sources CHEMIN : publie périodiquement les sources vues en JSON
-                (module sources, défaut interval 5 s) pour la GUI.
+                (module sources, défaut interval 5 s) pour l'UI web.
                 --stats CHEMIN : publie le débit par PGN (hz + total) et la charge
                 de bus N2K ESTIMÉE en JSON (module stats, défaut 5 s). Aussi un
                 résumé sur stderr en -v. Charge estimée car on est en aval de
@@ -236,7 +236,7 @@ Modules prévus (ordre d'implémentation) :
                 → constellation GPS (satellites) ET cibles AIS réelles affichées
                 (129038/39/41, 129794, 129809/810 ; noms via static). Voir mémoire.
 (g) web       — interface de gestion WEB (src/web.c, binaire ./n2k-mux-web,
-                make n2k-mux-web ; 0 warning ; **remplace à terme la GUI GTK**).
+                make n2k-mux-web ; 0 warning ; SEULE interface de gestion).
                 [FAIT, validé bout-en-bout : endpoints + reload web→SIGHUP live]
                 Mini serveur HTTP zéro-dépendance (C11, réutilise le module
                 config) servant une SPA embarquée (HTML/CSS/JS, single quotes JS).
@@ -264,35 +264,12 @@ Modules prévus (ordre d'implémentation) :
                 usage : n2k-mux-web [config.ini] [--sources P] [--stats P]
                   [--port N (défaut 8080)] [--bind ADDR (défaut 127.0.0.1 ;
                   0.0.0.0 = LAN)] [--reload-cmd CMD].
-                Pourquoi web > GTK ici : consultable depuis tablettes/téléphone
-                sans X-forwarding (la douleur ssh -Y/GDK_BACKEND documentée plus
-                bas), cohérent avec la direction « tout réseau ». La GUI GTK reste
-                construite (make n2k-mux-gui) tant que le web n'est pas éprouvé en
-                prod, puis sera dépréciée.
-(g-bis) gui   — GTK3, édition de la config INI + liste des sources vues [LEGACY,
-                à déprécier au profit de l'UI web ci-dessus]
-                [FAIT, binaire ./n2k-mux-gui (make n2k-mux-gui) ; 0 warning ;
-                 rendu validé (Xvfb + capture) : 2 onglets corrects]
-                pont daemon→GUI : module sources (src/sources.{h,c}, testeur
-                ./test_sources) → fichier JSON (défaut /run/n2k-mux/sources.json).
-                Chaque source porte aussi sa liste de PGN publiés (registry suit
-                pgn→compteur par device) → colonne « PGNs publiés » de la GUI.
-                GUI : 3 onglets. « Sources vues » (TreeView auto-rafraîchi,
-                double-clic = copie l'identité, colonne PGNs publiés) ;
-                « Charge » (lit stats.json : charge N2K estimée + charge 0183 en
-                % de 4800 bauds, débit par PGN et par type de phrase, rafraîchi
-                3 s) ; « Configuration » (éditeur INI texte brut → commentaires
-                préservés ; « Valider » réutilise config_parse_string ;
-                « Enregistrer » refuse si la config est invalide. Si le fichier
-                appartient à root (ex. /etc/n2k-mux/n2k-mux.ini), l'écriture passe
-                par pkexec (copie depuis un tmp). « Enregistrer et redémarrer »
-                fait écriture + `systemctl restart n2k-mux` en une seule auth
-                pkexec — le daemon ne relit la config qu'au démarrage, pas de
-                SIGHUP).
-                usage GUI : n2k-mux-gui [config.ini] [--sources CHEMIN]
-                [--stats CHEMIN] [--tab sources|charge|config].
-                make all NE construit PAS la GUI (garde le build OK sans GTK) ;
-                make n2k-mux-gui la construit (nécessite libgtk-3-dev).
+                Pont daemon→web : module sources (src/sources.{h,c}, testeur
+                ./test_sources) → JSON (défaut /run/n2k-mux/sources.json) ; chaque
+                source porte sa liste de PGN publiés (registry suit pgn→compteur
+                par device) → colonne « PGNs publiés ».
+                Consultable depuis tablettes/téléphone sans X-forwarding, cohérent
+                avec la direction « tout réseau ».
 
 ## Chaîne de production
 
@@ -307,7 +284,7 @@ NGX-1 en mode TRANSFER (N2K brut, 230400) — surtout PAS Convert
 
 Tout est lancé par n2k-mux.service ; kplex est le DERNIER maillon du pipeline
 (plus de service kplex autonome → Conflicts=kplex.service). Voir n2k-mux.service,
-kplex.conf.example, n2k-mux.env.example. La GUI lit sources.json et édite conf.
+kplex.conf.example, n2k-mux.env.example. L'UI web lit sources.json et édite conf.
 
 Le service ne lance PAS un `bash -c` inline : il appelle le script **n2k-mux-run**
 (installé dans $PREFIX/bin). Robustesse : la branche AIS passe par un FIFO nommé
@@ -476,22 +453,3 @@ Validé par injection : MMB, XDR, MDA (pression + temp air lues correctement).
 - 127250 : champ "Reference" = "Magnetic" | "True"
 - 130316 (et 130312 déprécié) : champ "Temperature Source" / "Source" = "Sea Temperature" | "Outside Temperature"
 - Ignorer : src=0 et PGN 262xxx (262161 Actisense Operating mode, 262656 CANboat Startup)
-
-## Module (g) GUI GTK — notes
-- GTK3 (libgtk-3-dev). Cohérent avec Polar Doctor (même toolkit).
-- La GUI réutilise le module `config` du daemon (pas de second parser INI).
-- Elle lit /run/n2k-mux/sources.json (produit par le daemon) pour afficher
-  les sources vues sur le bus, et édite le fichier INI de priorités.
-- Logique (config, sources_dump) testable en CLI ; seule la couche GTK
-  nécessite un affichage. Tester via écran local o3nav ou ssh -X.
-- À implémenter en DERNIER, une fois le daemon fonctionnel.
-- Validation visuelle : l'utilisateur lance et fournit des captures ;
-  Claude Code ne voit pas le rendu directement.
-
-## Développement de la GUI à distance (clients Wayland)
-- `ssh -Y o3nav` puis `./n2k-mux-gui`. Sur un client Wayland (Ubuntu 24.04 par
-  défaut), l'affichage passe par XWayland de façon transparente.
-- Si la GUI tente de forcer Wayland à distance (échec, pas de Wayland via SSH),
-  forcer le backend X11 : `GDK_BACKEND=x11 ./n2k-mux-gui`.
-- Test du forwarding : `xeyes` doit s'afficher côté client.
-- waypipe/VNC non nécessaires pour ce cas (dev ponctuel sur LAN).

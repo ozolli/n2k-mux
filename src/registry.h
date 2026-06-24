@@ -71,7 +71,7 @@ typedef struct {
 
     unsigned long seen;              /* nb de messages observés pour ce device */
 
-    /* PGN publiés par ce device (liste + compteur), pour la GUI / le diagnostic. */
+    /* PGN publiés par ce device (liste + compteur), pour l'UI web / le diagnostic. */
     reg_pgn_t     pgns[REG_MAX_PGNS];
     int           n_pgns;
 } reg_device_t;

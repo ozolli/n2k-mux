@@ -2,7 +2,7 @@
 /* Copyright 2026 Olivier Zolli */
 
 /*
- * web.c — n2k-mux-web : interface de gestion web (remplace à terme la GUI GTK).
+ * web.c — n2k-mux-web : interface de gestion web (Sources + Arbitrage).
  *
  * Mini serveur HTTP zéro-dépendance (C11) servant une SPA + des points d'API :
  *   GET  /              → page unique (HTML/CSS/JS embarqués)

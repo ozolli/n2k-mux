@@ -5,7 +5,7 @@
  * sources.h — Publication des sources vues (pont daemon → GUI).
  *
  * Module (g, plomberie). Le daemon sérialise périodiquement le registre dans
- * un fichier JSON (par défaut /run/n2k-mux/sources.json) ; la GUI le relit pour
+ * un fichier JSON (par défaut /run/n2k-mux/sources.json) ; l'UI web le relit pour
  * afficher la liste des équipements vus sur le bus (adresse, identité, modèle,
  * compteur). Format : un tableau JSON, un objet par ligne (facile à relire).
  *

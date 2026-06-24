@@ -297,9 +297,6 @@ est journalisée). Le message de confirmation s'efface seul après 15 s.
 > service écoute par défaut sur le LAN (`0.0.0.0:8080`) ; réservez-le à un réseau
 > de confiance et ajoutez une authentification avant toute exposition plus large.
 
-*Une ancienne GUI GTK3 (`make n2k-mux-gui`, `libgtk-3-dev`) existe encore, vouée à
-être remplacée par cette interface web.*
-
 ---
 
 ## 6. Dépannage

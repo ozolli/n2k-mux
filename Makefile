@@ -36,10 +36,6 @@ DAEMON_OBJ   := $(BUILD)/daemon.o
 # Tous les objets du pipeline (hors testeurs)
 CORE_OBJ := $(JSONL_OBJ) $(REGISTRY_OBJ) $(CONFIG_OBJ) $(ARBITER_OBJ) $(NMEA_OBJ) $(MAPPER_OBJ) $(AISDEDUP_OBJ) $(SOURCES_OBJ) $(STATS_OBJ)
 
-# GTK pour la GUI (cible séparée : make n2k-mux-gui)
-GTK_CFLAGS := $(shell pkg-config --cflags gtk+-3.0 2>/dev/null)
-GTK_LIBS   := $(shell pkg-config --libs gtk+-3.0 2>/dev/null)
-
 .PHONY: all clean install uninstall
 all: n2k-mux n2k-mux-web n2k-sim n2k-filter ydraw-bridge test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout test_ydraw
 
@@ -77,7 +73,7 @@ test_mapper: $(JSONL_OBJ) $(REGISTRY_OBJ) $(CONFIG_OBJ) $(ARBITER_OBJ) $(NMEA_OB
 test_aisdedup: $(JSONL_OBJ) $(REGISTRY_OBJ) $(CONFIG_OBJ) $(AISDEDUP_OBJ) $(BUILD)/test_aisdedup.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
-# --- Module sources (pont daemon→GUI) + son testeur ---
+# --- Module sources (pont daemon→UI web) + son testeur ---
 test_sources: $(JSONL_OBJ) $(REGISTRY_OBJ) $(SOURCES_OBJ) $(BUILD)/test_sources.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
@@ -97,7 +93,7 @@ test_ydraw: $(YDRAW_OBJ) $(BUILD)/test_ydraw.o
 n2k-mux: $(CORE_OBJ) $(BUILD)/cansock.o $(BUILD)/busmap.o $(DAEMON_OBJ)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lm
 
-# --- Interface web de gestion (remplace à terme la GUI GTK ; zéro dépendance) ---
+# --- Interface web de gestion (zéro dépendance) ---
 n2k-mux-web: $(CONFIG_OBJ) $(BUILD)/web.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
@@ -113,16 +109,8 @@ n2k-sim: $(BUILD)/simulator.o
 n2k-filter: $(BUILD)/canfilter.o $(YDRAW_OBJ) $(NETOUT_OBJ)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
-# --- Module (g) : GUI GTK3 (cible séparée, nécessite libgtk-3-dev) ---
-$(BUILD)/gui.o: $(SRCDIR)/gui.c | $(BUILD)
-	$(CC) $(CFLAGS) $(GTK_CFLAGS) -MMD -MP -c $< -o $@
-
-n2k-mux-gui: $(CONFIG_OBJ) $(SOURCES_OBJ) $(BUILD)/gui.o
-	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) $(GTK_LIBS)
-
 # --- Installation système (daemon + service systemd) ---
 # make install            installe le daemon, le service et les exemples
-# make install GUI=1      installe aussi la GUI (doit être construite : make n2k-mux-gui)
 install: n2k-mux n2k-mux-web n2k-filter ydraw-bridge
 	install -d $(DESTDIR)$(PREFIX)/bin
 	install -m755 n2k-mux $(DESTDIR)$(PREFIX)/bin/n2k-mux
@@ -137,15 +125,12 @@ install: n2k-mux n2k-mux-web n2k-filter ydraw-bridge
 	install -Dm644 n2k-mux.ini.example $(DESTDIR)/etc/n2k-mux/n2k-mux.ini.example
 	install -Dm644 kplex.conf.example $(DESTDIR)/etc/n2k-mux/kplex.conf.example
 	install -Dm644 n2k-mux.env.example $(DESTDIR)/etc/default/n2k-mux.example
-ifeq ($(GUI),1)
-	install -m755 n2k-mux-gui $(DESTDIR)$(PREFIX)/bin/n2k-mux-gui
-endif
 	@echo "Installé. Pense à : cp /etc/n2k-mux/n2k-mux.ini.example /etc/n2k-mux/n2k-mux.ini"
 	@echo "NGX-1/série : systemctl enable --now n2k-mux n2k-mux-web"
 	@echo "socketcan   : systemctl enable --now n2k-mux-can n2k-mux-web"
 
 uninstall:
-	rm -f $(DESTDIR)$(PREFIX)/bin/n2k-mux $(DESTDIR)$(PREFIX)/bin/n2k-mux-run $(DESTDIR)$(PREFIX)/bin/n2k-mux-gui
+	rm -f $(DESTDIR)$(PREFIX)/bin/n2k-mux $(DESTDIR)$(PREFIX)/bin/n2k-mux-run
 	rm -f $(DESTDIR)$(PREFIX)/bin/n2k-mux-can-run $(DESTDIR)$(PREFIX)/bin/n2k-filter
 	rm -f $(DESTDIR)$(PREFIX)/bin/n2k-mux-web $(DESTDIR)$(PREFIX)/bin/ydraw-bridge
 	rm -f $(DESTDIR)/etc/systemd/system/n2k-mux.service
@@ -155,7 +140,7 @@ uninstall:
 	rm -f $(DESTDIR)/etc/n2k-mux/n2k-mux.ini.example
 
 clean:
-	rm -rf $(BUILD) n2k-mux n2k-mux-web n2k-mux-gui n2k-sim n2k-filter ydraw-bridge test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout test_ydraw
+	rm -rf $(BUILD) n2k-mux n2k-mux-web n2k-sim n2k-filter ydraw-bridge test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout test_ydraw
 
 # Dépendances d'en-têtes générées par -MMD (recompile si un .h change).
 -include $(wildcard $(BUILD)/*.d)

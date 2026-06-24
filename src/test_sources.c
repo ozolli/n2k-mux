@@ -2,7 +2,7 @@
 /* Copyright 2026 Olivier Zolli */
 
 /*
- * test_sources.c — Vérifie l'aller-retour registre → JSON → vue (sans GTK).
+ * test_sources.c — Vérifie l'aller-retour registre → JSON → vue (logique pure).
  */
 
 #include "jsonl.h"
