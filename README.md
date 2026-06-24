@@ -165,6 +165,28 @@ output (TCP 2700) is provided by `ydraw-bridge` (an optional branch of the
 `n2k-mux-run` script). The NGX-1 must be in **Transfer** mode (raw N2K), **not**
 Convert.
 
+### 2.5 Raspberry Pi + PiCAN (SPI CAN HAT)
+
+A PiCAN board (SK Pang, MCP2515) presents the bus as socketcan `can0`, so the
+`n2k-mux-can` chain runs unchanged. The only Pi-specific step is enabling the
+device-tree overlay so the driver creates `can0`. In `/boot/firmware/config.txt`
+(`/boot/config.txt` on older OSes):
+
+```
+dtparam=spi=on
+dtoverlay=mcp2515-can0,oscillator=16000000,interrupt=25
+```
+
+PiCAN2 uses a **16 MHz** crystal and **GPIO25** for the interrupt (confirm against
+your board). A **PiCAN FD** (MCP2518FD) uses `dtoverlay=mcp251xfd,...` instead.
+Reboot, then `ip -br link show can0` should list the interface (state DOWN is fine
+— the service brings it up at 250 kbit/s and creates `vcan0`). From there just
+follow §2.3 (`enable --now n2k-mux-can n2k-mux-web`).
+
+> **Termination**: the PiCAN has a 120 Ω terminator jumper. An NMEA 2000 backbone
+> is already terminated at both ends — **leave the jumper off**. Enable it only if
+> the Pi sits at an unterminated bus end. Power the Pi separately, not from the bus.
+
 ---
 
 ## 3. Configure your boat

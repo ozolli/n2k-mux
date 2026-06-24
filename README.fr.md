@@ -165,6 +165,29 @@ La chaîne est `actisense-serial → analyzer → n2k-mux → kplex` ; la sortie
 réseau (TCP 2700) est fournie par `ydraw-bridge` (branche optionnelle du script
 `n2k-mux-run`). Le NGX-1 doit être en mode **Transfer** (N2K brut), **pas** Convert.
 
+### 2.5 Raspberry Pi + PiCAN (HAT CAN SPI)
+
+Une carte PiCAN (SK Pang, MCP2515) présente le bus comme socketcan `can0` : la
+chaîne `n2k-mux-can` tourne sans modification. Seule étape spécifique au Pi :
+activer l'overlay device-tree pour que le driver crée `can0`. Dans
+`/boot/firmware/config.txt` (`/boot/config.txt` sur les OS plus anciens) :
+
+```
+dtparam=spi=on
+dtoverlay=mcp2515-can0,oscillator=16000000,interrupt=25
+```
+
+Le PiCAN2 utilise un quartz **16 MHz** et **GPIO25** pour l'interruption (à
+confirmer sur votre carte). Un **PiCAN FD** (MCP2518FD) utilise plutôt
+`dtoverlay=mcp251xfd,...`. Redémarrez, puis `ip -br link show can0` doit lister
+l'interface (état DOWN normal — le service la monte à 250 kbit/s et crée `vcan0`).
+Ensuite, suivez le §2.3 (`enable --now n2k-mux-can n2k-mux-web`).
+
+> **Terminaison** : le PiCAN a un cavalier de terminaison 120 Ω. Un backbone NMEA
+> 2000 est déjà terminé aux deux bouts — **laissez le cavalier ouvert**. Ne
+> l'activez que si le Pi est en bout de bus non terminé. Alimentez le Pi à part,
+> pas par le bus.
+
 ---
 
 ## 3. Configurer votre bord
