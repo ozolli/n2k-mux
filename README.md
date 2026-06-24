@@ -273,7 +273,7 @@ initialised from the system preference), remembered in the browser.
 
 ### Sources
 
-![Sources tab](docs/Sources.png)
+![Sources tab](docs/Sources-en.png)
 
 The devices seen on the bus: address, **editable logical name**, **Ignore**
 checkbox, stable identity, manufacturer/model and published PGNs. Naming a source
@@ -282,7 +282,7 @@ read the serials (§3).
 
 ### Arbitration
 
-![Arbitration tab](docs/Arbitrage.png)
+![Arbitration tab](docs/Arbitrage-en.png)
 
 One row per PGN. From left to right: arbitration **Mode** (priority / min / max /
 fusion), **N2K** (re-emission on the arbitrated bus), 0183 **Talker**, **0183
