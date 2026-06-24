@@ -377,6 +377,15 @@ Notes câblage AIS :
   0183 sur TCP port+2 (défaut 2599 ; 2598 JSON ; 2601 AIS en JSON).
 - --ais-json filtre en AMONT (en-tête + AIS de la source retenue par MMSI) → la
   sortie n2kd est 100% AIS. Avec une seule source AIS, n2kd direct suffit.
+- AtoN DataHub (PGN 129041, ex. signalements de cétacés au nom long « ORCA -
+  SIGHTING WHALE - 22HRS ») : le DataHub met "AIS Transceiver information" = 4
+  ("Own information not broadcast") → n2kd encode en !AIVDO (vaisseau PROPRE), que
+  qtVlm n'affiche PAS comme cible. --ais-json réécrit ce champ (2/3/4 → 0, channel
+  A) pour le 129041 → n2kd émet !AIVDM → l'AtoN s'affiche avec son titre complet
+  (nom + Name Extension ; n2kd encode déjà l'extension). Le nom complet est dans
+  le STRINGLAU du N2K ; côté N2K natif (port 2700) qtVlm tronque l'affichage à 20
+  (limite qtVlm). L'AIS 6-bit est MAJUSCULES seulement (casse mixte perdue dès le
+  0183). Validé : payload identique VDO↔VDM, seul le talker change.
 
 ## Règles d'arbitrage
 

@@ -222,6 +222,26 @@ static void usage(const char *prog)
  * et les messages AIS de la source RETENUE par MMSI (fusion em-trak > DataHub).
  * Le reste est filtré. Sortie destinée au stdin de n2kd (qui encode le VDM).
  */
+/* DataHub : les AtoN virtuels (PGN 129041, ex. signalements de cétacés) portent
+ * "AIS Transceiver information" = 4 ("Own information not broadcast"). n2kd
+ * traduit alors le message en !AIVDO (donnée du vaisseau PROPRE), que qtVlm
+ * n'affiche PAS comme cible AIS. On force la valeur à 0 (réception channel A)
+ * → n2kd émet !AIVDM et l'AtoN s'affiche avec son titre complet (nom + Name
+ * Extension), exactement comme le 0183 émis en direct par le DataHub.
+ * n2kd encode déjà l'extension correctement ; seul ce champ bloquait l'affichage.
+ * Patch en place, même longueur (un seul chiffre réécrit). Valeurs 2/3/4 =
+ * "own information" → VDO ; on les ramène toutes à 0 (channel A, VDM). */
+static void aton_force_vdm(char *line)
+{
+    char *f = strstr(line, "\"AIS Transceiver information\"");
+    if (!f) return;
+    char *v = strstr(f, "\"value\":");
+    if (!v) return;
+    v += 8;                                       /* longueur de "value": */
+    while (*v == ' ') v++;
+    if (*v == '2' || *v == '3' || *v == '4') *v = '0';
+}
+
 static int run_ais_json(config_t *cfg, const char *cfg_path, int verbose)
 {
     registry_t reg;
@@ -273,6 +293,7 @@ static int run_ais_json(config_t *cfg, const char *cfg_path, int verbose)
                     mmsi, src, m.pgn, fwd ? "FWD" : "drop");
 
         if (fwd) {
+            if (m.pgn == 129041) aton_force_vdm(line);  /* AtoN → !AIVDM (cf. ci-dessus) */
             fputs(line, stdout);
             if (fflush(stdout) != 0) break;
             n_fwd++;
