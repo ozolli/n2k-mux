@@ -274,7 +274,9 @@ Modules prévus (ordre d'implémentation) :
                 textes statiques via data-i18n) et thème sombre/clair (couleurs en
                 variables CSS, palette .light) ; choix mémorisés en localStorage.
                 Langue par défaut = celle du navigateur (navigator.language : FR si
-                préfixe « fr », sinon EN) ; thème sombre par défaut.
+                préfixe « fr », sinon EN) ; thème par défaut = préférence système
+                (prefers-color-scheme : clair si le système est en clair, sinon
+                sombre). Un choix explicite (bascule) prime via localStorage.
 
 ## Chaîne de production
 

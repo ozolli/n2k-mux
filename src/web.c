@@ -112,7 +112,7 @@ static const char PAGE[] =
 "</main>\n"
 "<script>\n"
 "let lang=localStorage.getItem('lang')||((navigator.language||'fr').toLowerCase().startsWith('fr')?'fr':'en');\n"
-"let theme=localStorage.getItem('theme')||'dark';\n"
+"let theme=localStorage.getItem('theme')||((window.matchMedia&&matchMedia('(prefers-color-scheme: light)').matches)?'light':'dark');\n"
 "const L={fr:{\n"
 "tab_sources:'Sources',tab_arb:'Arbitrage',save_names:'Enregistrer les noms',save_arb:'Enregistrer l’arbitrage',refresh:'Rafraîchir',\n"
 "src_help:'nommer une source la rend utilisable dans l’onglet Arbitrage',arb_help:'case = source retenue · ◀▶ = ordre de priorité',\n"
