@@ -241,11 +241,23 @@ Modules prévus (ordre d'implémentation) :
                 Mini serveur HTTP zéro-dépendance (C11, réutilise le module
                 config) servant une SPA embarquée (HTML/CSS/JS, single quotes JS).
                 Mono-client séquentiel (outil d'admin) ; tampons fixes, zéro alloc.
-                Endpoints : GET / (page), GET /api/sources|stats (relaie les JSON
-                du daemon), GET /api/config (INI brut), POST /api/validate
+                Endpoints : GET / (page), GET /api/sources|stats|busmap (relaie
+                les JSON du daemon), GET /api/rules (INI parsé → JSON structuré :
+                sources, règles, modes, rates, ignore, talkers, sentences, no_n2k/
+                no_0183), GET /api/config (INI brut), POST /api/validate
                 (config_parse_string → {ok,line,err}), POST /api/config (valide
-                PUIS écrit l'INI PUIS lance --reload-cmd). 3 onglets comme la GUI
-                GTK : Sources, Charge, Configuration (éditeur + Valider/Enregistrer).
+                PUIS écrit l'INI PUIS lance --reload-cmd).
+                ÉDITION 100% STRUCTURÉE (plus d'édition INI à la main) : 2 onglets.
+                « Sources » : nom logique éditable par appareil + case Ignorer
+                ([ignore] src). « Arbitrage » : un tableau, une ligne par PGN —
+                colonnes PGN(+case « ignorer » → [ignore] pgn) | Mode | N2K |
+                Talker | Phrases 0183 (une case par phrase possible : tout coché =
+                défaut, sous-ensemble = [sentence], rien = no_0183) | ms (intervalle
+                [rate]) | Hz (charge live) | Sources (horizontales, ◀▶ = priorité).
+                Charge totale (bus N2K + 0183) en tête du tableau. Le JS régénère
+                tout l'INI (genIni) et le POST le valide avant écriture. L'ancien
+                onglet Configuration (éditeur INI brut) et l'onglet Charge ont été
+                SUPPRIMÉS (GET /api/config + POST /api/validate restent dispo).
                 Sauvegarde SANS root : « Enregistrer » écrit le fichier (user) et
                 exécute --reload-cmd (ex. "pkill -HUP -x n2k-mux") → le daemon
                 relit à chaud (cf. SIGHUP plus haut). Plus de pkexec/systemctl.
