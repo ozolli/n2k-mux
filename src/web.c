@@ -45,8 +45,9 @@ static const char *g_sources_path = "/run/n2k-mux/sources.json";
 static const char *g_stats_path   = "/run/n2k-mux/stats.json";
 static const char *g_busmap_path  = "/run/n2k-mux/busmap.json";
 static const char *g_reload_cmd  = NULL;
+#define AUTH_RAW_MAX 256                   /* longueur max acceptée de "user:pass" */
 static const char *g_auth        = NULL;   /* "user:pass" attendu (NULL = pas d'auth) */
-static char        g_auth_b64[160];        /* base64("user:pass"), calculé au démarrage */
+static char        g_auth_b64[352];        /* base64 du credential (>= 4*ceil(256/3)+1) */
 
 /* --- Page unique embarquée (single quotes en JS pour éviter d'échapper les "). --- */
 static const char PAGE[] =
@@ -434,7 +435,7 @@ static int authed(const char *req)
     const char *b = strcasestr(h, "Basic ");
     if (!b) return 0;
     b += 6;
-    char tok[160]; size_t i = 0;
+    char tok[sizeof g_auth_b64]; size_t i = 0;
     while (b[i] && b[i] != '\r' && b[i] != '\n' && b[i] != ' ' && i < sizeof tok - 1) {
         tok[i] = b[i]; i++;
     }
@@ -679,6 +680,10 @@ int main(int argc, char **argv)
     if (g_auth) {
         if (!strchr(g_auth, ':')) {
             fprintf(stderr, "--auth attend le format user:pass\n"); return 2;
+        }
+        if (strlen(g_auth) > AUTH_RAW_MAX) {
+            fprintf(stderr, "--auth : credential trop long (max %d caractères)\n",
+                    AUTH_RAW_MAX); return 2;
         }
         b64encode(g_auth, g_auth_b64, sizeof g_auth_b64);
     }
