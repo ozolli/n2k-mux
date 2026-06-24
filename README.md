@@ -1,5 +1,7 @@
 # n2k-mux — mode d'emploi
 
+**Français** · [English](README.en.md)
+
 `n2k-mux` lit le réseau **NMEA 2000** du bord, choisit **la meilleure source**
 pour chaque donnée (position, cap, vent, profondeur, AIS…) et la redistribue à vos
 logiciels de navigation, **en NMEA 2000** (pour qtVlm) **et en NMEA 0183** (pour
