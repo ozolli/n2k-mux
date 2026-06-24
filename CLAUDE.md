@@ -270,6 +270,10 @@ Modules prévus (ordre d'implémentation) :
                 par device) → colonne « PGNs publiés ».
                 Consultable depuis tablettes/téléphone sans X-forwarding, cohérent
                 avec la direction « tout réseau ».
+                Bascules en-tête : langue FR/EN (dictionnaire L{fr,en} + T(clé),
+                textes statiques via data-i18n) et thème sombre/clair (couleurs en
+                variables CSS, palette .light) ; choix mémorisés en localStorage,
+                défauts FR + sombre.
 
 ## Chaîne de production
 
