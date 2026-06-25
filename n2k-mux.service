@@ -36,6 +36,10 @@ EnvironmentFile=-/etc/default/n2k-mux
 RuntimeDirectory=n2k-mux
 RuntimeDirectoryMode=0755
 
+# /var/log/kplex : créé pour le log AIS OPTIONNEL de kplex.conf (désactivé par
+# défaut). Sans ce répertoire, kplex échoue à l'init et SORT → chaîne morte.
+LogsDirectory=kplex
+
 # Garde-fou : tue tout n2kd résiduel d'un démarrage précédent (sinon le nouveau
 # n2kd ne peut pas se lier à ses ports 2597-2602 → « Address already in use »).
 # Le motif [n]2kd évite que pkill ne se matche lui-même. '-' = échec ignoré.

@@ -39,9 +39,14 @@ address=255.255.255.255
 port=10110
 direction=out
 
-# Log filtré AIS pour polar_doctor (les diffusions LAN gardent l'AIS).
-[file]
-direction=out
-filename=/var/log/kplex/o3.log
-append=yes
-ofilter=-AIVDM:-AIVDO
+# Log AIS filtré sur disque (OPTIONNEL, désactivé par défaut).
+# Cas d'usage local (ex. polar_doctor) : journaliser le trafic NON-AIS.
+# Les diffusions LAN (tcp/udp 10110) gardent l'AIS de toute façon.
+# Pour l'activer : décommenter le bloc ci-dessous. Le répertoire /var/log/kplex
+# est créé automatiquement par `LogsDirectory=kplex` dans le unit systemd
+# (sinon kplex échoue à créer le fichier et SORT → toute la chaîne tombe).
+#[file]
+#direction=out
+#filename=/var/log/kplex/o3.log
+#append=yes
+#ofilter=-AIVDM:-AIVDO

@@ -39,6 +39,11 @@ EnvironmentFile=-/etc/default/n2k-mux
 RuntimeDirectory=n2k-mux
 RuntimeDirectoryMode=0755
 
+# /var/log/kplex : créé pour le log AIS OPTIONNEL de kplex.conf (désactivé par
+# défaut). Si on ne crée pas le répertoire et que le bloc [file] est activé,
+# kplex échoue à l'init et SORT → toute la chaîne tombe (mort silencieuse).
+LogsDirectory=kplex
+
 # Mise en route des interfaces CAN (idempotent ; erreurs tolérées) :
 #   - vcan0 (CAN virtuel pour le flux arbitré local) ;
 #   - can0 monté au débit N2K (250 kbit/s).
