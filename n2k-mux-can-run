@@ -27,24 +27,51 @@ SRC_ADDR="${SRC_ADDR:-0}"
 
 RUN="${RUNTIME_DIRECTORY:-/run/n2k-mux}"
 AISFIFO="$RUN/ais.fifo"      # copie du flux décodé → branche AIS
+OUTFIFO="$RUN/out0183.fifo"  # 0183 du n2k-mux principal → kplex (PID suivi à part)
 LOSERS="$RUN/losers.txt"     # perdants publiés par n2k-mux, lus par n2k-filter
-mkfifo -m 0600 "$AISFIFO" 2>/dev/null || true
+mkfifo -m 0600 "$AISFIFO" "$OUTFIFO" 2>/dev/null || true
+
+# On suit les PID des composants CRITIQUES (cf. surveillance en fin de script).
+PIDS=()
 
 # Branche N2K : trames brutes du bus → arbitrage (drop perdants) → vcan0 + YDRAW/TCP.
 "$NFILTER" --in "$CANIF" --out "$VCANIF" --ydraw-port "$YDRAW_PORT" --drop "$LOSERS" &
+PIDS+=($!)
 
 # Branche AIS : flux décodé dupliqué → dédup MMSI → n2kd (VDM sur TCP 2599).
+# On suit n2kd ($! = dernier du pipe). La mort du FILTRE amont (n2k-mux --ais-json)
+# est rattrapée autrement : il cesse de lire ais.fifo → le tee (--output-error=exit)
+# meurt → la branche principale s'effondre → n2k-mux principal sort (voir plus bas).
 "$N2KMUX" --ais-json "$CONF" < "$AISFIFO" | "$N2KD" &
+PIDS+=($!)
+
+# kplex lit le 0183 du n2k-mux principal via OUTFIFO (au lieu d'un pipe direct) :
+# ainsi kplex ET le n2k-mux principal sont des jobs distincts dont on tient le PID.
+"$KPLEX" -f "$KPLEX_CONF" < "$OUTFIFO" &
+PIDS+=($!)
 
 # Branche principale : décodage socketcan → tee(ais) → décision (ISO Request en
-# TX socketcan, 0183 + publication des perdants) → kplex.
+# TX socketcan, 0183 + publication des perdants) → OUTFIFO (→ kplex).
+# tee --output-error=exit : par défaut tee SURVIT à une erreur d'écriture sur un
+# pipe (il continue sur l'autre sortie) — c'est ce qui masquait la mort de kplex
+# ou du n2k-mux principal (tee gardait l'amont vivant → wait -n aveugle). Avec
+# =exit, si UNE des deux sorties (ais.fifo OU n2k-mux principal) casse, tee sort,
+# l'amont s'effondre et le n2k-mux principal reçoit EOF → il sort.
+# $! = n2k-mux principal (dernier élément AVANT la redirection > OUTFIFO).
 "$CANDUMP" "$CANIF" | "$CANDUMP2ANALYZER" | "$ANALYZER" -json -nv \
-  | tee "$AISFIFO" \
+  | tee --output-error=exit "$AISFIFO" \
   | "$N2KMUX" "$CONF" --tx-can "$CANIF" --src-addr "$SRC_ADDR" --losers "$LOSERS" \
         --sources "$RUN/sources.json" --stats "$RUN/stats.json" \
         --busmap "$RUN/busmap.json" --sources-interval 2 \
-  | "$KPLEX" -f "$KPLEX_CONF" &
+  > "$OUTFIFO" &
+PIDS+=($!)
 
-# Si un étage meurt, on sort → systemd relance toute la chaîne.
-wait -n
+# Surveillance : wait -n sur les PID EXACTS (n2k-filter, n2kd, kplex, n2k-mux
+# principal) — pas sur les jobs entiers. Le piège de l'ancien `wait -n` nu : le
+# job pipeline principal n'est « terminé » que quand TOUS ses membres sont morts,
+# or le tee survivait à la mort d'un étage aval → wait -n ne rendait jamais la
+# main (dégradation invisible : plus de stats.json, web « zéro trames »).
+# Ici, dès qu'UN des PID suivis meurt, wait -n rend la main → on sort → systemd
+# relance TOUTE la chaîne (KillMode=control-group nettoie le reste).
+wait -n "${PIDS[@]}"
 exit 1
