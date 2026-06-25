@@ -7,21 +7,27 @@
 #   kplex (stdin + client 2599) → serveur TCP 10110 → qtVlm
 #
 # Pointer qtVlm sur <hôte>:10110 → instruments + AIS fusionnés.
-# Surcharge possible par l'environnement : CONF, KPLEX_CONF, CB, KPLEX…
+# Surcharge possible par l'environnement : CONF, KPLEX_CONF, CB, N2KD, KPLEX…
+# Les binaires canboat (n2kd) sont auto-détectés : d'abord le PATH, sinon le
+# dossier d'arch de canboat dans le home ($HOME/canboat/rel/<arch>/) — donc
+# portable x86-64 / aarch64 (Raspberry Pi) sans rien coder en dur.
 
 set -uo pipefail
 
 HERE=$(dirname "$(readlink -f "$0")")
-CB=${CB:-/home/ozolli/canboat/rel/linux-x86_64}
+CB=${CB:-$(ls -d "$HOME"/canboat/rel/*/ 2>/dev/null | head -1)}
+CB=${CB%/}                                  # retire l'éventuel / final du glob
 CONF=${CONF:-$HERE/n2k-sim.ini}
 KPLEX_CONF=${KPLEX_CONF:-$HERE/kplex-sim.conf}
 SIM=${SIM:-$HERE/n2k-sim}
 N2KMUX=${N2KMUX:-$HERE/n2k-mux}
-N2KD=${N2KD:-$CB/n2kd}
-KPLEX=${KPLEX:-/usr/bin/kplex}
+N2KD=${N2KD:-$(command -v n2kd 2>/dev/null || echo "$CB/n2kd")}
+KPLEX=${KPLEX:-$(command -v kplex 2>/dev/null || echo /usr/bin/kplex)}
 
 for bin in "$SIM" "$N2KMUX" "$N2KD" "$KPLEX"; do
-    [ -x "$bin" ] || { echo "n2k-sim-run : binaire manquant : $bin" >&2; exit 1; }
+    [ -x "$bin" ] || { echo "n2k-sim-run : binaire manquant : '$bin'" >&2
+        echo "  (surcharge possible : N2KD=… KPLEX=… CB=<dossier canboat/rel/arch>)" >&2
+        exit 1; }
 done
 
 RUN=$(mktemp -d /tmp/n2k-sim.XXXXXX)
