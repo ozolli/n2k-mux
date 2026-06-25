@@ -85,7 +85,10 @@ Key ideas:
 - [canboat](https://github.com/canboat/canboat) built: `analyzer`, `n2kd`,
   `candump2analyzer` (and `actisense-serial` for a serial gateway).
 - `can-utils` (`candump`) for the socketcan path: `sudo apt install can-utils`.
-- `kplex` (distribution package) for the 0183 output.
+- `kplex` for the 0183 output — **not in the Debian / Raspberry Pi OS repos**,
+  build it from source (plain C, no deps):
+  `git clone https://github.com/stripydog/kplex && cd kplex && make && sudo make install`
+  (installs to `/usr/bin/kplex`).
 - **Either**: a **socketcan** adapter (PEAK PCAN-USB FD…) connected to the N2K bus
   (recommended) **or** an **NGX-1/NGT-1 gateway in Transfer mode** (raw N2K).
 

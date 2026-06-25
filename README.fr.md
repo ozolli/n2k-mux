@@ -85,7 +85,10 @@ Les idées clés :
 - [canboat](https://github.com/canboat/canboat) compilé : `analyzer`, `n2kd`,
   `candump2analyzer` (et `actisense-serial` si passerelle série).
 - `can-utils` (`candump`) pour la voie socketcan : `sudo apt install can-utils`.
-- `kplex` (paquet de la distribution) pour la sortie 0183.
+- `kplex` pour la sortie 0183 — **absent des dépôts Debian / Raspberry Pi OS**,
+  à compiler depuis les sources (C pur, sans dépendances) :
+  `git clone https://github.com/stripydog/kplex && cd kplex && make && sudo make install`
+  (s'installe dans `/usr/bin/kplex`).
 - **Au choix** : un adaptateur **socketcan** (PEAK PCAN-USB FD…) relié au bus N2K
   (recommandé) **ou** une passerelle **NGX-1/NGT-1 en mode Transfer** (N2K brut).
 
