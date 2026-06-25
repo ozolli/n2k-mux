@@ -22,8 +22,12 @@ RUN="${RUNTIME_DIRECTORY:-/run/n2k-mux}"   # fourni par systemd (RuntimeDirector
 TXFIFO="$RUN/tx.fifo"     # ISO Request → actisense bidirectionnel
 AISFIFO="$RUN/ais.fifo"   # copie du flux analyzer → branche AIS
 YDFIFO="$RUN/ydraw.fifo"  # copie des trames brutes actisense → branche YDRAW
+OUTFIFO="$RUN/out0183.fifo" # 0183 du n2k-mux principal → kplex (PID suivi à part)
 mkfifo -m 0600 "$TXFIFO"  2>/dev/null || true
-mkfifo -m 0600 "$AISFIFO" 2>/dev/null || true
+mkfifo -m 0600 "$AISFIFO" "$OUTFIFO" 2>/dev/null || true
+
+# On suit les PID des composants CRITIQUES (cf. surveillance en fin de script).
+PIDS=()
 
 # Branche N2K (YDRAW réseau pour qtVlm) — OPTIONNELLE : active seulement si le
 # binaire ydraw-bridge est présent. Tape les trames BRUTES actisense (avant
@@ -35,24 +39,45 @@ YDRAW_TEE=cat
 if [ -x "$YDRAW" ]; then
   mkfifo -m 0600 "$YDFIFO" 2>/dev/null || true
   "$YDRAW" --port "$YDRAW_PORT" < "$YDFIFO" &
-  YDRAW_TEE="tee $YDFIFO"
+  PIDS+=($!)
+  YDRAW_TEE="tee --output-error=exit $YDFIFO"
 fi
 
 # Branche AIS : flux dupliqué (ais.fifo) → dédup MMSI → n2kd (encode le VDM, TCP 2599).
+# On suit n2kd ($! = dernier du pipe) ; la mort du filtre amont (n2k-mux --ais-json)
+# est rattrapée via le tee --output-error=exit → n2k-mux principal (voir plus bas).
 "$N2KMUX" --ais-json "$CONF" < "$AISFIFO" | "$N2KD" &
+PIDS+=($!)
+
+# kplex lit le 0183 du n2k-mux principal via OUTFIFO (au lieu d'un pipe direct) :
+# ainsi kplex ET le n2k-mux principal sont des jobs distincts dont on tient le PID.
+"$KPLEX" -f "$KPLEX_CONF" < "$OUTFIFO" &
+PIDS+=($!)
 
 # Branche principale : acquisition → tee(→ydraw.fifo) → analyzer → tee(→ais.fifo)
-#   → arbitrage → kplex. $YDRAW_TEE est non quoté (split "tee FIFO" en arguments).
+#   → arbitrage → OUTFIFO (→ kplex). $YDRAW_TEE est non quoté (split en arguments).
+# tee --output-error=exit : par défaut tee SURVIT à une erreur d'écriture sur un
+# pipe (il continue sur son autre sortie) — c'est ce qui masquait la mort d'un
+# étage aval (le tee gardait l'amont vivant → wait -n aveugle). Avec =exit, si une
+# sortie casse (ydraw.fifo, ais.fifo ou n2k-mux principal), le tee sort, l'amont
+# s'effondre et le n2k-mux principal reçoit EOF → il sort. (Quand la branche YDRAW
+# est désactivée, $YDRAW_TEE=cat, qui meurt déjà sur SIGPIPE — pas de souci.)
+# $! = n2k-mux principal (dernier élément AVANT la redirection > OUTFIFO).
 "$ACTISENSE" -s "$BAUD" "$DEVICE" < "$TXFIFO" \
   | $YDRAW_TEE \
   | "$ANALYZER" -json -nv \
-  | tee "$AISFIFO" \
+  | tee --output-error=exit "$AISFIFO" \
   | "$N2KMUX" "$CONF" --tx "$TXFIFO" \
         --sources "$RUN/sources.json" --stats "$RUN/stats.json" \
         --busmap "$RUN/busmap.json" --sources-interval 2 \
-  | "$KPLEX" -f "$KPLEX_CONF" &
+  > "$OUTFIFO" &
+PIDS+=($!)
 
-# Dès qu'un composant (n2kd, kplex, analyzer, un n2k-mux…) s'arrête, on sort :
-# systemd relance l'unité entière, KillMode=control-group nettoie le reste.
-wait -n
+# Surveillance : wait -n sur les PID EXACTS (ydraw-bridge si actif, n2kd, kplex,
+# n2k-mux principal) — pas sur les jobs entiers. L'ancien `wait -n` nu attendait
+# un job pipeline complet, qui n'est « terminé » que quand TOUS ses membres sont
+# morts ; or le tee survivait à la mort d'un étage aval → wait -n ne rendait
+# jamais la main (dégradation invisible). Dès qu'UN des PID suivis meurt, on sort
+# → systemd relance l'unité entière, KillMode=control-group nettoie le reste.
+wait -n "${PIDS[@]}"
 exit 1
