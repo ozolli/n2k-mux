@@ -254,6 +254,14 @@ Modules prévus (ordre d'implémentation) :
                 Talker | Phrases 0183 (une case par phrase possible : tout coché =
                 défaut, sous-ensemble = [sentence], rien = no_0183) | ms (intervalle
                 [rate]) | Hz (charge live) | Sources (horizontales, ◀▶ = priorité).
+                Par DÉFAUT, la table n'affiche que les PGN RÉELLEMENT VUS (présents
+                dans busmap, obs non vide) ; les PGN jamais vus (règles d'appareils
+                absents du bus) sont MASQUÉS. Interrupteur « PGN non vus » pour les
+                révéler/éditer (état en localStorage). Le masquage est purement à
+                l'affichage (drawArb) : ARB.units garde TOUTES les règles → genIni
+                round-trip l'INI entier, aucune perte à l'Enregistrement pour un PGN
+                masqué. Un PGN déjà vu n'est jamais retiré tout seul ; retrait
+                explicite = case Ignorer ou décocher toutes ses sources.
                 Charge totale (bus N2K + 0183) en tête du tableau. Le JS régénère
                 tout l'INI (genIni) et le POST le valide avant écriture. L'ancien
                 onglet Configuration (éditeur INI brut) et l'onglet Charge ont été
@@ -301,13 +309,32 @@ Le service ne lance PAS un `bash -c` inline : il appelle le script **n2k-mux-run
 (installé dans $PREFIX/bin). Robustesse : la branche AIS passe par un FIFO nommé
 ($RUNTIME_DIRECTORY/ais.fifo) au lieu de `tee >(... | n2kd)` — l'ancienne
 substitution de process laissait survivre n2kd → collision « Address already in
-use » sur ses ports 2597-2602 au redémarrage. Le script suit tous les composants
-(`wait -n`) : si UN meurt (n2kd, kplex, analyzer, un n2k-mux, ydraw-bridge), il
-sort → systemd relance TOUTE la chaîne (fini la dégradation silencieuse où n2kd
-mort = plus d'AIS sans alerte). KillMode=control-group tue le cgroup entier (0
-zombie), et `ExecStartPre` fait un `pkill -f "[n]2kd"` de garde avant chaque
-démarrage. VALIDÉ live le 2026-06-19 : `pkill kplex` → relance complète sous ~3 s
-(NRestarts incrémenté), ports/cibles revenus.
+use » sur ses ports 2597-2602 au redémarrage. KillMode=control-group tue le cgroup
+entier (0 zombie), et `ExecStartPre` fait un `pkill -f "[n]2kd"` de garde avant
+chaque démarrage.
+
+Surveillance par PID EXACTS (PAS `wait -n` nu) : le `wait -n` sur les jobs ne rend
+la main qu'à la mort de TOUS les membres d'un pipeline, or le `tee` SURVIT par
+défaut à une erreur d'écriture sur un pipe (il continue sur son autre sortie) →
+la mort de kplex OU du n2k-mux principal était MASQUÉE (tee gardait candump/
+analyzer vivants → pas de relance ; dégradation invisible : plus de stats.json,
+web « zéro trames »). Corrigé (2026-06-25) dans n2k-mux-run ET n2k-mux-can-run :
+(1) kplex lit le 0183 du n2k-mux principal via OUTFIFO ($RUN/out0183.fifo) au lieu
+d'un pipe direct → kplex et le n2k-mux principal sont des jobs distincts dont on
+tient le PID ; (2) `tee --output-error=exit` → le tee MEURT si une sortie casse
+(ais.fifo, ydraw.fifo ou n2k-mux principal) au lieu de masquer ; (3) `wait -n
+"${PIDS[@]}"` sur les PID exacts (n2k-filter/ydraw-bridge si actif, n2kd, kplex,
+n2k-mux principal) — pas sur les jobs. La mort du filtre AIS amont est rattrapée
+via tee→n2k-mux principal. VALIDÉ live (o3pi, bus réel) : `pkill kplex` ET `pkill`
+du n2k-mux principal → relance complète sous quelques secondes (NRestarts
+incrémenté à chaque fois). [2026-06-19, NGX-1 : `pkill kplex` → relance ~3 s OK.]
+
+Log kplex : kplex.conf.example NE journalise PLUS sur disque par défaut (le bloc
+`[file] .../o3.log`, besoin local polar_doctor/o3nav, est COMMENTÉ). S'il est
+activé sans que /var/log/kplex existe, kplex échoue à l'init et SORT → la chaîne
+tombe (c'était la cause de la panne « zéro trames » du 2026-06-25). Les units
+portent donc `LogsDirectory=kplex` → /var/log/kplex existe toujours, décommenter
+le bloc suffit (pas de mkdir manuel).
 
 Branche N2K (ydraw-bridge) : OPTIONNELLE dans n2k-mux-run (active si le binaire
 $YDRAW = /usr/local/bin/ydraw-bridge existe). Elle tape les trames BRUTES actisense
