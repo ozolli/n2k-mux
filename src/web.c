@@ -27,6 +27,9 @@
 #include "config.h"
 #include "inimerge.h"
 
+#include <poll.h>
+#include <time.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -40,6 +43,8 @@
 #include <arpa/inet.h>
 
 #define REQ_MAX   65536   /* requête (en-têtes + corps INI) */
+#define WEB_MAX_PENDING 32 /* connexions acceptées en attente de leur requête */
+#define WEB_IDLE_MS  10000 /* connexion muette fermée au-delà */
 #define FILE_MAX  65536   /* fichier servi / INI lu */
 
 static const char *g_cfg_path    = NULL;
@@ -1087,17 +1092,62 @@ int main(int argc, char **argv)
             bind_addr, port, g_cfg_path ? g_cfg_path : "(aucune)",
             g_auth ? "oui" : "non");
 
+    /* Boucle par poll : une connexion acceptée est mise EN ATTENTE et n'est
+     * servie que lorsque sa requête arrive. L'ancien accept → recv bloquant
+     * servait les clients dans l'ordre d'arrivée : une connexion ouverte à vide
+     * — ce que font les navigateurs par anticipation — gelait toutes les autres
+     * requêtes jusqu'au délai de lecture (mesuré : ~2 s par requête suivante).
+     * Le traitement reste séquentiel, mais plus rien n'attend un client muet. */
+    struct { int fd; long long t; } pend[WEB_MAX_PENDING];
+    int np = 0;
     for (;;) {
-        int fd = accept(ls, NULL, NULL);
-        if (fd < 0) { if (errno == EINTR) continue; break; }
-        /* 2 s : le serveur est séquentiel, un client qui se connecte sans rien
-         * envoyer bloque tous les autres pendant ce délai. */
-        struct timeval tv = { .tv_sec = 2, .tv_usec = 0 };
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
-        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
-        handle_client(fd);
-        close(fd);
+        struct pollfd pfd[1 + WEB_MAX_PENDING];
+        pfd[0].fd = ls; pfd[0].events = POLLIN; pfd[0].revents = 0;
+        for (int i = 0; i < np; i++) {
+            pfd[1 + i].fd = pend[i].fd;
+            pfd[1 + i].events = POLLIN;
+            pfd[1 + i].revents = 0;
+        }
+        int r = poll(pfd, (nfds_t)(1 + np), 1000);
+        if (r < 0) { if (errno == EINTR) continue; break; }
+
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        long long now = (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+
+        /* Clients prêts (requête arrivée, ou fermeture) → servis ; clients
+         * muets trop longtemps → fermés. Parcours à rebours : on retire en
+         * remontant le dernier, déjà examiné. */
+        for (int i = np - 1; i >= 0; i--) {
+            int ready = pfd[1 + i].revents != 0;
+            if (ready || now - pend[i].t > WEB_IDLE_MS) {
+                if (ready)
+                    handle_client(pend[i].fd);
+                close(pend[i].fd);
+                pend[i] = pend[--np];
+            }
+        }
+
+        if (pfd[0].revents & POLLIN) {
+            int fd = accept(ls, NULL, NULL);
+            if (fd >= 0) {
+                /* Une fois la requête commencée, le reste (corps POST) doit
+                 * suivre vite : délai court sur la lecture et l'écriture. */
+                struct timeval tv = { .tv_sec = 2, .tv_usec = 0 };
+                setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+                setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+                if (np < WEB_MAX_PENDING) {
+                    pend[np].fd = fd;
+                    pend[np].t  = now;
+                    np++;
+                } else {
+                    close(fd);          /* table pleine : refus net */
+                }
+            }
+        }
     }
+    for (int i = 0; i < np; i++)
+        close(pend[i].fd);
     close(ls);
     return 0;
 }
