@@ -9,7 +9,8 @@ designed to consume the JSON-lines output of canboat's `analyzer -json` (one JSO
 object per line) and process NMEA 2000 messages.
 
 Modules (a)–(g) are implemented (parser → registry → nmea0183 → config → arbiter
-→ daemon → web). The final binary `n2k-mux` runs the full
+→ daemon → web), plus deux modules de service : `inimerge` (fusion INI sans perte
+de commentaires, utilisé par l'UI web) et `netout`/`ydraw` (flux N2K réseau). The final binary `n2k-mux` runs the full
 pipeline and is validated live on the bench. Each module ships its own test
 harness (`test_*`). The Makefile and source comments are written incrementally
 ("livrés au fur et à mesure").
@@ -21,6 +22,8 @@ convention when editing existing files.
 
 ```sh
 make            # builds the n2k-mux binary + all test harnesses
+make test       # builds everything, then runs ALL the tests (one exit code)
+make debug      # rebuilds with sanitizers (UB + memory), then runs the tests
 make n2k-mux    # build just the daemon (final binary)
 make test_jsonl # build a single harness (test_registry, test_nmea0183, test_config, test_arbiter, test_mapper)
 make clean      # remove build/, n2k-mux, and the test binaries
@@ -39,6 +42,26 @@ cat samples/xxx.raw | .../analyzer -json | ./test_jsonl --fields  # also dump ev
 
 It prints a recap to stderr (lines seen / parsed / failed) and **exits non-zero
 if any line failed to parse** — usable as a regression check against real captures.
+
+### `make test` — suite complète (scripts/run-tests.sh)
+
+Un seul point d'entrée, un seul code de sortie. Trois étages :
+1. les testeurs unitaires de chaque module (`test_*`) ;
+2. la non-régression du parser sur **toutes** les captures de `samples/*.jsonl`
+   (une seule ligne non parsée fait échouer la suite) ;
+3. un bout-en-bout `n2k-sim --once | n2k-mux n2k-sim.ini` avec vérification du
+   **checksum XOR de chaque phrase** émise et présence des phrases clés.
+
+`samples/` contient `n2k-sim.jsonl` (un exemplaire de chaque PGN). Déposer une
+capture réelle (`analyzer -json -nv` du bord) dans ce dossier l'ajoute
+automatiquement à la suite — voir `samples/README.md` (attention : dépôt public,
+pas de position ni de MMSI de tiers).
+
+`make debug` reconstruit TOUT avec `-fsanitize=undefined,address` puis relance la
+suite. C'est ce qui attrape les fautes invisibles en `-O2` : le cast de NaN vers
+int qui sortait un entier aberrant dans une GGA ne se voyait qu'à `-O0`. Les
+binaires instrumentés remplacent ceux du build normal (`make clean && make` pour
+revenir).
 
 ### Simulateur `n2k-sim` (banc sans matériel)
 
@@ -176,7 +199,7 @@ Modules prévus (ordre d'implémentation) :
                 [FAIT, testeur ./test_mapper : 0 échec, + validé bout-en-bout
                  sur capture Veratron réelle : GLL/VTG/ZDA/GGA corrects]
                 mapper_map(msg, decision, now) → 0..N phrases 0183. Couvre :
-                129025→GLL, 129026→VTG, 126992→ZDA, 129029→GGA, 129539→GSA,
+                129025→GLL, 129026→VTG, 126992→ZDA, 129029→GGA + RMC, 129539→GSA,
                 129540→GSV (paginé 4 sats/phrase, via jsonl_msg_t.list[]),
                 127250→HDG+HDM/HDT, 127251→ROT, 127257→XDR,
                 130306→MWV(R)|MWV(T)+MWD,
@@ -191,7 +214,15 @@ Modules prévus (ordre d'implémentation) :
                  produits en temps réel, checksums OK]
                 pipeline : jsonl_parse → registry_observe → arbiter_decide →
                 mapper_map → [throttle 0183] → stdout. horloge CLOCK_MONOTONIC
-                (now_ms). throttle : table type→dernière émission ; section [rate]
+                (now_ms). BOUCLE PILOTÉE PAR poll (200 ms), PAS par l'arrivée des
+                lignes : les tâches périodiques (ISO Request, sources/stats/
+                perdants) tournent même si l'amont se TAIT sans mourir. Avec
+                l'ancien while(fgets(...)), un flux muet gelait toutes les
+                publications — les JSON gardaient les derniers débits non nuls et
+                l'UI web montrait une chaîne vivante alors que plus rien
+                n'arrivait. Lecture des lignes maison (lr_fill/lr_line), la stdio
+                étant incompatible avec poll. Effet de bord : SIGHUP est
+                désormais immédiat (poll n'est pas redémarré). throttle : table type→dernière émission ; section [rate]
                 de l'INI ; une rafale multi-phrases (pages GSV) passe en entier
                 dès l'ouverture du gate (sinon pagination cassée).
                 usage : n2k-mux [config.ini] [--tx FIFO] [--tx-interval SEC]
@@ -208,8 +239,12 @@ Modules prévus (ordre d'implémentation) :
                 C'est ce que l'UI web utilise pour « Enregistrer » sans root.
                 --sources CHEMIN : publie périodiquement les sources vues en JSON
                 (module sources, défaut interval 5 s) pour l'UI web.
-                --stats CHEMIN : publie le débit par PGN (hz + total) et la charge
-                de bus N2K ESTIMÉE en JSON (module stats, défaut 5 s). Aussi un
+                --stats CHEMIN : publie le débit par PGN (hz + total), la charge
+                de bus N2K ESTIMÉE et "last_msg_age_s" (âge du dernier message
+                reçu, -1 si aucun) en JSON (module stats, défaut 5 s). L'âge est
+                la SEULE façon de distinguer « chaîne calme » de « chaîne morte »,
+                un débit nul valant pour les deux ; l'UI web affiche un bandeau
+                FLUX MORT au-delà de 10 s. Écriture finale à l'arrêt. Aussi un
                 résumé sur stderr en -v. Charge estimée car on est en aval de
                 l'analyzer (messages, pas trames CAN) : trames/message via table
                 fast-packet, charge ≈ trames/s × 130 bits / 250 kbit/s (±15 %).
@@ -218,7 +253,10 @@ Modules prévus (ordre d'implémentation) :
                 sait lire le N2K natif sur CAN ou réseau).
                 Module netout (src/netout.{h,c}, testeur ./test_netout) : serveur
                 TCP de diffusion (fan-out vers N clients), zéro alloc, sockets non
-                bloquants. Testé et PRÊT mais PAS encore lié au daemon — réservé au
+                bloquants. Un message COMMENCÉ est terminé (send_all : jusqu'à 5
+                attentes de 20 ms) ; un client qui reste bouché en cours de message
+                est FERMÉ plutôt que de recevoir une trame tronquée — l'envoi
+                partiel était auparavant compté comme réussi et le reste jeté. Testé et PRÊT mais PAS encore lié au daemon — réservé au
                 futur flux N2K arbité (kplex reste l'endpoint 0183 : il fusionne
                 instruments + AIS, fait UDP/multi-sorties, ce que netout ne fait pas).
                 Module ydraw (src/ydraw.{h,c}, testeur ./test_ydraw) : formateur
@@ -274,10 +312,17 @@ Modules prévus (ordre d'implémentation) :
                 usage : n2k-mux-web [config.ini] [--sources P] [--stats P]
                   [--port N (défaut 8080)] [--bind ADDR (défaut 127.0.0.1 ;
                   0.0.0.0 = LAN)] [--reload-cmd CMD] [--auth user:pass].
-                Sauvegarde : « Enregistrer » copie d'abord la version précédente en
-                `<config>.bak` PUIS écrit en temporaire + rename (atomique). L'éditeur
-                régénère l'INI ENTIER depuis les structures parsées : commentaires et
-                mise en page ne survivent PAS à un enregistrement, d'où le .bak.
+                Sauvegarde : l'éditeur régénère l'INI ENTIER depuis les structures
+                parsées, mais le serveur le FUSIONNE dans le fichier existant via
+                le module inimerge (src/inimerge.{h,c}, testeur ./test_inimerge) :
+                commentaires, ordre des sections, orthographe des clés, alignement
+                du '=' et colonne des commentaires de fin de ligne sont préservés ;
+                seules les valeurs changent. Une clé retirée par l'éditeur est
+                supprimée, une clé nouvelle ajoutée en fin de section, une section
+                nouvelle en fin de fichier. Si la fusion déborde ou si son résultat
+                ne se relit pas, on écrit le contenu régénéré tel quel (l'édition
+                n'est jamais perdue). Puis copie en `<config>.bak` et écriture
+                atomique (temporaire + rename).
                 --auth : authentification HTTP Basic (toutes routes) ; le mot de
                 passe attendu est encodé en base64 au démarrage et comparé à temps
                 constant ; 401 + WWW-Authenticate sinon. HTTP Basic n'est PAS
@@ -432,7 +477,10 @@ Notes câblage AIS :
                 hors de l'eau cesse de compter → sous-estime]
               vitesse surface = MADBrain
               AIS = fusion em-trak + DataHub, dédup par MMSI
-- Ignorer : src=0, PGN 262xxx (messages contrôle CANboat/Actisense)
+- Ignorer : PGN 262xxx (messages contrôle CANboat/Actisense). **src=0 n'est PAS
+  exclu** : 0 est une adresse NMEA 2000 légale, et les messages de contrôle sont
+  déjà écartés par leur numéro de PGN. Seul `[ignore] src` peut exclure une
+  adresse explicitement.
 - AIS/VDM : TRANCHÉ → délégation à canboat n2kd (encodeur VDM éprouvé). n2k-mux
   ne génère PAS de VDM. La dédup/fusion par MMSI se fait EN AMONT de n2kd via le
   mode `n2k-mux --ais-json` (JSON→JSON). Priorité em-trak (AIS) > DataHub (DH),
@@ -448,7 +496,7 @@ AIS = em-trak B953 · VER = Veratron GO · DH = DataHub PredictWind · M510 = IC
 |------|-------------|--------------------------|--------------|
 | 129025 | — | SCX > VER > MAD | GLL |
 | 129026 | — | SCX > VER > MAD | VTG |
-| 129029 | — | SCX > VER | GGA, GNS, RMC, ZDA |
+| 129029 | — | SCX > VER | GGA, RMC |
 | 129539 | — | SCX > VER | GSA (mode fix + PDOP/HDOP/VDOP) |
 | 129540 | — | SCX > VER | GSV (satellites en vue, paginé 4/phrase) |
 | 126992 | — | SCX > VER > MAD | ZDA |
@@ -473,6 +521,17 @@ AIS = em-trak B953 · VER = Veratron GO · DH = DataHub PredictWind · M510 = IC
 - **MDA** (Meteorological Composite) agrège pression (130314, champs 3-4 en bar) + température air (130316/Outside, champ "Temperature"). Une seule phrase MDA pour les deux : le mapper garde la dernière valeur de chacune (fenêtre `MAP_MDA_FRESH_MS`, 30 s) et la **pression cadence** l'émission ; la température ne déclenche la phrase que si la pression manque (appareil absent du bus). Sans cela chaque PGN émettait sa propre MDA en vidant le champ de l'autre.
 - **GGA** : la qualité de fix vient du champ "Method" du 129029 via la table GNS_METHOD de canboat (`gga_quality`), comparaison INSENSIBLE à la casse — « no GNSS » est en minuscule et faisait passer une absence de fix pour un fix valide. Champ absent = qualité 0 (invalide).
 - **DPT / VLW** (modes min / max) : toutes les sources vivantes sont acceptées par l'arbitre, mais **seule celle qui porte la valeur retenue émet** (égalité : la 1re de la règle). Sinon la même phrase sortait une fois par capteur.
+- **RMC** vient du 129029 (date, heure, position) complété par le 129026 (SOG,
+  COG vrai) et le 127250 (variation magnétique), mémorisés par le mapper avec une
+  fenêtre de fraîcheur de 5 s ; champs vides si ces PGN se taisent. Statut 'A' et
+  mode 'A' seulement si la qualité de fix n'est pas nulle, sinon 'V'/'N'.
+- **MWV / MWD** : le champ "Wind Angle" du 130306 est un ANGLE relatif à l'étrave
+  pour Apparent et les variantes boat/water referenced (→ MWV), et une DIRECTION
+  depuis le nord pour les variantes ground referenced (→ MWD, vraie ou magnétique
+  selon la référence). Les confondre sortait une direction compas dans un MWV(T)
+  et un angle d'étrave dans une MWD.
+- **RSA / ROT** : le drapeau de validité vaut 'V' quand la valeur est absente,
+  plus 'A' inconditionnellement.
 - **XDR attitude** : aucune phrase si ni Pitch ni Roll (un `$IIXDR*hh` sans champ n'est pas exploitable et son type n'est pas extractible).
 - **MTW** = température eau, depuis 130316 (Temperature Extended Range, champ "Temperature") dont Temperature Source = "Sea Temperature". 130312 (déprécié, champ "Actual Temperature") reste accepté en entrée.
 - **XDR** type pression/température/attitude. Pour 127257 : pitch + roll (pas le yaw).
@@ -487,7 +546,7 @@ canboat applique `fixupUnit()` par défaut → unités « lisibles », PAS stric
 Le module mapper (e, 2e passe) concentre toutes ces conversions.
 
 ### Sentences explicitement NON générées
-GRS (inutile, non géré par qtVlm), DBT/DBK/DBS (DPT seul suffit), VBW (qtVlm calcule
+GNS (GGA + RMC couvrent le besoin qtVlm), GRS (inutile, non géré par qtVlm), DBT/DBK/DBS (DPT seul suffit), VBW (qtVlm calcule
 la dérive *surface* lui-même ; à ne pas confondre avec VDR, le courant set/drift du
 129291 que l'on émet bien), 127252 Heave (pas d'usage), yaw du 127257, 129283/284
 route (qtVlm gère ses propres routes).
@@ -502,7 +561,12 @@ MWV MWD MTW DBT DPT DBK DBS WPL RMB MDA XDR MMB PFEC ZDA VBW RPM RME ROT GNS GBS
 Validé par injection : MMB, XDR, MDA (pression + temp air lues correctement).
 
 ### Discriminants observés dans le flux analyzer réel
-- 130306 : champ "Reference" = "Apparent" | "True (ground referenced to North)"
+- 130306 : champ "Reference" = "Apparent" | "True (ground referenced to North)" |
+  "True (boat referenced)" | "True (water referenced)" |
+  "Magnetic (ground referenced to Magnetic North)". Les variantes « ground
+  referenced » portent une DIRECTION depuis le nord (→ MWD), les autres un ANGLE
+  relatif à l'étrave (→ MWV).
 - 127250 : champ "Reference" = "Magnetic" | "True"
 - 130316 (et 130312 déprécié) : champ "Temperature Source" / "Source" = "Sea Temperature" | "Outside Temperature"
-- Ignorer : src=0 et PGN 262xxx (262161 Actisense Operating mode, 262656 CANboat Startup)
+- Ignorer : PGN 262xxx (262161 Actisense Operating mode, 262656 CANboat Startup).
+  src=0 est une adresse légale et reste arbitrée.
