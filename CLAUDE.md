@@ -78,8 +78,7 @@ le temps (flux « vivant »). Source unique `src/simulator.c`, zéro dépendance
 ```
 
 **Pilotage à chaud — `--control FICHIER`** : un fichier « clé = valeur » relu dès
-que sa date change. Les ENTRÉES sont celles que vit l'équipage, cap et vitesse
-SURFACE, plus le courant, plus UNE paire de vent :
+que sa date change. SIX ENTRÉES, celles que vit l'équipage :
 
 ```
 enabled = 1     ; 0 = le simulateur n'émet RIEN (chaîne debout, flux mort)
@@ -87,21 +86,18 @@ hdg     = 45    ; cap vrai, degrés           (auto = sinusoïde)
 stw     = 6.0   ; vitesse SURFACE, NŒUDS
 set     = 120   ; direction du courant (VERS laquelle il porte), degrés
 drift   = 1.0   ; vitesse du courant, NŒUDS
-; le vent par UNE paire, priorité dans cet ordre :
-awa = 40, aws = 18   ; vent APPARENT (angle/étrave + vitesse)
-twa = 60, tws = 20   ; vent VRAI par son angle/étrave
-twd = 225, tws = 20  ; vent VRAI par sa direction (d'où il vient)
+twd     = 225   ; direction du vent VRAI (d'où il vient), degrés
+tws     = 20    ; vitesse du vent VRAI, NŒUDS
 ```
 
-POURQUOI une seule paire de vent : le triangle des vitesses lie le vent vrai,
-son angle et l'apparent. Les imposer tous serait contradictoire, donc on en
-impose deux valeurs et le reste est CALCULÉ. Le calcul est réversible : imposer
-l'apparent obtenu redonne le vent vrai de départ (vérifié par `make test`).
+TWA, AWA et AWS ne sont PAS des entrées (une clé twa/awa/aws est ignorée) : ce
+sont des valeurs CALCULÉES à partir des six ci-dessus.
 
 DÉDUIT par le simulateur : route et vitesse fond (COG, SOG) = vecteur surface +
-vecteur courant ; les deux autres expressions du vent ; le vent vrai référencé
-eau (vent vrai − courant, ramené à l'étrave) ; la giration = dérivée du CAP,
-nulle si le cap est imposé ; la position, intégrée le long du COG obtenu. Le
+vecteur courant ; TWA = TWD − HDG ; vent apparent (AWA, AWS) = vent vrai −
+vecteur bateau sur le fond ; le vent vrai référencé eau (vent vrai − courant,
+ramené à l'étrave) ; la giration = dérivée du CAP, nulle si le cap est imposé ;
+la position, intégrée le long du COG obtenu. Le
 130306 sort en trois exemplaires (Apparent, True water referenced, True ground
 referenced to North) → MWV(R), MWV(T) et MWD.
 
@@ -393,11 +389,10 @@ Modules prévus (ordre d'implémentation) :
                 par device) → colonne « PGNs publiés ».
                 Consultable depuis tablettes/téléphone sans X-forwarding, cohérent
                 avec la direction « tout réseau ».
-                Onglet « Simulateur » : bascule d'activation, réglages du bateau
-                (hdg, stw) et du courant (set, drift), et un sélecteur « vent
-                défini par » (TWD+TWS | TWA+TWS | AWA+AWS) qui n'ouvre à la
-                saisie que la paire choisie — le triangle des vitesses interdit
-                d'imposer les trois. Chaque réglage a une case « auto » qui
+                Onglet « Simulateur » : bascule d'activation et SIX réglages,
+                bateau (hdg, stw), courant (set, drift), vent vrai (twd, tws).
+                TWA, AWA et AWS ne se règlent pas : ils sont calculés et
+                apparaissent dans le tableau des valeurs déduites. Chaque réglage a une case « auto » qui
                 redonne la main à la sinusoïde. Curseur et champ numérique liés,
                 écriture différée de 250 ms (un geste de curseur produit beaucoup
                 d'événements). Sous les réglages, le tableau des VALEURS DÉDUITES
