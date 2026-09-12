@@ -25,6 +25,7 @@
  */
 
 #include "config.h"
+#include "inimerge.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -90,6 +91,7 @@ static const char PAGE[] =
 ".chip{display:inline-block;border:1px solid var(--border);border-radius:6px;padding:.1em .45em;margin:.12em .2em;background:var(--chip);white-space:nowrap;font-size:.9em}\n"
 ".sl{display:inline-block;font-size:.82em;white-space:nowrap;margin:0 .35em .1em 0}\n"
 ".arb tr.ign td{opacity:.45}.arb tr.ign td:first-child{opacity:1}\n"
+".dead{color:var(--errfg);font-weight:600}\n"
 "</style></head><body>\n"
 "<header><b>n2k-mux</b>\n"
 "<nav><button data-t='sources' class='on' data-i18n='tab_sources'>Sources</button>"
@@ -141,7 +143,8 @@ static const char PAGE[] =
 "measured:'mesuré',estimated:'estimé',frames_s:'trames/s',sent_s:'phrases/s',\n"
 "names_saved:'Noms enregistrés et rechargés.',arb_saved:'Arbitrage enregistré et rechargé.',rej_line:'Refusé — ligne ',err_pfx:'Erreur : ',\n"
 "no_src:'Aucune source vue (le daemon tourne ?).',na_src:'sources.json indisponible.',na_bm:'busmap/rules indisponible (daemon avec --busmap ?).',\n"
-"to_name:'à nommer',ignore_lbl:'ignorer',show_unseen:'PGN non vus',arb_none:'Aucun PGN vu pour l’instant (le bus émet ? sinon, cocher « PGN non vus »).'\n"
+"to_name:'à nommer',ignore_lbl:'ignorer',show_unseen:'PGN non vus',arb_none:'Aucun PGN vu pour l’instant (le bus émet ? sinon, cocher « PGN non vus »).',\n"
+"stale:'FLUX MORT : aucun message depuis',stale_never:'FLUX MORT : aucun message reçu'\n"
 "},en:{\n"
 "tab_sources:'Sources',tab_arb:'Arbitration',save_names:'Save names',save_arb:'Save arbitration',refresh:'Refresh',\n"
 "src_help:'naming a source makes it usable in the Arbitration tab',arb_help:'checkbox = selected source · ◀▶ = priority order',\n"
@@ -166,7 +169,8 @@ static const char PAGE[] =
 "measured:'measured',estimated:'estimated',frames_s:'frames/s',sent_s:'sentences/s',\n"
 "names_saved:'Names saved and reloaded.',arb_saved:'Arbitration saved and reloaded.',rej_line:'Rejected — line ',err_pfx:'Error: ',\n"
 "no_src:'No source seen (is the daemon running?).',na_src:'sources.json unavailable.',na_bm:'busmap/rules unavailable (daemon with --busmap?).',\n"
-"to_name:'to name',ignore_lbl:'ignore',show_unseen:'unseen PGNs',arb_none:'No PGN seen yet (is the bus active? otherwise tick “unseen PGNs”).'\n"
+"to_name:'to name',ignore_lbl:'ignore',show_unseen:'unseen PGNs',arb_none:'No PGN seen yet (is the bus active? otherwise tick “unseen PGNs”).',\n"
+"stale:'STREAM DEAD: no message for',stale_never:'STREAM DEAD: no message received'\n"
 "}};\n"
 "const T=k=>{const o=L[lang];return (o&&o[k]!=null)?o[k]:k;};\n"
 "function applyI18n(){document.querySelectorAll('[data-i18n]').forEach(e=>{e.textContent=T(e.dataset.i18n);});document.documentElement.lang=lang;}\n"
@@ -214,7 +218,11 @@ static const char PAGE[] =
 "function bar(p){p=Math.max(0,Math.min(100,p));return '<span class=bar><i style=\\'width:'+p+'%\\'></i></span> '+H(1,p)+'%';}\n"
 "async function updateLoad(){if(!ARB)return;try{const d=await jget('/api/stats');\n"
 " const m={},mt={};for(const p of (d.pgns||[])){m[p.pgn]=p.hz;mt[p.pgn]=p.total;}\n"
-" $('#arb_load').innerHTML='Bus N2K '+bar(d.bus_load_pct)+' ('+(d.measured?T('measured'):T('estimated'))+') &nbsp; 0183 '+bar(d.out_load_pct)+' &nbsp;<small>'+H(1,d.frames_per_s)+' '+T('frames_s')+' · '+H(1,d.out_sent_per_s)+' '+T('sent_s')+'</small>';\n"
+" // last_msg_age_s : publié par le daemon (horodatage du dernier message reçu).\n"
+" // Un débit nul ne dit PAS si la chaîne est morte ou simplement calme ; l'âge, si.\n"
+" const age=(d.last_msg_age_s===undefined)?-1:d.last_msg_age_s;\n"
+" const dead=(age<0)?T('stale_never'):((age>10)?(T('stale')+' '+H(0,age)+' s'):'');\n"
+" $('#arb_load').innerHTML=(dead?'<span class=dead>'+dead+'</span> &nbsp; ':'')+'Bus N2K '+bar(d.bus_load_pct)+' ('+(d.measured?T('measured'):T('estimated'))+') &nbsp; 0183 '+bar(d.out_load_pct)+' &nbsp;<small>'+H(1,d.frames_per_s)+' '+T('frames_s')+' · '+H(1,d.out_sent_per_s)+' '+T('sent_s')+'</small>';\n"
 " for(let i=0;i<ARB.units.length;i++){const pg=ARB.units[i].pgn;\n"
 "  const c=$('#ld'+i);if(c){const hz=m[pg];c.innerHTML=hz?(H(1,hz)+'<small> Hz</small>'):'';}\n"
 "  const tc=$('#tot'+i);if(tc){const tt=mt[pg];tc.textContent=tt?tt:'';}}\n"
@@ -223,7 +231,7 @@ static const char PAGE[] =
 "const PGNNAME_EN={129029:'GNSS position',126992:'Time',127250:'Heading',127251:'Rate of turn',130306:'Wind',127245:'Rudder',129291:'Current',128259:'Water speed',128267:'Depth',128275:'Log',130316:'Temperature',130314:'Pressure',129794:'AIS static A',129809:'AIS static 24A',129810:'AIS static 24B'};\n"
 "function pgnName(p){return (lang==='en'?(PGNNAME_EN[p]||PGNNAME[p]):PGNNAME[p])||'';}\n"
 "const ST={accept:['émis','sent','bok'],reject_priority:['supplanté','superseded','blo'],not_in_rule:['hors-règle','not in rule','bnu'],no_rule:['non réglé','no rule','bnu'],unconfigured:['non configuré','unconfigured','bnu'],unknown_src:['identité ?','identity?','bnu'],ignored:['ignoré','ignored','bnu']};\n"
-"const PGN2SENT={129025:['GLL'],129026:['VTG'],129029:['GGA'],129539:['GSA'],129540:['GSV'],126992:['ZDA'],127250:['HDG','HDM','HDT'],127251:['ROT'],127257:['XDR'],130306:['MWV','MWD'],127245:['RSA'],129291:['VDR'],128259:['VHW'],128267:['DPT'],128275:['VLW'],130316:['MTW','MDA'],130314:['MDA']};\n"
+"const PGN2SENT={129025:['GLL'],129026:['VTG'],129029:['GGA','RMC'],129539:['GSA'],129540:['GSV'],126992:['ZDA'],127250:['HDG','HDM','HDT'],127251:['ROT'],127257:['XDR'],130306:['MWV','MWD'],127245:['RSA'],129291:['VDR'],128259:['VHW'],128267:['DPT'],128275:['VLW'],130316:['MTW','MDA'],130314:['MDA']};\n"
 "const AISPGN=[129038,129039,129040,129041,129793,129794,129795,129796,129797,129798,129801,129802,129809,129810];\n"
 "function has0183(p){return PGN2SENT[p]!==undefined||AISPGN.indexOf(p)>=0}\n"
 "function typesOf(p){return PGN2SENT[p]||(AISPGN.indexOf(p)>=0?['VDM']:[])}\n"
@@ -588,9 +596,30 @@ static void handle_config_post(int fd, char *body, int write_it)
 
     int reloaded = 0;
     if (ok && write_it) {
+        /* L'éditeur envoie un INI régénéré, sans commentaires. On le FUSIONNE
+         * dans le fichier existant pour n'y changer que les valeurs et garder
+         * commentaires, ordre et alignement. Si la fusion déborde ou si son
+         * résultat ne se relit pas, on écrit le contenu régénéré tel quel :
+         * l'édition de l'utilisateur ne doit jamais être perdue. */
+        const char *to_write = body;
+        size_t      to_len   = strlen(body);
+        static char oldbuf[FILE_MAX], merged[FILE_MAX];
+        size_t      oldlen = 0;
+        if (g_cfg_path &&
+            read_file(g_cfg_path, oldbuf, sizeof oldbuf, &oldlen) == 0 && oldlen > 0) {
+            int mn = ini_merge(oldbuf, body, merged, sizeof merged);
+            if (mn > 0) {
+                config_t chk;
+                config_init(&chk);
+                if (config_parse_string(&chk, merged)) {
+                    to_write = merged;
+                    to_len   = (size_t)mn;
+                }
+            }
+        }
         if (g_cfg_path)
-            backup_file(g_cfg_path);   /* .bak : la version commentée reste récupérable */
-        if (!g_cfg_path || write_file_atomic(g_cfg_path, body, strlen(body)) != 0) {
+            backup_file(g_cfg_path);   /* .bak : filet en cas de fusion imparfaite */
+        if (!g_cfg_path || write_file_atomic(g_cfg_path, to_write, to_len) != 0) {
             char out[256];
             snprintf(out, sizeof out,
                 "{\"ok\":false,\"line\":0,\"err\":\"écriture impossible (%s)\"}",
@@ -768,7 +797,9 @@ int main(int argc, char **argv)
     for (;;) {
         int fd = accept(ls, NULL, NULL);
         if (fd < 0) { if (errno == EINTR) continue; break; }
-        struct timeval tv = { .tv_sec = 5, .tv_usec = 0 };
+        /* 2 s : le serveur est séquentiel, un client qui se connecte sans rien
+         * envoyer bloque tous les autres pendant ce délai. */
+        struct timeval tv = { .tv_sec = 2, .tv_usec = 0 };
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
         setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
         handle_client(fd);

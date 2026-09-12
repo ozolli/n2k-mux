@@ -1,6 +1,8 @@
 # Makefile — n2k-mux
 # Cibles utiles :
 #   make            -> construit tout ce qui est disponible
+#   make test       -> construit tout puis lance TOUS les tests
+#   make debug      -> reconstruit avec les sanitizers (UB + mémoire) et teste
 #   make test_jsonl -> construit le testeur du parser JSON
 #   make clean
 
@@ -24,6 +26,9 @@ MAPPER_OBJ   := $(BUILD)/mapper.o
 AISDEDUP_OBJ := $(BUILD)/aisdedup.o
 SOURCES_OBJ  := $(BUILD)/sources.o
 STATS_OBJ    := $(BUILD)/stats.o
+# inimerge : fusion d'un INI régénéré dans l'INI existant en préservant les
+# commentaires (utilisé par l'interface web à l'enregistrement).
+INIMERGE_OBJ := $(BUILD)/inimerge.o
 # netout : plomberie TCP fan-out, testée et prête pour le futur flux N2K arbité ;
 # pas encore liée au daemon (cf. test_netout).
 NETOUT_OBJ   := $(BUILD)/netout.o
@@ -36,8 +41,8 @@ DAEMON_OBJ   := $(BUILD)/daemon.o
 # Tous les objets du pipeline (hors testeurs)
 CORE_OBJ := $(JSONL_OBJ) $(REGISTRY_OBJ) $(CONFIG_OBJ) $(ARBITER_OBJ) $(NMEA_OBJ) $(MAPPER_OBJ) $(AISDEDUP_OBJ) $(SOURCES_OBJ) $(STATS_OBJ)
 
-.PHONY: all clean install uninstall
-all: n2k-mux n2k-mux-web n2k-sim n2k-filter ydraw-bridge test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout test_ydraw
+.PHONY: all clean install uninstall test debug
+all: n2k-mux n2k-mux-web n2k-sim n2k-filter ydraw-bridge test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout test_ydraw test_inimerge
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -89,12 +94,16 @@ test_netout: $(NETOUT_OBJ) $(BUILD)/test_netout.o
 test_ydraw: $(YDRAW_OBJ) $(BUILD)/test_ydraw.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
+# --- Fusion INI (préservation des commentaires) + son testeur ---
+test_inimerge: $(INIMERGE_OBJ) $(CONFIG_OBJ) $(BUILD)/test_inimerge.o
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
 # --- Module (f) : daemon (binaire final) ---
 n2k-mux: $(CORE_OBJ) $(BUILD)/cansock.o $(BUILD)/busmap.o $(DAEMON_OBJ)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lm
 
 # --- Interface web de gestion (zéro dépendance) ---
-n2k-mux-web: $(CONFIG_OBJ) $(BUILD)/web.o
+n2k-mux-web: $(CONFIG_OBJ) $(INIMERGE_OBJ) $(BUILD)/web.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 # --- Outil de test : pont canboat/actisense → YDRAW → TCP (pour qtVlm N2K) ---
@@ -108,6 +117,26 @@ n2k-sim: $(BUILD)/simulator.o
 # --- Filtre N2K→N2K socketcan (frame-passthrough can0 → vcan0 + YDRAW/TCP) ---
 n2k-filter: $(BUILD)/canfilter.o $(YDRAW_OBJ) $(NETOUT_OBJ)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+# --- Tests : tous les testeurs + captures de samples/ + bout-en-bout ---------
+# Un seul point d'entrée, un seul code de sortie. Voir scripts/run-tests.sh.
+test: all
+	@scripts/run-tests.sh
+
+# --- Build instrumenté ------------------------------------------------------
+# Reconstruit TOUT avec les sanitizers (comportements indéfinis + mémoire) puis
+# lance la suite. C'est ce qui attrape les fautes invisibles en -O2 : le cast de
+# NaN vers int qui sortait un entier aberrant dans une phrase GGA ne se voyait
+# qu'à un autre niveau d'optimisation.
+# Les binaires produits REMPLACENT ceux du build normal (mêmes noms) :
+# refaire `make clean && make` pour revenir à la version optimisée.
+debug:
+	$(MAKE) clean
+	$(MAKE) CFLAGS="-O1 -g -Wall -Wextra -std=c11 -D_GNU_SOURCE \
+	         -fsanitize=undefined,address -fno-omit-frame-pointer" \
+	        LDFLAGS="-fsanitize=undefined,address" all
+	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+	ASAN_OPTIONS=detect_leaks=0 scripts/run-tests.sh
 
 # --- Installation système (daemon + service systemd) ---
 # make install            installe le daemon, le service et les exemples
@@ -140,7 +169,7 @@ uninstall:
 	rm -f $(DESTDIR)/etc/n2k-mux/n2k-mux.ini.example
 
 clean:
-	rm -rf $(BUILD) n2k-mux n2k-mux-web n2k-sim n2k-filter ydraw-bridge test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout test_ydraw
+	rm -rf $(BUILD) n2k-mux n2k-mux-web n2k-sim n2k-filter ydraw-bridge test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout test_ydraw test_inimerge
 
 # Dépendances d'en-têtes générées par -MMD (recompile si un .h change).
 -include $(wildcard $(BUILD)/*.d)
