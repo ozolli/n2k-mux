@@ -19,12 +19,37 @@
  * de dépendance au reste du projet : un seul fichier, sortie texte.
  *
  * Usage : n2k-sim [--once] [--duration SEC] [--no-ais] [--tick MS]
+ *                  [--control FICHIER]
+ *
+ * --control : pilotage À CHAUD par un petit fichier « clé = valeur », relu dès
+ * que sa date de modification change (c'est ce que l'interface web écrit) :
+ *
+ *     enabled = 1        ; 0 = le simulateur n'émet RIEN (chaîne silencieuse)
+ *     cog     = 50       ; route fond, degrés vrais  (auto = sinusoïde)
+ *     sog     = 6.2      ; vitesse fond, NŒUDS
+ *     set     = 120      ; direction du courant (VERS laquelle il porte), degrés
+ *     drift   = 1.0      ; vitesse du courant, NŒUDS
+ *     twd     = 225      ; direction du vent vrai (D'OÙ il vient), degrés
+ *     tws     = 14       ; vitesse du vent vrai, NŒUDS
+ *
+ * Toute clé absente ou à « auto » garde le comportement automatique.
+ *
+ * Ces six grandeurs sont les ENTRÉES ; tout le reste en DÉCOULE, pour que le
+ * flux reste cohérent d'un instrument à l'autre :
+ *   - vitesse/cap surface (STW, HDG) = vecteur fond − vecteur courant ;
+ *   - taux de giration = dérivée du COG (nul si le COG est imposé) ;
+ *   - vent apparent (AWA/AWS) = vent vrai − vecteur bateau sur le fond ;
+ *   - vent vrai référencé eau = vent vrai − courant, exprimé par rapport à
+ *     l'étrave ; la position s'intègre le long du COG.
+ * Régler l'apparent ou le cap à la main les mettrait en contradiction avec le
+ * reste à l'écran.
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 #include <signal.h>
@@ -103,11 +128,103 @@ static struct {
     double lat, lon;   /* position courante (degrés) */
     double cog;        /* route fond (deg, 0=N, sens horaire) */
     double sog;        /* vitesse fond (m/s) */
-    double hdg;        /* cap (deg) ≈ COG + dérive */
+    double stw;        /* vitesse surface (m/s), CALCULÉE */
+    double hdg;        /* cap vrai (deg), CALCULÉ = route sur l'eau */
     double rot;        /* taux de giration (deg/s) = dCOG/dt */
+    double set;        /* direction du courant, vers laquelle il porte (deg) */
+    double drift;      /* vitesse du courant (m/s) */
+    double twd;        /* direction du vent VRAI, d'où il vient (deg) */
+    double tws;        /* vitesse du vent vrai (m/s) */
     double last_t;     /* horodatage du dernier pas (s) */
     int    init;
 } boat;
+
+/* --- Pilotage à chaud (--control, écrit par l'interface web) ---------------
+ * Valeurs NAN = « auto » : le générateur sinusoïdal reprend la main. Les
+ * vitesses sont en NŒUDS dans le fichier (unité de l'utilisateur) et converties
+ * en m/s ici, comme le reste du simulateur. */
+#define KN_TO_MS 0.514444
+
+typedef struct {
+    int    enabled;
+    double cog, sog, set, drift, twd, tws;
+} simctl_t;
+
+static simctl_t g_ctl = { 1, NAN, NAN, NAN, NAN, NAN, NAN };
+static const char *g_ctl_path = NULL;
+
+/* Lit « clé = valeur » ; « auto » ou clé absente → NAN. Tolérant : une ligne
+ * incomprise est ignorée, un fichier illisible laisse l'état inchangé. */
+static void ctl_load(const char *path)
+{
+    FILE *f = fopen(path, "r");
+    if (!f)
+        return;
+    simctl_t c = { 1, NAN, NAN, NAN, NAN, NAN, NAN };
+    char line[160];
+    while (fgets(line, sizeof line, f)) {
+        for (char *p = line; *p; p++)
+            if (*p == ';' || *p == '#') { *p = '\0'; break; }
+        char key[32] = "", val[64] = "";
+        if (sscanf(line, " %31[A-Za-z_] = %63s", key, val) != 2)
+            continue;
+        for (char *p = key; *p; p++)
+            if (*p >= 'A' && *p <= 'Z') *p += 32;
+        double v = (strcmp(val, "auto") == 0) ? NAN : atof(val);
+        if      (strcmp(key, "enabled") == 0)
+            c.enabled = (strcmp(val, "0") && strcmp(val, "false") &&
+                         strcmp(val, "off") && strcmp(val, "no"));
+        else if (strcmp(key, "cog") == 0)   c.cog = v;
+        else if (strcmp(key, "sog") == 0)   c.sog = isnan(v) ? v : v * KN_TO_MS;
+        else if (strcmp(key, "set") == 0)   c.set = v;
+        else if (strcmp(key, "drift") == 0) c.drift = isnan(v) ? v : v * KN_TO_MS;
+        else if (strcmp(key, "twd") == 0)   c.twd = v;
+        else if (strcmp(key, "tws") == 0)   c.tws = isnan(v) ? v : v * KN_TO_MS;
+    }
+    fclose(f);
+    g_ctl = c;
+}
+
+/* Relit le fichier de contrôle si sa date ou sa taille a changé, au plus une
+ * fois par tour de boucle. Retourne 1 si l'état a été rechargé. */
+static int ctl_refresh(void)
+{
+    static time_t last_mt; static long last_sz = -1;
+    if (!g_ctl_path)
+        return 0;
+    struct stat sb;
+    if (stat(g_ctl_path, &sb) != 0)
+        return 0;
+    if (sb.st_mtime == last_mt && (long)sb.st_size == last_sz)
+        return 0;
+    last_mt = sb.st_mtime;
+    last_sz = (long)sb.st_size;
+    ctl_load(g_ctl_path);
+    return 1;
+}
+
+/* Normalise un cap dans [0, 360). */
+static double norm360(double a)
+{
+    while (a < 0.0)    a += 360.0;
+    while (a >= 360.0) a -= 360.0;
+    return a;
+}
+
+/* Composantes (nord, est) d'un vecteur donné par un cap et un module. */
+static void vec_of(double dir_deg, double mag, double *n, double *e)
+{
+    double r = dir_deg * M_PI / 180.0;
+    *n = mag * cos(r);
+    *e = mag * sin(r);
+}
+
+/* Cap et module d'un vecteur (nord, est). */
+static void dir_of(double n, double e, double *dir_deg, double *mag)
+{
+    *mag = sqrt(n * n + e * e);
+    *dir_deg = (*mag < 1e-9) ? 0.0 : norm360(atan2(e, n) * 180.0 / M_PI);
+}
 
 static void boat_update(double t)
 {
@@ -116,15 +233,65 @@ static void boat_update(double t)
     boat.last_t = t;
     if (dt < 0) dt = 0;
 
-    boat.cog = 90.0 + 55.0 * sin(t / 70.0);      /* vire en S (35°..145°) */
-    boat.rot = (55.0 / 70.0) * cos(t / 70.0);    /* dérivée du COG, deg/s */
-    boat.sog = 4.5 + 1.0 * sin(t / 40.0);        /* m/s (≈ 9 kn) */
-    boat.hdg = boat.cog + 4.0 * sin(t / 25.0);   /* cap = route + embardée/dérive */
+    /* --- ENTRÉES : route/vitesse fond, courant, vent vrai. Chacune vient du
+     * fichier de contrôle si elle y est fixée, sinon d'une sinusoïde. --- */
+    if (isnan(g_ctl.cog)) {
+        boat.cog = norm360(90.0 + 55.0 * sin(t / 70.0));   /* vire en S */
+        boat.rot = (55.0 / 70.0) * cos(t / 70.0);          /* dérivée du COG */
+    } else {
+        boat.cog = norm360(g_ctl.cog);
+        boat.rot = 0.0;                                    /* route imposée */
+    }
+    boat.sog   = isnan(g_ctl.sog)   ? 4.5 + 1.0 * sin(t / 40.0) : g_ctl.sog;
+    boat.set   = isnan(g_ctl.set)   ? norm360(120.0 + 10.0 * sin(t / 40.0))
+                                    : norm360(g_ctl.set);
+    boat.drift = isnan(g_ctl.drift) ? 0.5 + 0.2 * sin(t / 25.0) : g_ctl.drift;
+    boat.twd   = isnan(g_ctl.twd)   ? norm360(225.0 + 15.0 * sin(t / 60.0))
+                                    : norm360(g_ctl.twd);
+    boat.tws   = isnan(g_ctl.tws)   ? 9.0 + 2.0 * sin(t / 8.0) : g_ctl.tws;
+    if (boat.sog < 0)   boat.sog = 0;
+    if (boat.drift < 0) boat.drift = 0;
+    if (boat.tws < 0)   boat.tws = 0;
+
+    /* --- CALCULÉ : mouvement sur l'eau = fond − courant. C'est ce que mesure
+     * un loch/speedo, et le cap suit (pas de dérive aérodynamique modélisée). */
+    double gn, ge, cn, ce;
+    vec_of(boat.cog, boat.sog,   &gn, &ge);
+    vec_of(boat.set, boat.drift, &cn, &ce);
+    dir_of(gn - cn, ge - ce, &boat.hdg, &boat.stw);
 
     /* avance le long du COG (1° lat ≈ 111320 m) */
-    double cr = boat.cog * M_PI / 180.0;
-    boat.lat += (boat.sog * cos(cr) * dt) / 111320.0;
-    boat.lon += (boat.sog * sin(cr) * dt) / (111320.0 * cos(boat.lat * M_PI / 180.0));
+    boat.lat += (gn * dt) / 111320.0;
+    boat.lon += (ge * dt) / (111320.0 * cos(boat.lat * M_PI / 180.0));
+}
+
+/* --- Vent : le vrai (twd/tws) est l'entrée, l'apparent et le « vrai eau » en
+ * découlent. Convention : twd = direction D'OÙ vient le vent. --- */
+
+/* Vent apparent : vent vrai moins le vecteur bateau sur le fond, ramené à
+ * l'étrave. `aa` dans [0,360), `as` en m/s. */
+static void wind_apparent(double *aa, double *as)
+{
+    double wn, we, bn, be;
+    vec_of(norm360(boat.twd + 180.0), boat.tws, &wn, &we);  /* l'air se déplace */
+    vec_of(boat.cog, boat.sog, &bn, &be);                   /* le bateau aussi */
+    double dir, mag;
+    dir_of(wn - bn, we - be, &dir, &mag);                   /* air vu du bateau */
+    *aa = norm360(dir + 180.0 - boat.hdg);                  /* d'où il vient / étrave */
+    *as = mag;
+}
+
+/* Vent vrai RÉFÉRENCÉ EAU : vent vrai moins le courant, ramené à l'étrave.
+ * C'est ce que calcule une centrale à partir de l'apparent et du loch. */
+static void wind_true_water(double *ta, double *ts)
+{
+    double wn, we, cn, ce;
+    vec_of(norm360(boat.twd + 180.0), boat.tws, &wn, &we);
+    vec_of(boat.set, boat.drift, &cn, &ce);
+    double dir, mag;
+    dir_of(wn - cn, we - ce, &dir, &mag);
+    *ta = norm360(dir + 180.0 - boat.hdg);
+    *ts = mag;
 }
 
 /* --- Identité : 60928 (Unique Number) + 126996 (Model Serial Code) --- */
@@ -228,7 +395,7 @@ static void e_heading(double t)   /* 127250 → HDG/HDM (mag) + HDT (vrai) */
     (void)t;
     char f[160];
     /* cap magnétique = cap vrai − variation (variation 2°W = −2) */
-    double hdg_mag = boat.hdg + 2.0;
+    double hdg_mag = norm360(boat.hdg + 2.0);
     snprintf(f, sizeof f,
              "\"Heading\":%.1f,\"Deviation\":1.5,\"Variation\":-2.0,\"Reference\":\"Magnetic\"",
              hdg_mag);
@@ -253,29 +420,36 @@ static void e_attitude(double t)   /* 127257 → XDR (pitch/roll) */
     emit(2, SCX_SRC, 127257, "Attitude", f);
 }
 
-static void e_wind(double t)   /* 130306 → MWV(R) apparent + MWV(T)+MWD vrai */
+static void e_wind(double t)   /* 130306 → MWV(R), MWV(T), MWD */
 {
+    (void)t;
     char f[160];
-    double aa = 45.0 + 20.0 * sin(t / 10.0);   /* angle apparent */
-    double as = 8.0 + 2.0 * sin(t / 8.0);      /* vitesse m/s */
+    double aa, as, ta, ts;
+    wind_apparent(&aa, &as);
+    wind_true_water(&ta, &ts);
+    /* apparent : angle relatif à l'étrave */
     snprintf(f, sizeof f,
              "\"Reference\":\"Apparent\",\"Wind Speed\":%.2f,\"Wind Angle\":%.1f", as, aa);
     emit(2, MAD_SRC, 130306, "Wind Data", f);
-    double ta = 60.0 + 20.0 * sin(t / 10.0);   /* angle vrai */
-    double tspeed = 9.0 + 2.0 * sin(t / 8.0);
+    /* vrai référencé eau : angle relatif à l'étrave aussi */
     snprintf(f, sizeof f,
              "\"Reference\":\"True (water referenced)\",\"Wind Speed\":%.2f,\"Wind Angle\":%.1f",
-             tspeed, ta);
+             ts, ta);
+    emit(2, MAD_SRC, 130306, "Wind Data", f);
+    /* vrai référencé nord : le champ porte la DIRECTION (→ MWD côté 0183) */
+    snprintf(f, sizeof f,
+             "\"Reference\":\"True (ground referenced to North)\","
+             "\"Wind Speed\":%.2f,\"Wind Angle\":%.1f", boat.tws, boat.twd);
     emit(2, MAD_SRC, 130306, "Wind Data", f);
 }
 
 static void e_setdrift(double t)   /* 129291 → VDR (courant) */
 {
+    (void)t;
     char f[160];
-    double set = 120.0 + 10.0 * sin(t / 40.0);
     snprintf(f, sizeof f,
              "\"Set Reference\":\"True\",\"Set\":%.1f,\"Drift\":%.2f",
-             set, 0.5 + 0.2 * sin(t / 25.0));
+             boat.set, boat.drift);
     emit(4, MAD_SRC, 129291, "Set & Drift, Rapid Update", f);
 }
 
@@ -288,10 +462,10 @@ static void e_rudder(double t)   /* 127245 → RSA */
 
 static void e_stw(double t)   /* 128259 → VHW (vitesse surface) */
 {
+    (void)t;
     char f[96];
-    /* vitesse surface ≈ vitesse fond − un peu de courant */
-    snprintf(f, sizeof f, "\"Speed Water Referenced\":%.2f",
-             boat.sog - 0.3 + 0.2 * sin(t / 12.0));
+    /* CALCULÉE : module du vecteur fond − courant (cf. boat_update). */
+    snprintf(f, sizeof f, "\"Speed Water Referenced\":%.2f", boat.stw);
     emit(2, MAD_SRC, 128259, "Speed", f);
 }
 
@@ -820,7 +994,12 @@ static int run_actisense(double duration, long tick, int once, int no_ais)
         double el = (double)(now - start);
         if (!once && duration > 0 && el >= duration * 1000.0) break;
         double t = el / 1000.0;
+        ctl_refresh();                 /* --control : mêmes réglages qu'en JSON */
         boat_update(t);
+        if (!g_ctl.enabled) {          /* désactivé : aucune trame émise */
+            usleep((useconds_t)(tick * 1000));
+            continue;
+        }
         for (int i = 0; i < n; i++) {
             if (!once && el < S[i].next) continue;
             switch (S[i].id) {
@@ -890,6 +1069,9 @@ static void usage(const char *p)
         "                  + fast-packet GNSS/loch/AIS) à piper dans ./ydraw-bridge\n"
         "                  → YDRAW/TCP → qtVlm en N2K\n"
         "  --tick MS       période de la boucle d'émission (défaut 100 ms)\n"
+        "  --control FIC   pilotage à chaud (enabled/cog/sog/set/drift/twd/tws)\n"
+        "                  relu à chaque changement du fichier ; c'est ce que\n"
+        "                  l'interface web écrit. Vitesses en nœuds, caps en degrés.\n"
         "\nÉmet du JSON façon `analyzer -json` pour tous les PGN compris par\n"
         "n2k-mux + l'identité. Exemple : %s | ./n2k-mux n2k-sim.ini -v\n",
         p, p);
@@ -907,6 +1089,7 @@ int main(int argc, char **argv)
         else if (strcmp(argv[i], "--actisense") == 0) actisense = 1;
         else if (strcmp(argv[i], "--duration") == 0 && i + 1 < argc) duration = atof(argv[++i]);
         else if (strcmp(argv[i], "--tick") == 0 && i + 1 < argc)     tick_ms = atol(argv[++i]);
+        else if (strcmp(argv[i], "--control") == 0 && i + 1 < argc)  g_ctl_path = argv[++i];
         else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) { usage(argv[0]); return 0; }
         else { fprintf(stderr, "option inconnue : %s\n", argv[i]); usage(argv[0]); return 2; }
     }
@@ -925,9 +1108,16 @@ int main(int argc, char **argv)
     printf("{\"version\":\"n2k-sim 1.0\",\"showLookupValues\":true}\n");
 
     if (once) {
+        /* Le pilotage vaut AUSSI pour --once : sans cette relecture, le mode
+         * « un de chaque PGN » sortait toujours les valeurs automatiques. */
+        ctl_refresh();
+        boat_update(0.0);
+        if (!g_ctl.enabled) {
+            fflush(stdout);
+            return 0;              /* désactivé : rien que l'en-tête */
+        }
         /* identité d'abord (sinon les 1ers instruments sont rejetés), puis un
          * exemplaire de chaque PGN. */
-        boat_update(0.0);
         for (int i = 0; i < N_SCHED; i++) {
             if (SCHED[i].is_ais && no_ais) continue;
             SCHED[i].fn(0.0);
@@ -937,13 +1127,31 @@ int main(int argc, char **argv)
     }
 
     uint64_t start = now_ms();
+    int was_enabled = 1;
     while (!g_stop) {
         uint64_t now = now_ms();
         double el = (double)(now - start);          /* ms écoulées */
         if (duration > 0 && el >= duration * 1000.0) break;
         double t = el / 1000.0;                      /* secondes (phase) */
 
+        ctl_refresh();                               /* --control : relecture */
         boat_update(t);                              /* avance la position/cap */
+
+        /* Porte « enabled » : désactivé, le simulateur n'émet RIEN. La chaîne
+         * reste debout (kplex, n2kd, web) et le daemon publie un âge de dernier
+         * message qui grandit — l'interface affiche FLUX MORT, ce qui est la
+         * bonne lecture. À la réactivation on redonne l'en-tête analyzer, dont
+         * n2kd a besoin s'il a démarré entre-temps. */
+        if (!g_ctl.enabled) {
+            was_enabled = 0;
+            usleep((useconds_t)(tick_ms * 1000));
+            continue;
+        }
+        if (!was_enabled) {
+            printf("{\"version\":\"n2k-sim 1.0\",\"showLookupValues\":true}\n");
+            was_enabled = 1;
+        }
+
         for (int i = 0; i < N_SCHED; i++) {
             if (SCHED[i].is_ais && no_ais) continue;
             if (el >= SCHED[i].next_ms) {

@@ -1,0 +1,55 @@
+# n2k-mux-sim.service — chaîne complète alimentée par le SIMULATEUR (banc).
+#
+# Même aval que les chaînes réelles (arbitrage, AIS, kplex 10110, UI web), mais
+# la source est n2k-sim au lieu du bus. Sert à travailler sans matériel : qtVlm
+# voit un bateau qui navigue, et l'onglet Simulateur de l'interface web pilote
+# route, vitesse, courant et vent à chaud.
+#
+#   sudo systemctl daemon-reload
+#   sudo systemctl start n2k-mux-sim      # démarre la chaîne simulée
+#   http://<hôte>:8080/  → onglet Simulateur
+#
+# EXCLUSIVE des chaînes réelles : les démarrer l'une arrête l'autre (Conflicts),
+# elles se disputeraient le port 10110, les ports n2kd et les fichiers de /run.
+
+[Unit]
+Description=n2k-mux — chaîne simulée (sans matériel)
+Documentation=https://github.com/ozolli/n2k-mux
+After=local-fs.target
+Conflicts=n2k-mux.service n2k-mux-can.service kplex.service
+# Même politique que les chaînes réelles : on insiste avant de renoncer.
+StartLimitIntervalSec=600
+StartLimitBurst=20
+
+[Service]
+Type=simple
+
+Environment=CONF=/etc/n2k-mux/n2k-mux.ini KPLEX_CONF=/etc/kplex.conf
+Environment=SIMCTL=/etc/n2k-mux/sim.ctl
+Environment=N2KSIM=/usr/local/bin/n2k-sim
+Environment=N2KMUX=/usr/local/bin/n2k-mux
+Environment=N2KD=/usr/local/bin/n2kd
+Environment=KPLEX=/usr/bin/kplex
+EnvironmentFile=-/etc/default/n2k-mux
+
+# /run/n2k-mux : FIFO + sources.json/stats.json/busmap.json lus par l'UI web.
+# Le fichier de pilotage du simulateur, lui, est dans /etc (il doit SURVIVRE à
+# l'arrêt de l'unité, que RuntimeDirectory nettoie).
+RuntimeDirectory=n2k-mux
+RuntimeDirectoryMode=0755
+LogsDirectory=kplex
+
+# Garde-fou : tue tout n2kd résiduel (ports 2597-2602 sinon occupés).
+ExecStartPre=-/bin/sh -c 'pkill -f "[n]2kd" 2>/dev/null || true'
+ExecStart=/usr/local/bin/n2k-mux-sim-run
+
+Restart=always
+RestartSec=3
+
+NoNewPrivileges=true
+ProtectHome=read-only
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -140,16 +140,19 @@ debug:
 
 # --- Installation système (daemon + service systemd) ---
 # make install            installe le daemon, le service et les exemples
-install: n2k-mux n2k-mux-web n2k-filter ydraw-bridge
+install: n2k-mux n2k-mux-web n2k-filter ydraw-bridge n2k-sim
 	install -d $(DESTDIR)$(PREFIX)/bin
 	install -m755 n2k-mux $(DESTDIR)$(PREFIX)/bin/n2k-mux
 	install -m755 n2k-mux-run $(DESTDIR)$(PREFIX)/bin/n2k-mux-run
 	install -m755 n2k-mux-can-run $(DESTDIR)$(PREFIX)/bin/n2k-mux-can-run
+	install -m755 n2k-mux-sim-run $(DESTDIR)$(PREFIX)/bin/n2k-mux-sim-run
+	install -m755 n2k-sim $(DESTDIR)$(PREFIX)/bin/n2k-sim
 	install -m755 n2k-mux-web $(DESTDIR)$(PREFIX)/bin/n2k-mux-web
 	install -m755 n2k-filter $(DESTDIR)$(PREFIX)/bin/n2k-filter
 	install -m755 ydraw-bridge $(DESTDIR)$(PREFIX)/bin/ydraw-bridge
 	install -Dm644 n2k-mux.service $(DESTDIR)/etc/systemd/system/n2k-mux.service
 	install -Dm644 n2k-mux-can.service $(DESTDIR)/etc/systemd/system/n2k-mux-can.service
+	install -Dm644 n2k-mux-sim.service $(DESTDIR)/etc/systemd/system/n2k-mux-sim.service
 	install -Dm644 n2k-mux-web.service $(DESTDIR)/etc/systemd/system/n2k-mux-web.service
 	install -Dm644 n2k-mux.ini.example $(DESTDIR)/etc/n2k-mux/n2k-mux.ini.example
 	install -Dm644 kplex.conf.example $(DESTDIR)/etc/n2k-mux/kplex.conf.example
@@ -157,13 +160,16 @@ install: n2k-mux n2k-mux-web n2k-filter ydraw-bridge
 	@echo "Installé. Pense à : cp /etc/n2k-mux/n2k-mux.ini.example /etc/n2k-mux/n2k-mux.ini"
 	@echo "NGX-1/série : systemctl enable --now n2k-mux n2k-mux-web"
 	@echo "socketcan   : systemctl enable --now n2k-mux-can n2k-mux-web"
+	@echo "sans matériel : systemctl start n2k-mux-sim  (puis onglet Simulateur)"
 
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/n2k-mux $(DESTDIR)$(PREFIX)/bin/n2k-mux-run
 	rm -f $(DESTDIR)$(PREFIX)/bin/n2k-mux-can-run $(DESTDIR)$(PREFIX)/bin/n2k-filter
+	rm -f $(DESTDIR)$(PREFIX)/bin/n2k-mux-sim-run $(DESTDIR)$(PREFIX)/bin/n2k-sim
 	rm -f $(DESTDIR)$(PREFIX)/bin/n2k-mux-web $(DESTDIR)$(PREFIX)/bin/ydraw-bridge
 	rm -f $(DESTDIR)/etc/systemd/system/n2k-mux.service
 	rm -f $(DESTDIR)/etc/systemd/system/n2k-mux-can.service
+	rm -f $(DESTDIR)/etc/systemd/system/n2k-mux-sim.service
 	rm -f $(DESTDIR)/etc/systemd/system/n2k-mux-web.service
 	rm -f $(DESTDIR)/etc/default/n2k-mux.example
 	rm -f $(DESTDIR)/etc/n2k-mux/n2k-mux.ini.example

@@ -77,8 +77,49 @@ le temps (flux « vivant »). Source unique `src/simulator.c`, zéro dépendance
 ./n2k-sim --once | ./n2k-mux n2k-sim.ini       # un exemplaire de chaque PGN, puis fin
 ```
 
+**Pilotage à chaud — `--control FICHIER`** : un fichier « clé = valeur » relu dès
+que sa date change. SIX entrées seulement, tout le reste en découle :
+
+```
+enabled = 1     ; 0 = le simulateur n'émet RIEN (chaîne debout, flux mort)
+cog     = 45    ; route fond, degrés vrais   (auto = sinusoïde)
+sog     = 6.5   ; vitesse fond, NŒUDS
+set     = 120   ; direction du courant (VERS laquelle il porte), degrés
+drift   = 1.0   ; vitesse du courant, NŒUDS
+twd     = 225   ; direction du vent vrai (D'OÙ il vient), degrés
+tws     = 20    ; vitesse du vent vrai, NŒUDS
+```
+
+DÉDUIT par le simulateur (et donc PAS réglable, sous peine de se contredire à
+l'écran) : cap et vitesse surface = vecteur fond − vecteur courant ; vent
+apparent = vent vrai − vecteur bateau sur le fond ; vent vrai référencé eau =
+vent vrai − courant, ramené à l'étrave ; giration = dérivée du COG, nulle si la
+route est imposée ; position intégrée le long du COG. Le 130306 sort en trois
+exemplaires (Apparent, True water referenced, True ground referenced to North)
+→ MWV(R), MWV(T) et MWD.
+
+C'est ce fichier que l'interface web écrit (onglet **Simulateur**, `/api/sim`),
+d'où le chemin PERSISTANT `/etc/n2k-mux/sim.ctl` : `/run` est nettoyé par
+systemd à l'arrêt de l'unité.
+
+**Chaîne simulée complète — `n2k-mux-sim.service` + `n2k-mux-sim-run`** : même
+aval que les chaînes réelles (arbitrage, AIS via n2kd, kplex 10110, UI web), mais
+la source est `n2k-sim --control` au lieu du bus. Ni actisense ni analyzer (le
+simulateur émet déjà le JSON de l'analyzer), ni ISO Request (il annonce ses
+identités spontanément). EXCLUSIVE des deux chaînes réelles (Conflicts).
+
+```sh
+sudo systemctl start n2k-mux-sim     # puis http://<hôte>:8080/ → Simulateur
+```
+
+La bascule « Simulateur actif » de l'UI ne fait, par défaut, que rendre le
+simulateur muet ou parlant. Pour qu'elle démarre/arrête la CHAÎNE, définir
+SIM_START et SIM_STOP dans /etc/default/n2k-mux ; SIM_STOP doit REMETTRE la
+chaîne réelle, que l'unité simulée a arrêtée, sinon le bord reste sans données.
+C'est pour ça que ce n'est pas câblé par défaut.
+
 Options : `--once` (couverture : un de chaque PGN puis sort), `--duration SEC`,
-`--no-ais`, `--tick MS`. La config compagnon **`n2k-sim.ini`** porte les Model
+`--no-ais`, `--tick MS`, `--control FICHIER`. La config compagnon **`n2k-sim.ini`** porte les Model
 Serial Code émis par le simulateur (SCX/VER/MAD/DST_BB/DST_TB/AIS/DH) → arbitrage
 résolu d'emblée, toute la table de conversion sort. Sert de test bout-en-bout
 (daemon, --ais-json, web) sans bus ni passerelle réels.
@@ -339,6 +380,15 @@ Modules prévus (ordre d'implémentation) :
                 par device) → colonne « PGNs publiés ».
                 Consultable depuis tablettes/téléphone sans X-forwarding, cohérent
                 avec la direction « tout réseau ».
+                Onglet « Simulateur » : bascule d'activation + six réglages
+                (cog, sog, set, drift, twd, tws), chacun avec une case « auto »
+                qui redonne la main à la sinusoïde. Curseur et champ numérique
+                liés, écriture différée de 250 ms (un geste de curseur produit
+                beaucoup d'événements). GET/POST /api/sim ; le corps EST le
+                fichier de pilotage (même format que n2k-sim --control), validé
+                clé par clé puis écrit en temporaire + rename. --sim-control
+                CHEMIN (défaut /etc/n2k-mux/sim.ctl), et --sim-start/--sim-stop
+                CMD facultatives pour que la bascule pilote la chaîne entière.
                 Bascules en-tête : langue FR/EN (dictionnaire L{fr,en} + T(clé),
                 textes statiques via data-i18n) et thème sombre/clair (couleurs en
                 variables CSS, palette .light) ; choix mémorisés en localStorage.

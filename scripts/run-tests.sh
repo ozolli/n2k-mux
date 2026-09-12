@@ -111,6 +111,82 @@ print("checksums vérifiés :", n)
   fi
 fi
 
+# ---- 4. simulateur piloté (fichier de contrôle) ---------------------------
+say "== simulateur piloté (--control) =="
+if [ ! -x ./n2k-sim ]; then
+  ko "n2k-sim absent (make d'abord)"
+else
+  CTL=$(mktemp)
+  printf 'enabled = 1\ncog = 45\nsog = 6.5\nset = 0\ndrift = 0\ntwd = 225\ntws = 20\n' > "$CTL"
+  SIMOUT=$(mktemp)
+  ./n2k-sim --once --control "$CTL" > "$SIMOUT" 2>/dev/null
+  # COG/SOG imposés : 6,5 nds = 3,34 m/s. Sans courant, le cap suit la route et
+  # la vitesse surface égale la vitesse fond.
+  run_case "COG imposé"        grep -q '"COG":45.0' "$SIMOUT"
+  run_case "SOG imposé"        grep -q '"SOG":3.34' "$SIMOUT"
+  run_case "cap déduit"        grep -q '"Heading":45.0,"Reference":"True"' "$SIMOUT"
+  run_case "vitesse surface déduite" grep -q '"Speed Water Referenced":3.34' "$SIMOUT"
+  run_case "vent vrai imposé"  grep -q '"Wind Angle":225.0' "$SIMOUT"
+  rm -f "$SIMOUT"
+  # Porte « enabled » : plus rien que l'en-tête analyzer.
+  printf 'enabled = 0\n' > "$CTL"
+  n=$(./n2k-sim --duration 1 --control "$CTL" 2>/dev/null | grep -c '"pgn"' || true)
+  if [ "$n" = "0" ]; then ok "désactivé : aucun PGN émis"; else ko "désactivé : $n PGN émis"; fi
+  rm -f "$CTL"
+fi
+
+# ---- 5. interface web : aller-retour de l'API simulateur -------------------
+say "== interface web (/api/sim) =="
+if [ ! -x ./n2k-mux-web ]; then
+  ko "n2k-mux-web absent (make d'abord)"
+elif ! command -v curl >/dev/null 2>&1; then
+  say "  (curl absent : contrôle sauté)"
+else
+  WCTL=$(mktemp); WINI=$(mktemp); PORT=18123
+  printf '[output]\ntalker = II\n' > "$WINI"
+  ./n2k-mux-web "$WINI" --port "$PORT" --sim-control "$WCTL" >/dev/null 2>&1 &
+  WPID=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    curl -s -o /dev/null "http://127.0.0.1:$PORT/" && break
+  done
+  curl -s -X POST --data-binary 'enabled = 1
+cog = 200
+sog = 7
+set = auto
+drift = auto
+twd = 90
+tws = 12
+' "http://127.0.0.1:$PORT/api/sim" > /dev/null
+  got=$(curl -s "http://127.0.0.1:$PORT/api/sim")
+  kill "$WPID" 2>/dev/null
+  case "$got" in
+    *'"cog":200.00'*) ok "POST puis GET /api/sim" ;;
+    *) ko "aller-retour /api/sim : $got" ;;
+  esac
+  case "$got" in
+    *'"set":null'*) ok "valeur « auto » conservée" ;;
+    *) ko "valeur « auto » perdue : $got" ;;
+  esac
+  # Le JS de la page est écrit à la main dans une chaîne C : une coquille de
+  # syntaxe casserait toute l'interface sans que rien ne le signale.
+  if command -v node >/dev/null 2>&1; then
+    ./n2k-mux-web "$WINI" --port "$PORT" --sim-control "$WCTL" >/dev/null 2>&1 &
+    WPID=$!
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      curl -s -o /dev/null "http://127.0.0.1:$PORT/" && break
+    done
+    JS=$(mktemp --suffix=.js)
+    curl -s "http://127.0.0.1:$PORT/" \
+      | sed -n '/<script>/,/<\/script>/p' | sed '1d;$d' > "$JS"
+    kill "$WPID" 2>/dev/null
+    run_case "syntaxe du JS de la page" node --check "$JS"
+    rm -f "$JS"
+  else
+    say "  (node absent : syntaxe JS non vérifiée)"
+  fi
+  rm -f "$WCTL" "$WINI"
+fi
+
 say ""
 say "Total : $pass ok, $fail KO"
 [ "$fail" -eq 0 ] || exit 1

@@ -35,6 +35,7 @@
 #include <signal.h>
 #include <fcntl.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
@@ -46,6 +47,13 @@ static const char *g_sources_path = "/run/n2k-mux/sources.json";
 static const char *g_stats_path   = "/run/n2k-mux/stats.json";
 static const char *g_busmap_path  = "/run/n2k-mux/busmap.json";
 static const char *g_reload_cmd  = NULL;
+/* Simulateur : fichier de pilotage relu à chaud par n2k-sim --control, et
+ * commandes OPTIONNELLES de démarrage/arrêt de la chaîne simulée. Sans ces
+ * commandes, la bascule ne fait que réduire le simulateur au silence (ce qui
+ * suffit si la chaîne simulée tourne déjà). */
+static const char *g_sim_path    = "/etc/n2k-mux/sim.ctl";
+static const char *g_sim_start   = NULL;
+static const char *g_sim_stop    = NULL;
 #define AUTH_RAW_MAX 256                   /* longueur max acceptée de "user:pass" */
 static const char *g_auth        = NULL;   /* "user:pass" attendu (NULL = pas d'auth) */
 static char        g_auth_b64[352];        /* base64 du credential (>= 4*ceil(256/3)+1) */
@@ -95,7 +103,8 @@ static const char PAGE[] =
 "</style></head><body>\n"
 "<header><b>n2k-mux</b>\n"
 "<nav><button data-t='sources' class='on' data-i18n='tab_sources'>Sources</button>"
-"<button data-t='arbitrage' data-i18n='tab_arb'>Arbitrage</button></nav>\n"
+"<button data-t='arbitrage' data-i18n='tab_arb'>Arbitrage</button>"
+"<button data-t='sim' data-i18n='tab_sim'>Simulateur</button></nav>\n"
 "<span style='margin-left:auto;display:flex;gap:.5em;align-items:center'>"
 "<button id='lang' class='hbtn' title='Langue / Language'></button>"
 "<button id='theme' class='hbtn' title='Thème / Theme'></button>"
@@ -115,6 +124,16 @@ static const char PAGE[] =
 "<small> &nbsp;<span data-i18n='arb_help'></span></small></div>\n"
 "<div id='arb_load' class='card' style='margin-bottom:.6em'></div>\n"
 "<div id='arb_body'>…</div></section>\n"
+"<section id='sim' class='tab'>\n"
+"<div id='sim_msg'></div>\n"
+"<div style='margin:.2em 0 .6em'>"
+"<label class=sl><input type=checkbox id='sim_on'> <b><span data-i18n='sim_on'></span></b></label>"
+"<button class='btn sec' id='sim_reload' data-i18n='refresh'>Rafraîchir</button>"
+"<small> &nbsp;<span data-i18n='sim_help'></span></small></div>\n"
+"<div id='sim_body' style='max-width:760px'>…</div>\n"
+"<div class='card' style='max-width:760px;margin-top:.6em'>"
+"<h3 data-i18n='sim_derived_t'></h3><small><span data-i18n='sim_derived'></span></small></div>\n"
+"</section>\n"
 "</main>\n"
 "<script>\n"
 "let lang=localStorage.getItem('lang')||((navigator.language||'fr').toLowerCase().startsWith('fr')?'fr':'en');\n"
@@ -144,7 +163,16 @@ static const char PAGE[] =
 "names_saved:'Noms enregistrés et rechargés.',arb_saved:'Arbitrage enregistré et rechargé.',rej_line:'Refusé — ligne ',err_pfx:'Erreur : ',\n"
 "no_src:'Aucune source vue (le daemon tourne ?).',na_src:'sources.json indisponible.',na_bm:'busmap/rules indisponible (daemon avec --busmap ?).',\n"
 "to_name:'à nommer',ignore_lbl:'ignorer',show_unseen:'PGN non vus',arb_none:'Aucun PGN vu pour l’instant (le bus émet ? sinon, cocher « PGN non vus »).',\n"
-"stale:'FLUX MORT : aucun message depuis',stale_never:'FLUX MORT : aucun message reçu'\n"
+"stale:'FLUX MORT : aucun message depuis',stale_never:'FLUX MORT : aucun message reçu',\n"
+"tab_sim:'Simulateur',sim_on:'Simulateur actif',\n"
+"sim_help:'bateau simulé, sans matériel : ces six grandeurs pilotent tout le flux',\n"
+"sim_cog:'Route fond (COG)',sim_sog:'Vitesse fond (SOG)',sim_set:'Direction du courant (set)',\n"
+"sim_drift:'Vitesse du courant (drift)',sim_twd:'Direction du vent vrai (TWD)',sim_tws:'Vitesse du vent vrai (TWS)',\n"
+"sim_auto:'auto',sim_saved:'Simulateur mis à jour.',sim_na:'Pilotage indisponible (chemin --sim-control accessible ?).',\n"
+"sim_derived_t:'Valeurs déduites',\n"
+"sim_derived:'Cap et vitesse surface = vecteur fond moins vecteur courant. Vent apparent = vent vrai moins vecteur bateau. Giration = dérivée du COG, nulle si la route est imposée. Position intégrée le long du COG. Les régler à la main les mettrait en contradiction.',\n"
+"sim_nostart:'La bascule ne fait que rendre le simulateur muet : aucune commande de démarrage n’est configurée (--sim-start).',\n"
+"sim_dir:'°',sim_kn:'nds'\n"
 "},en:{\n"
 "tab_sources:'Sources',tab_arb:'Arbitration',save_names:'Save names',save_arb:'Save arbitration',refresh:'Refresh',\n"
 "src_help:'naming a source makes it usable in the Arbitration tab',arb_help:'checkbox = selected source · ◀▶ = priority order',\n"
@@ -170,7 +198,16 @@ static const char PAGE[] =
 "names_saved:'Names saved and reloaded.',arb_saved:'Arbitration saved and reloaded.',rej_line:'Rejected — line ',err_pfx:'Error: ',\n"
 "no_src:'No source seen (is the daemon running?).',na_src:'sources.json unavailable.',na_bm:'busmap/rules unavailable (daemon with --busmap?).',\n"
 "to_name:'to name',ignore_lbl:'ignore',show_unseen:'unseen PGNs',arb_none:'No PGN seen yet (is the bus active? otherwise tick “unseen PGNs”).',\n"
-"stale:'STREAM DEAD: no message for',stale_never:'STREAM DEAD: no message received'\n"
+"stale:'STREAM DEAD: no message for',stale_never:'STREAM DEAD: no message received',\n"
+"tab_sim:'Simulator',sim_on:'Simulator running',\n"
+"sim_help:'simulated boat, no hardware: these six inputs drive the whole stream',\n"
+"sim_cog:'Course over ground (COG)',sim_sog:'Speed over ground (SOG)',sim_set:'Current direction (set)',\n"
+"sim_drift:'Current speed (drift)',sim_twd:'True wind direction (TWD)',sim_tws:'True wind speed (TWS)',\n"
+"sim_auto:'auto',sim_saved:'Simulator updated.',sim_na:'Control unavailable (is --sim-control writable?).',\n"
+"sim_derived_t:'Derived values',\n"
+"sim_derived:'Heading and water speed = ground vector minus current vector. Apparent wind = true wind minus boat vector. Rate of turn = COG derivative, zero when the course is forced. Position integrated along COG. Setting those by hand would contradict the inputs.',\n"
+"sim_nostart:'The toggle only silences the simulator: no start command is configured (--sim-start).',\n"
+"sim_dir:'°',sim_kn:'kn'\n"
 "}};\n"
 "const T=k=>{const o=L[lang];return (o&&o[k]!=null)?o[k]:k;};\n"
 "function applyI18n(){document.querySelectorAll('[data-i18n]').forEach(e=>{e.textContent=T(e.dataset.i18n);});document.documentElement.lang=lang;}\n"
@@ -182,6 +219,7 @@ static const char PAGE[] =
 " document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));$('#'+b.dataset.t).classList.add('on');\n"
 " if(b.dataset.t==='arbitrage')loadArb();\n"
 " if(b.dataset.t==='sources')renderSources();\n"
+" if(b.dataset.t==='sim')loadSim();\n"
 "});\n"
 "async function jget(u){const r=await fetch(u);if(!r.ok)throw new Error(r.status);return r.json()}\n"
 "function smsg(t,cls){const m=$('#src_msg');m.textContent=t;m.className=t?(cls||'ok'):'';}\n"
@@ -328,10 +366,53 @@ static const char PAGE[] =
 "$('#arb_unseen').checked=localStorage.getItem('arb_unseen')==='1';\n"
 "$('#arb_unseen').onchange=e=>{localStorage.setItem('arb_unseen',e.target.checked?'1':'');if(ARB)drawArb();};\n"
 "$('#src_save').onclick=saveSrc;$('#src_reload').onclick=renderSources;\n"
+"// --- Simulateur ------------------------------------------------------------\n"
+"// Six ENTRÉES seulement : tout le reste est calculé par n2k-sim (cap, vitesse\n"
+"// surface, vent apparent, giration, position). On écrit le fichier de pilotage\n"
+"// via /api/sim ; le simulateur le relit tout seul, sans redémarrage.\n"
+"const SIMF=[['cog',0,359,1,'sim_dir'],['sog',0,20,0.1,'sim_kn'],\n"
+"            ['set',0,359,1,'sim_dir'],['drift',0,6,0.1,'sim_kn'],\n"
+"            ['twd',0,359,1,'sim_dir'],['tws',0,50,0.5,'sim_kn']];\n"
+"const SIMDEF={cog:90,sog:9,set:120,drift:1,twd:225,tws:17};\n"
+"let SIM=null,simTimer=null;\n"
+"// smsg() appartient à l'onglet Sources : ne pas réutiliser ce nom ici.\n"
+"function simsg(t,cls){const m=$('#sim_msg');m.textContent=t;m.className=t?(cls||'ok'):'';}\n"
+"async function loadSim(){try{SIM=await jget('/api/sim');}catch(e){$('#sim_body').innerHTML='<small>'+T('sim_na')+'</small>';return;}\n"
+" $('#sim_on').checked=!!SIM.enabled;drawSim();\n"
+" simsg(SIM.can_start?'':T('sim_nostart'),'ok');}\n"
+"function drawSim(){let h='<table>';\n"
+" for(const f of SIMF){const k=f[0],v=SIM[k],auto=(v===null||v===undefined);\n"
+"  const cur=auto?SIMDEF[k]:v;\n"
+"  h+='<tr><td>'+T('sim_'+k)+'</td>'\n"
+"   +'<td style=\"width:55%\"><input type=range id=sr_'+k+' min='+f[1]+' max='+f[2]+' step='+f[3]+' value='+cur+(auto?' disabled':'')+' style=\"width:100%\"></td>'\n"
+"   +'<td class=n><input class=ri id=sn_'+k+' type=number min='+f[1]+' max='+f[2]+' step='+f[3]+' value='+cur+(auto?' disabled':'')+'> <small>'+T(f[4])+'</small></td>'\n"
+"   +'<td class=c><label class=sl><input type=checkbox id=sa_'+k+(auto?' checked':'')+'> '+T('sim_auto')+'</label></td></tr>';}\n"
+" h+='</table>';$('#sim_body').innerHTML=h;\n"
+" for(const f of SIMF){const k=f[0],r=$('#sr_'+k),nb=$('#sn_'+k),au=$('#sa_'+k);\n"
+"  r.oninput=()=>{nb.value=r.value;pushSim();};\n"
+"  nb.oninput=()=>{r.value=nb.value;pushSim();};\n"
+"  au.onchange=()=>{r.disabled=nb.disabled=au.checked;pushSim();};}\n"
+"}\n"
+"function simBody(){let t='enabled = '+($('#sim_on').checked?1:0)+'\\n';\n"
+" for(const f of SIMF){const k=f[0];\n"
+"  t+=k+' = '+($('#sa_'+k).checked?'auto':$('#sn_'+k).value)+'\\n';}\n"
+" return t;}\n"
+"// Un geste de curseur produit beaucoup d'événements : on n'écrit qu'une fois\n"
+"// la main relâchée (250 ms sans changement).\n"
+"function pushSim(){clearTimeout(simTimer);simTimer=setTimeout(sendSim,250);}\n"
+"async function sendSim(){try{const r=await fetch('/api/sim',{method:'POST',body:simBody()});\n"
+"  const d=await r.json();\n"
+"  if(!d.ok){simsg(T('err_pfx')+(d.err||''),'err');return;}\n"
+"  simsg((SIM&&SIM.can_start)?T('sim_saved'):T('sim_nostart'),'ok');\n"
+" }catch(e){simsg(T('err_pfx')+e,'err');}}\n"
+"$('#sim_on').onchange=pushSim;$('#sim_reload').onclick=loadSim;\n"
 "function tick(){$('#clock').textContent=new Date().toLocaleTimeString();\n"
 " if($('#arbitrage').classList.contains('on'))updateLoad();}\n"
 "function applyTheme(){document.body.classList.toggle('light',theme==='light');$('#theme').textContent=theme==='dark'?'☀':'🌙';}\n"
-"function applyLang(){$('#lang').textContent=lang==='fr'?'EN':'FR';applyI18n();if($('#arbitrage').classList.contains('on'))loadArb();else renderSources();}\n"
+"function applyLang(){$('#lang').textContent=lang==='fr'?'EN':'FR';applyI18n();\n"
+" if($('#arbitrage').classList.contains('on'))loadArb();\n"
+" else if($('#sim').classList.contains('on'))loadSim();\n"
+" else renderSources();}\n"
 "$('#lang').onclick=()=>{lang=(lang==='fr')?'en':'fr';localStorage.setItem('lang',lang);applyLang();};\n"
 "$('#theme').onclick=()=>{theme=(theme==='dark')?'light':'dark';localStorage.setItem('theme',theme);applyTheme();};\n"
 "if(window.matchMedia)matchMedia('(prefers-color-scheme: light)').addEventListener('change',e=>{\n"
@@ -388,6 +469,16 @@ static void backup_file(const char *path)
  * — et le daemon refuse alors de (re)démarrer. */
 static int write_file_atomic(const char *path, const char *buf, size_t len)
 {
+    /* Crée le répertoire parent au besoin (best-effort), comme le daemon le
+     * fait pour ses JSON : le fichier de pilotage du simulateur peut être le
+     * premier à y être écrit. */
+    char dircopy[512];
+    snprintf(dircopy, sizeof dircopy, "%s", path);
+    char *slash = strrchr(dircopy, '/');
+    if (slash && slash != dircopy) {
+        *slash = '\0';
+        mkdir(dircopy, 0755);
+    }
     char tmp[576];
     snprintf(tmp, sizeof tmp, "%s.tmp", path);
     if (write_file(tmp, buf, len) != 0) { unlink(tmp); return -1; }
@@ -503,6 +594,131 @@ static const char *mode_str(cfg_mode_t m)
         case CFG_PICK_FUSION: return "fusion";
         default:              return "priority";
     }
+}
+
+/* --- Simulateur ------------------------------------------------------------
+ * Le fichier de pilotage est un simple « clé = valeur » (cf. n2k-sim
+ * --control) : l'UI l'envoie tel quel, on le valide puis on l'écrit. Pas de
+ * parser JSON côté serveur, et le simulateur lit le même format. */
+
+static const char *SIM_KEYS[] = { "cog", "sog", "set", "drift", "twd", "tws" };
+#define SIM_NKEYS ((int)(sizeof SIM_KEYS / sizeof *SIM_KEYS))
+
+/* Lit une clé du fichier de pilotage. Retourne 1 si présente et numérique,
+ * 0 si absente ou « auto ». */
+static int sim_get(const char *text, const char *key, double *out)
+{
+    char pat[32];
+    snprintf(pat, sizeof pat, "%s", key);
+    for (const char *p = text; *p; ) {
+        while (*p == ' ' || *p == '\t') p++;
+        const char *eol = p;
+        while (*eol && *eol != '\n') eol++;
+        size_t kl = strlen(pat);
+        if (strncasecmp(p, pat, kl) == 0) {
+            const char *q = p + kl;
+            while (*q == ' ' || *q == '\t') q++;
+            if (*q == '=') {
+                q++;
+                while (*q == ' ' || *q == '\t') q++;
+                if (strncasecmp(q, "auto", 4) == 0) return 0;
+                char *end = NULL;
+                double v = strtod(q, &end);
+                if (end && end != q) { *out = v; return 1; }
+                return 0;
+            }
+        }
+        p = *eol ? eol + 1 : eol;
+    }
+    return 0;
+}
+
+/* GET /api/sim : état courant du pilotage, en JSON (null = automatique). */
+static void serve_sim(int fd)
+{
+    static char buf[4096];
+    size_t len = 0;
+    if (read_file(g_sim_path, buf, sizeof buf, &len) != 0)
+        buf[0] = '\0';
+
+    double en = 1;
+    int    enabled = sim_get(buf, "enabled", &en) ? (en != 0) : 1;
+
+    char out[512];
+    size_t n = 0;
+    int w = snprintf(out, sizeof out, "{\"enabled\":%s,\"can_start\":%s",
+                     enabled ? "true" : "false",
+                     (g_sim_start && g_sim_start[0]) ? "true" : "false");
+    if (w < 0 || (size_t)w >= sizeof out) { send_text(fd, 500, "Error", "application/json", "{}"); return; }
+    n += (size_t)w;
+    for (int i = 0; i < SIM_NKEYS; i++) {
+        double v = 0;
+        int has = sim_get(buf, SIM_KEYS[i], &v);
+        w = has ? snprintf(out + n, sizeof out - n, ",\"%s\":%.2f", SIM_KEYS[i], v)
+                : snprintf(out + n, sizeof out - n, ",\"%s\":null", SIM_KEYS[i]);
+        if (w < 0 || (size_t)w >= sizeof out - n) { send_text(fd, 500, "Error", "application/json", "{}"); return; }
+        n += (size_t)w;
+    }
+    snprintf(out + n, sizeof out - n, "}");
+    send_text(fd, 200, "OK", "application/json", out);
+}
+
+/* POST /api/sim : le corps est le fichier de pilotage. On n'accepte que les
+ * clés connues et des valeurs numériques ou « auto », puis on réécrit le
+ * fichier proprement (temporaire + rename) — le simulateur le relit seul. */
+static void handle_sim_post(int fd, const char *body)
+{
+    double en = 1;
+    int enabled = sim_get(body, "enabled", &en) ? (en != 0) : 1;
+
+    char text[1024];
+    size_t n = 0;
+    int w = snprintf(text, sizeof text,
+                     "# n2k-sim : pilotage écrit par l'interface web\n"
+                     "# vitesses en nœuds, caps en degrés, « auto » = sinusoïde\n"
+                     "enabled = %d\n", enabled ? 1 : 0);
+    if (w < 0) { send_text(fd, 500, "Error", "application/json", "{}"); return; }
+    n += (size_t)w;
+
+    for (int i = 0; i < SIM_NKEYS; i++) {
+        double v = 0;
+        if (!sim_get(body, SIM_KEYS[i], &v)) {
+            w = snprintf(text + n, sizeof text - n, "%s = auto\n", SIM_KEYS[i]);
+        } else {
+            /* bornes : un cap tourne, une vitesse ne descend pas sous zéro */
+            int is_dir = (strcmp(SIM_KEYS[i], "cog") == 0 ||
+                          strcmp(SIM_KEYS[i], "set") == 0 ||
+                          strcmp(SIM_KEYS[i], "twd") == 0);
+            if (is_dir) {
+                while (v < 0)    v += 360;
+                while (v >= 360) v -= 360;
+            } else if (v < 0) {
+                v = 0;
+            }
+            w = snprintf(text + n, sizeof text - n, "%s = %.2f\n", SIM_KEYS[i], v);
+        }
+        if (w < 0 || (size_t)w >= sizeof text - n) { send_text(fd, 500, "Error", "application/json", "{}"); return; }
+        n += (size_t)w;
+    }
+
+    if (write_file_atomic(g_sim_path, text, n) != 0) {
+        char out[256];
+        snprintf(out, sizeof out, "{\"ok\":false,\"err\":\"écriture impossible (%s)\"}",
+                 strerror(errno));
+        send_text(fd, 200, "OK", "application/json", out);
+        return;
+    }
+
+    /* Commandes de chaîne, si l'exploitant les a configurées. */
+    const char *cmd = enabled ? g_sim_start : g_sim_stop;
+    int ran = 0;
+    if (cmd && cmd[0])
+        ran = (system(cmd) == 0) ? 1 : -1;
+
+    char out[256];
+    snprintf(out, sizeof out, "{\"ok\":true,\"enabled\":%s,\"cmd\":%d}",
+             enabled ? "true" : "false", ran);
+    send_text(fd, 200, "OK", "application/json", out);
 }
 
 /* GET /api/rules : la config courante (INI parsée) en JSON structuré, pour
@@ -692,6 +908,8 @@ static void handle_client(int fd)
             serve_json_file(fd, g_busmap_path);
         else if (strcmp(path, "/api/rules") == 0)
             serve_rules(fd);
+        else if (strcmp(path, "/api/sim") == 0)
+            serve_sim(fd);
         else if (strcmp(path, "/api/config") == 0) {
             static char buf[FILE_MAX]; size_t len = 0;
             if (g_cfg_path && read_file(g_cfg_path, buf, sizeof buf, &len) == 0)
@@ -705,6 +923,8 @@ static void handle_client(int fd)
             handle_config_post(fd, body, 0);
         else if (strcmp(path, "/api/config") == 0)
             handle_config_post(fd, body, 1);
+        else if (strcmp(path, "/api/sim") == 0)
+            handle_sim_post(fd, body);
         else
             send_text(fd, 404, "Not Found", "text/plain", "404\n");
     } else {
@@ -727,6 +947,9 @@ int main(int argc, char **argv)
         else if (strcmp(argv[i], "--reload-cmd") == 0 && i + 1 < argc) g_reload_cmd = argv[++i];
         else if (strcmp(argv[i], "--auth") == 0 && i + 1 < argc) g_auth = argv[++i];
         else if (strcmp(argv[i], "--allow-anonymous") == 0) allow_anon = 1;
+        else if (strcmp(argv[i], "--sim-control") == 0 && i + 1 < argc) g_sim_path = argv[++i];
+        else if (strcmp(argv[i], "--sim-start") == 0 && i + 1 < argc) g_sim_start = argv[++i];
+        else if (strcmp(argv[i], "--sim-stop") == 0 && i + 1 < argc) g_sim_stop = argv[++i];
         else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             fprintf(stderr,
                 "Usage : %s [config.ini] [--sources P] [--stats P] [--busmap P]\n"
@@ -738,7 +961,11 @@ int main(int argc, char **argv)
                 "  --reload-cmd  commande lancée après sauvegarde (ex. \"pkill -HUP -x n2k-mux\")\n"
                 "  --auth        exige une authentification HTTP Basic (user:pass)\n"
                 "                (ou variable d'environnement N2K_MUX_WEB_AUTH)\n"
-                "  --allow-anonymous  autorise l'écoute réseau SANS authentification\n",
+                "  --allow-anonymous  autorise l'écoute réseau SANS authentification\n"
+                "  --sim-control P    fichier de pilotage du simulateur\n"
+                "                (défaut /run/n2k-mux/sim.ctl ; cf. n2k-sim --control)\n"
+                "  --sim-start CMD    commande lançant la chaîne simulée (optionnel)\n"
+                "  --sim-stop CMD     commande arrêtant la chaîne simulée (optionnel)\n",
                 argv[0]);
             return 0;
         } else if (argv[i][0] != '-') g_cfg_path = argv[i];
