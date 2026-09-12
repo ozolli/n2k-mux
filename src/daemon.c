@@ -45,6 +45,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <signal.h>
+#include <poll.h>
 
 /* Requêtes ISO (PGN 59904) demandant 60928 puis 126996 à tous (dst=255).
  * Format actisense-serial : ,prio,pgn,src,dst,bytes,b0,b1,... (src ignoré). */
@@ -101,6 +102,60 @@ static void emit_iso_requests(int txfd, int tx_can, int src_addr)
         ssize_t n = write(txfd, ISO_REQUESTS[i], strlen(ISO_REQUESTS[i]));
         (void)n;   /* best-effort : pas de lecteur / FIFO pleine → on ignore */
     }
+}
+
+/* --- Lecteur de lignes sans la stdio ---------------------------------------
+ * La boucle doit rendre la main sur INACTIVITÉ pour tenir ses tâches
+ * périodiques (ISO Request, publication des sources/stats). Or fgets et poll ne
+ * se marient pas : poll ne voit pas les octets déjà avalés par le tampon
+ * interne de la stdio, et un flux muet bloquerait dans fgets pour toujours. On
+ * lit donc nous-mêmes, et on découpe les lignes dans notre propre tampon.
+ * Zéro allocation, cohérent avec le reste du projet. */
+/* Période de réveil de la boucle quand le flux est muet : assez court pour que
+ * les publications restent à l'heure, assez long pour ne rien coûter. */
+#define DAEMON_POLL_MS 200
+
+#define LR_BUF 65536
+typedef struct {
+    char   buf[LR_BUF];
+    size_t len;        /* octets utiles */
+    bool   eof;
+} linereader_t;
+
+/* Lit ce qui est disponible. Retourne 1 si des octets sont arrivés, 0 sur EOF,
+ * -1 si rien à lire pour l'instant ou erreur transitoire. */
+static int lr_fill(linereader_t *lr, int fd)
+{
+    if (lr->len >= sizeof lr->buf)
+        return -1;                       /* tampon plein : vider d'abord */
+    ssize_t r = read(fd, lr->buf + lr->len, sizeof lr->buf - lr->len);
+    if (r > 0) { lr->len += (size_t)r; return 1; }
+    if (r == 0) { lr->eof = true; return 0; }
+    return -1;                           /* EAGAIN / EINTR */
+}
+
+/* Extrait la prochaine ligne complète dans `out` (terminée NUL, '\n' inclus).
+ * true si une ligne a été produite. Une ligne plus longue que le tampon est
+ * coupée, comme le faisait fgets. En fin de flux, le reliquat sans '\n' sort. */
+static bool lr_line(linereader_t *lr, char *out, size_t outsz)
+{
+    char *nl = memchr(lr->buf, '\n', lr->len);
+    size_t take;
+    if (nl)
+        take = (size_t)(nl - lr->buf) + 1;
+    else if (lr->len >= sizeof lr->buf)
+        take = lr->len;                  /* ligne monstrueuse : on la coupe */
+    else if (lr->eof && lr->len > 0)
+        take = lr->len;                  /* dernière ligne sans fin de ligne */
+    else
+        return false;
+
+    size_t cp = take < outsz - 1 ? take : outsz - 1;
+    memcpy(out, lr->buf, cp);
+    out[cp] = '\0';
+    lr->len -= take;
+    memmove(lr->buf, lr->buf + take, lr->len);
+    return true;
 }
 
 /* --- Throttle de la sortie 0183 (limite de débit par type de phrase) --- */
@@ -440,8 +495,16 @@ int main(int argc, char **argv)
 
     char line[8192];
     unsigned long n_lines = 0, n_accept = 0, n_sent = 0;
+    static linereader_t lr;   /* 64 Ko : statique, pas sur la pile */
 
-    while (fgets(line, sizeof line, stdin)) {
+    /* Boucle pilotée par poll et NON par l'arrivée des lignes : les tâches
+     * périodiques (ISO Request, publication des sources/stats/perdants) doivent
+     * tourner même si le flux amont se tait sans mourir. Avec l'ancien
+     * `while (fgets(...))`, un bus muet gelait toutes les publications : les
+     * fichiers JSON gardaient indéfiniment les derniers débits non nuls et
+     * l'interface web montrait une chaîne vivante alors que plus rien
+     * n'arrivait. poll rend aussi SIGHUP immédiat (poll n'est pas redémarré). */
+    for (;;) {
         uint64_t now = now_ms();
 
         /* Charge MESURÉE : le socket TX socketcan reçoit aussi tout le bus ;
@@ -461,12 +524,54 @@ int main(int argc, char **argv)
             }
         }
 
+        /* émission périodique des ISO Request (best-effort) */
+        if (txfd >= 0 && now - last_tx >= (uint64_t)tx_interval * 1000u) {
+            emit_iso_requests(txfd, tx_can, tx_src_addr);
+            last_tx = now;
+        }
+
+        /* publication périodique des sources vues (pour la GUI) */
+        if ((sources_path || losers_path || busmap_path) &&
+            now - last_sources >= (uint64_t)sources_interval * 1000u) {
+            if (sources_path) sources_write(&reg, sources_path);
+            if (losers_path)  dropset_write(&drop, losers_path, now, &cfg);
+            if (busmap_path)  busmap_write(&bm, busmap_path, now);
+            last_sources = now;
+        }
+
+        /* statistiques de trafic / charge de bus estimée */
+        if ((stats_path || verbose) && now - last_stats >= (uint64_t)stats_interval * 1000u) {
+            if (verbose) {
+                double mps, fps, load, osps, obps, oload;
+                stats_summary(&st, now, &mps, &fps, &load);
+                stats_summary_out(&st, now, &osps, &obps, &oload);
+                fprintf(stderr, "n2k-mux stats : N2K %.1f msg/s ~%.1f trames/s charge ~%.1f%% | "
+                        "0183 %.1f phr/s %.0f o/s charge ~%.1f%%\n",
+                        mps, fps, load, osps, obps, oload);
+            }
+            if (stats_path) stats_write(&st, stats_path, now);
+            else            stats_reset(&st, now);
+            last_stats = now;
+        }
+
+        /* Une ligne complète en attente ? Sinon on dort au plus DAEMON_POLL_MS
+         * et on refait un tour, tâches périodiques comprises. */
+        if (!lr_line(&lr, line, sizeof line)) {
+            if (lr.eof)
+                break;
+            struct pollfd pfd = { .fd = STDIN_FILENO, .events = POLLIN, .revents = 0 };
+            int pr = poll(&pfd, 1, DAEMON_POLL_MS);
+            if (pr > 0)
+                lr_fill(&lr, STDIN_FILENO);
+            continue;
+        }
+
         jsonl_msg_t m;
         if (jsonl_parse(line, &m)) {
             n_lines++;
             registry_observe(&reg, &m);
             if (m.has_pgn)
-                stats_observe(&st, m.pgn);   /* tout le trafic vu (avant filtres) */
+                stats_observe(&st, m.pgn, now);   /* tout le trafic vu (avant filtres) */
 
             arb_decision_t d = arbiter_decide(&arb, &m, now);
             if (d.result == ARB_ACCEPT) n_accept++;
@@ -545,35 +650,6 @@ int main(int argc, char **argv)
             }
         }
 
-        /* émission périodique des ISO Request (best-effort) */
-        if (txfd >= 0 && now - last_tx >= (uint64_t)tx_interval * 1000u) {
-            emit_iso_requests(txfd, tx_can, tx_src_addr);
-            last_tx = now;
-        }
-
-        /* publication périodique des sources vues (pour la GUI) */
-        if ((sources_path || losers_path || busmap_path) &&
-            now - last_sources >= (uint64_t)sources_interval * 1000u) {
-            if (sources_path) sources_write(&reg, sources_path);
-            if (losers_path)  dropset_write(&drop, losers_path, now, &cfg);
-            if (busmap_path)  busmap_write(&bm, busmap_path, now);
-            last_sources = now;
-        }
-
-        /* statistiques de trafic / charge de bus estimée */
-        if ((stats_path || verbose) && now - last_stats >= (uint64_t)stats_interval * 1000u) {
-            if (verbose) {
-                double mps, fps, load, osps, obps, oload;
-                stats_summary(&st, now, &mps, &fps, &load);
-                stats_summary_out(&st, now, &osps, &obps, &oload);
-                fprintf(stderr, "n2k-mux stats : N2K %.1f msg/s ~%.1f trames/s charge ~%.1f%% | "
-                        "0183 %.1f phr/s %.0f o/s charge ~%.1f%%\n",
-                        mps, fps, load, osps, obps, oload);
-            }
-            if (stats_path) stats_write(&st, stats_path, now);
-            else            stats_reset(&st, now);
-            last_stats = now;
-        }
     }
 
     if (sources_path)
@@ -582,6 +658,8 @@ int main(int argc, char **argv)
         dropset_write(&drop, losers_path, now_ms(), &cfg);
     if (busmap_path)
         busmap_write(&bm, busmap_path, now_ms());
+    if (stats_path)
+        stats_write(&st, stats_path, now_ms());   /* dernière fenêtre à l'arrêt */
     if (txfd >= 0) close(txfd);
     fprintf(stderr, "n2k-mux : %lu lignes, %lu retenues, %lu phrases émises.\n",
             n_lines, n_accept, n_sent);

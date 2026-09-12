@@ -69,9 +69,18 @@ void stats_reset(stats_t *s, uint64_t now)
         s->types[i].count = 0;
 }
 
-void stats_observe(stats_t *s, int pgn)
+double stats_last_msg_age_s(const stats_t *s, uint64_t now)
+{
+    if (!s->have_msg)
+        return -1.0;
+    return (now > s->last_msg) ? (double)(now - s->last_msg) / 1000.0 : 0.0;
+}
+
+void stats_observe(stats_t *s, int pgn, uint64_t now)
 {
     s->msgs++;
+    s->last_msg = now;
+    s->have_msg = true;
     s->frames += (unsigned long)stats_frames_for(pgn);
 
     for (int i = 0; i < s->n_pgns; i++)
@@ -173,10 +182,11 @@ int stats_to_json(const stats_t *s, char *buf, size_t sz, uint64_t now)
     size_t n = 0;
     int w = snprintf(buf, sz,
                      "{\"window_s\":%.1f,\"msg_per_s\":%.1f,\"frames_per_s\":%.1f,"
-                     "\"bus_load_pct\":%.1f,\"measured\":%s,"
+                     "\"bus_load_pct\":%.1f,\"measured\":%s,\"last_msg_age_s\":%.1f,"
                      "\"out_sent_per_s\":%.1f,\"out_bytes_per_s\":%.1f,\"out_load_pct\":%.1f,"
                      "\"pgns\":[\n", dt, mps, fps, load,
-                     s->meas_frames > 0 ? "true" : "false", osps, obps, oload);
+                     s->meas_frames > 0 ? "true" : "false",
+                     stats_last_msg_age_s(s, now), osps, obps, oload);
     if (w < 0 || (size_t)w >= sz) return -1;
     n += (size_t)w;
 

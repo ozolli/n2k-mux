@@ -21,6 +21,7 @@
 #ifndef N2KMUX_STATS_H
 #define N2KMUX_STATS_H
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
 
@@ -47,6 +48,11 @@ typedef struct {
 
 typedef struct {
     uint64_t      window_start;        /* début de la fenêtre (ms) */
+    /* Dernier message reçu, toutes sources confondues. Horodatage ABSOLU : il
+     * survit aux resets de fenêtre. Publié en âge dans le JSON, pour qu'un
+     * consommateur distingue « chaîne vivante à 0 msg/s » de « chaîne morte ». */
+    uint64_t      last_msg;
+    bool          have_msg;
 
     /* entrée NMEA 2000 */
     unsigned long msgs;                /* messages dans la fenêtre */
@@ -71,8 +77,14 @@ void stats_init(stats_t *s, uint64_t now);
 /* Réinitialise la fenêtre (garde les totaux par PGN). */
 void stats_reset(stats_t *s, uint64_t now);
 
-/* Enregistre un message d'un PGN (trames estimées en interne). */
-void stats_observe(stats_t *s, int pgn);
+/* Enregistre un message d'un PGN (trames estimées en interne). `now` sert à
+ * horodater le dernier message reçu (détection de flux mort). */
+void stats_observe(stats_t *s, int pgn, uint64_t now);
+
+/* Âge du dernier message reçu, en secondes. -1 si aucun message depuis le
+ * démarrage. Sert à détecter un flux mort (le débit seul ne suffit pas : une
+ * fenêtre sans message et une chaîne coupée donnent tous deux 0 msg/s). */
+double stats_last_msg_age_s(const stats_t *s, uint64_t now);
 
 /* Enregistre une trame CAN RÉELLE (DLC exact) pour la charge mesurée. À appeler
  * depuis une source socketcan ; bascule la charge d'« estimée » à « mesurée ». */

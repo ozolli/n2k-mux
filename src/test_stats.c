@@ -31,8 +31,8 @@ int main(void)
     /* --- débits sur une fenêtre connue --- */
     stats_t s;
     stats_init(&s, 1000);                 /* t0 = 1000 ms */
-    for (int i = 0; i < 10; i++) stats_observe(&s, 129025);   /* 10 msg, 10 trames */
-    for (int i = 0; i < 2;  i++) stats_observe(&s, 126996);   /* 2 msg, 40 trames */
+    for (int i = 0; i < 10; i++) stats_observe(&s, 129025, 1000);   /* 10 msg, 10 trames */
+    for (int i = 0; i < 2;  i++) stats_observe(&s, 126996, 1000);   /* 2 msg, 40 trames */
     /* fenêtre = 2 s → 12 msg / 2 = 6 msg/s ; 50 trames / 2 = 25 trames/s */
     double mps, fps, load;
     stats_summary(&s, 3000, &mps, &fps, &load);
@@ -79,7 +79,7 @@ int main(void)
     stats_reset(&s, 3000);
     stats_summary(&s, 4000, &mps, NULL, NULL);
     ok("0 msg/s après reset", mps == 0.0);
-    stats_observe(&s, 129025);            /* total 129025 doit valoir 11 */
+    stats_observe(&s, 129025, 12000);     /* total 129025 doit valoir 11 */
     int found = 0;
     for (int i = 0; i < s.n_pgns; i++)
         if (s.pgns[i].pgn == 129025) { found = (s.pgns[i].total == 11); break; }
