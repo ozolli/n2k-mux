@@ -31,7 +31,10 @@
 
 /* Tableau répétitif "list" de canboat (ex. satellites du PGN 129540). Chaque
  * élément est un petit objet clé:valeur. Bornes fixes (zéro allocation). */
-#define JSONL_MAX_LIST        18    /* éléments d'un tableau "list" */
+/* 32 : un récepteur multiconstellation (GPS + GLONASS + Galileo + BeiDou)
+ * dépasse couramment 18 satellites en vue, et la liste était alors tronquée
+ * en silence. 32 satellites = 8 phrases GSV = MAP_MAX_SENT. */
+#define JSONL_MAX_LIST        32    /* éléments d'un tableau "list" */
 #define JSONL_LIST_FIELDS     8     /* champs par élément */
 
 /* Type de valeur d'un champ, tel que déduit du JSON. */

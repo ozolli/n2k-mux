@@ -34,6 +34,11 @@
 
 #define MAP_MAX_SENT  8   /* phrases max produites par un message (GSV paginé) */
 
+/* Fenêtre de fraîcheur pour l'appariement MDA (pression 130314 + température
+ * d'air 130316/Outside) : ces grandeurs évoluent lentement, on tolère un écart
+ * large entre les deux PGN sans vider un champ. */
+#define MAP_MDA_FRESH_MS  30000u
+
 typedef struct {
     char s[MAP_MAX_SENT][NMEA_MAX_LEN];
     int  n;
@@ -51,6 +56,16 @@ typedef struct {
     double   log_trip[CFG_MAX_PRIO];
     uint64_t log_t[CFG_MAX_PRIO];
     bool     log_seen[CFG_MAX_PRIO];
+    /* état MDA : pression et température d'air viennent de DEUX PGN distincts
+     * mais ne font qu'UNE phrase. On mémorise la dernière valeur de chacune
+     * pour les émettre ensemble (sinon chaque PGN émettait sa propre MDA en
+     * vidant le champ de l'autre). */
+    double   mda_press;                  /* bar (130314) */
+    uint64_t mda_press_t;
+    bool     mda_press_seen;
+    double   mda_air;                    /* °C (130316 / Outside) */
+    uint64_t mda_air_t;
+    bool     mda_air_seen;
 } mapper_t;
 
 /* Initialise (talker NULL → "II"). */

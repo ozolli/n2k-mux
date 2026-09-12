@@ -31,9 +31,38 @@ static const char *gets(const jsonl_msg_t *m, const char *k)
     return jsonl_get_str(m, k, &v) ? v : NULL;
 }
 
+/* Sous-chaîne, SANS tenir compte de la casse : les libellés canboat mélangent
+ * les casses (« no GNSS » en minuscule), ce qui faisait échouer les tests. */
 static bool has_word(const char *s, const char *w)
 {
-    return s && strstr(s, w) != NULL;
+    return s && strcasestr(s, w) != NULL;
+}
+
+/* Lecture entière tolérante : `dflt` si le champ est absent. Un cast direct de
+ * NaN vers int est un comportement INDÉFINI (selon l'optimisation : 0 ou
+ * INT_MIN, qui sortait tel quel dans la phrase). */
+static int geti(const jsonl_msg_t *m, const char *k, int dflt)
+{
+    double v;
+    return jsonl_get_num(m, k, &v) ? (int)v : dflt;
+}
+
+/* Qualité de fix GGA depuis le champ "Method" du PGN 129029 (table GNS_METHOD
+ * de canboat). Champ absent ou « no GNSS » → 0 (position INVALIDE) : c'est le
+ * cas critique, un consommateur doit cesser de faire confiance à la position. */
+static int gga_quality(const char *method)
+{
+    if (!method || !*method)            return 0;
+    if (has_word(method, "no GNSS"))    return 0;
+    if (has_word(method, "DGNSS") ||
+        has_word(method, "SBAS"))       return 2;
+    if (has_word(method, "Precise"))    return 3;
+    if (has_word(method, "RTK Fixed"))  return 4;
+    if (has_word(method, "RTK float"))  return 5;
+    if (has_word(method, "Estimated"))  return 6;
+    if (has_word(method, "Manual"))     return 7;
+    if (has_word(method, "Simulate"))   return 8;
+    return 1;                           /* "GNSS fix" et inconnus : fix simple */
 }
 
 /* "YYYY.MM.DD" → y/mo/d. */
@@ -88,15 +117,23 @@ static const char *map_depth_min(mapper_t *mp, const jsonl_msg_t *m,
 
     /* minimum sur les sources vues récemment */
     double best = NAN;
+    int    best_slot = -1;
     int    n = d->rule ? d->rule->n_sources : 0;
     for (int i = 0; i < n; i++) {
         if (!mp->depth_seen[i])
             continue;
         if ((now - mp->depth_t[i]) > mp->timeout_ms)
             continue;
-        if (isnan(best) || mp->depth[i] < best)
+        if (isnan(best) || mp->depth[i] < best) {
             best = mp->depth[i];
+            best_slot = i;
+        }
     }
+    /* Le mode min accepte TOUTES les sources vivantes : sans ce garde-fou,
+     * chacune émettait la même DPT (phrases identiques en double). Seule la
+     * source qui porte le minimum émet ; en cas d'égalité, la 1re de la règle. */
+    if (best_slot != slot)
+        return NULL;
     return nmea_dpt(s, mp->talker, best, offset);
 }
 
@@ -124,6 +161,7 @@ static const char *map_log_max(mapper_t *mp, const jsonl_msg_t *m,
 
     /* capteur au Log maximal parmi les sources vues récemment */
     double best_total = NAN, best_trip = NAN;
+    int    best_slot = -1;
     int    n = d->rule ? d->rule->n_sources : 0;
     for (int i = 0; i < n; i++) {
         if (!mp->log_seen[i])
@@ -133,11 +171,46 @@ static const char *map_log_max(mapper_t *mp, const jsonl_msg_t *m,
         if (isnan(best_total) || mp->log_total[i] > best_total) {
             best_total = mp->log_total[i];
             best_trip  = mp->log_trip[i];
+            best_slot  = i;
         }
     }
+    /* Comme pour la profondeur : seule la source retenue émet, sinon la même
+     * VLW sortait une fois par capteur vivant. */
+    if (best_slot != slot)
+        return NULL;
     return nmea_vlw(s, mp->talker,
                     isnan(best_total) ? NAN : best_total * M_TO_NM,
                     isnan(best_trip)  ? NAN : best_trip  * M_TO_NM);
+}
+
+/* MDA : la pression (130314) et la température d'air (130316/Outside) sont
+ * portées par deux PGN, mais la table de conversion prévoit UNE seule phrase.
+ * Chaque PGN rafraîchit sa valeur ; la phrase émise porte les deux si elles
+ * sont fraîches. Sans cela, chaque PGN émettait sa MDA en laissant vide le
+ * champ de l'autre, et le consommateur effaçait la valeur précédente.
+ *
+ * `is_press` dit lequel des deux PGN déclenche l'appel. Pour ne pas émettre
+ * deux phrases identiques par cycle, c'est la pression qui cadence la MDA ; la
+ * température ne la déclenche que si la pression manque (appareil absent du
+ * bus ou silencieux), auquel cas elle cadence seule. */
+static const char *map_mda(mapper_t *mp, uint64_t now, nmea_t *s,
+                           double press_bar, double air_c, bool is_press)
+{
+    if (!isnan(press_bar)) {
+        mp->mda_press = press_bar; mp->mda_press_t = now; mp->mda_press_seen = true;
+    }
+    if (!isnan(air_c)) {
+        mp->mda_air = air_c; mp->mda_air_t = now; mp->mda_air_seen = true;
+    }
+    double p = (mp->mda_press_seen && now - mp->mda_press_t <= MAP_MDA_FRESH_MS)
+             ? mp->mda_press : NAN;
+    double t = (mp->mda_air_seen && now - mp->mda_air_t <= MAP_MDA_FRESH_MS)
+             ? mp->mda_air : NAN;
+    if (isnan(p) && isnan(t))
+        return NULL;
+    if (!is_press && !isnan(p))
+        return NULL;              /* la pression cadence : pas de phrase en double */
+    return nmea_mda(s, mp->talker, p, t);
 }
 
 int mapper_map(mapper_t *mp, const jsonl_msg_t *m, const arb_decision_t *d,
@@ -177,14 +250,11 @@ int mapper_map(mapper_t *mp, const jsonl_msg_t *m, const arb_decision_t *d,
 
     case 129029: { /* GNSS Position Data → GGA */
         int h, mi; double se;
-        const char *method = gets(m, "Method");
-        int quality = 1;
-        if (!method || has_word(method, "No"))      quality = 0;
-        else if (has_word(method, "DGNSS") || has_word(method, "SBAS")) quality = 2;
+        int quality = gga_quality(gets(m, "Method"));
         if (parse_time(gets(m, "Time"), &h, &mi, &se))
             emit(out, nmea_gga(&s, tk, h, mi, se,
                                getf(m, "Latitude"), getf(m, "Longitude"),
-                               quality, (int)getf(m, "Number of SVs"),
+                               quality, geti(m, "Number of SVs", 0),
                                getf(m, "HDOP"), getf(m, "Altitude"),
                                getf(m, "Geoidal Separation")));
         break;
@@ -207,8 +277,11 @@ int mapper_map(mapper_t *mp, const jsonl_msg_t *m, const arb_decision_t *d,
         int n = jsonl_list_count(m);
         if (n <= 0)
             break;
-        int in_view = (int)getf(m, "Sats in View");
-        if (in_view <= 0)
+        /* Le compte annoncé doit correspondre aux satellites RÉELLEMENT émis :
+         * si la liste a été tronquée (JSONL_MAX_LIST), annoncer le chiffre du
+         * PGN laisserait le consommateur attendre des satellites absents. */
+        int in_view = geti(m, "Sats in View", n);
+        if (in_view <= 0 || in_view > n)
             in_view = n;
         int total = (n + 3) / 4;          /* nb de phrases GSV (4 sats/phrase) */
         int idx = 0;
@@ -301,12 +374,12 @@ int mapper_map(mapper_t *mp, const jsonl_msg_t *m, const arb_decision_t *d,
         if (has_word(d->discriminant, "Sea"))
             emit(out, nmea_mtw(&s, tk, t));
         else if (has_word(d->discriminant, "Outside"))
-            emit(out, nmea_mda(&s, tk, NMEA_NA, t));
+            emit(out, map_mda(mp, now_ms, &s, NMEA_NA, t, false));
         break;
     }
 
-    case 130314:  /* Actual Pressure → MDA (pression) */
-        emit(out, nmea_mda(&s, tk, getf(m, "Pressure"), NMEA_NA));
+    case 130314:  /* Actual Pressure → MDA (pression + temp air mémorisée) */
+        emit(out, map_mda(mp, now_ms, &s, getf(m, "Pressure"), NMEA_NA, true));
         break;
 
     case 128267:  /* Water Depth → DPT (minimum des DST) */
