@@ -360,6 +360,33 @@ static int write_file(const char *path, const char *buf, size_t len)
     return 0;
 }
 
+/* Copie `path` en `path`.bak. L'éditeur régénère l'INI ENTIER depuis les
+ * structures parsées : commentaires et mise en page de la version précédente
+ * sont perdus, d'où cette sauvegarde systématique avant écrasement.
+ * Best-effort : l'absence de fichier source n'est pas une erreur. */
+static void backup_file(const char *path)
+{
+    static char buf[FILE_MAX];
+    size_t len = 0;
+    if (read_file(path, buf, sizeof buf, &len) != 0 || len == 0)
+        return;
+    char bak[576];
+    snprintf(bak, sizeof bak, "%s.bak", path);
+    (void)write_file(bak, buf, len);
+}
+
+/* Écriture ATOMIQUE : temporaire + rename, comme le daemon pour ses JSON. Un
+ * O_TRUNC direct laissait une config tronquée si l'écriture échouait en cours
+ * — et le daemon refuse alors de (re)démarrer. */
+static int write_file_atomic(const char *path, const char *buf, size_t len)
+{
+    char tmp[576];
+    snprintf(tmp, sizeof tmp, "%s.tmp", path);
+    if (write_file(tmp, buf, len) != 0) { unlink(tmp); return -1; }
+    if (rename(tmp, path) != 0) { unlink(tmp); return -1; }
+    return 0;
+}
+
 /* Échappe une chaîne pour l'insérer dans une chaîne JSON. */
 static void json_escape(const char *in, char *out, size_t cap)
 {
@@ -561,7 +588,9 @@ static void handle_config_post(int fd, char *body, int write_it)
 
     int reloaded = 0;
     if (ok && write_it) {
-        if (!g_cfg_path || write_file(g_cfg_path, body, strlen(body)) != 0) {
+        if (g_cfg_path)
+            backup_file(g_cfg_path);   /* .bak : la version commentée reste récupérable */
+        if (!g_cfg_path || write_file_atomic(g_cfg_path, body, strlen(body)) != 0) {
             char out[256];
             snprintf(out, sizeof out,
                 "{\"ok\":false,\"line\":0,\"err\":\"écriture impossible (%s)\"}",
@@ -658,6 +687,7 @@ int main(int argc, char **argv)
 {
     int port = 8080;
     const char *bind_addr = "127.0.0.1";
+    int allow_anon = 0;   /* --allow-anonymous : écoute réseau sans auth, assumée */
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--sources") == 0 && i + 1 < argc) g_sources_path = argv[++i];
@@ -667,6 +697,7 @@ int main(int argc, char **argv)
         else if (strcmp(argv[i], "--bind") == 0 && i + 1 < argc) bind_addr = argv[++i];
         else if (strcmp(argv[i], "--reload-cmd") == 0 && i + 1 < argc) g_reload_cmd = argv[++i];
         else if (strcmp(argv[i], "--auth") == 0 && i + 1 < argc) g_auth = argv[++i];
+        else if (strcmp(argv[i], "--allow-anonymous") == 0) allow_anon = 1;
         else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             fprintf(stderr,
                 "Usage : %s [config.ini] [--sources P] [--stats P] [--busmap P]\n"
@@ -676,13 +707,21 @@ int main(int argc, char **argv)
                 "  --port N      port d'écoute (défaut 8080)\n"
                 "  --bind ADDR   adresse d'écoute (défaut 127.0.0.1 ; 0.0.0.0 = LAN)\n"
                 "  --reload-cmd  commande lancée après sauvegarde (ex. \"pkill -HUP -x n2k-mux\")\n"
-                "  --auth        exige une authentification HTTP Basic (user:pass)\n",
+                "  --auth        exige une authentification HTTP Basic (user:pass)\n"
+                "                (ou variable d'environnement N2K_MUX_WEB_AUTH)\n"
+                "  --allow-anonymous  autorise l'écoute réseau SANS authentification\n",
                 argv[0]);
             return 0;
         } else if (argv[i][0] != '-') g_cfg_path = argv[i];
         else { fprintf(stderr, "option inconnue : %s\n", argv[i]); return 2; }
     }
 
+    /* Le credential peut venir de l'environnement plutôt que de la ligne de
+     * commande : argv est lisible par tout utilisateur local via /proc. */
+    if (!g_auth) {
+        const char *env = getenv("N2K_MUX_WEB_AUTH");
+        if (env && env[0]) g_auth = env;
+    }
     if (g_auth) {
         if (!strchr(g_auth, ':')) {
             fprintf(stderr, "--auth attend le format user:pass\n"); return 2;
@@ -692,6 +731,19 @@ int main(int argc, char **argv)
                     AUTH_RAW_MAX); return 2;
         }
         b64encode(g_auth, g_auth_b64, sizeof g_auth_b64);
+    }
+
+    /* L'interface ÉCRIT la config et lance la commande de reload : l'exposer
+     * hors de la boucle locale sans authentification donne ce pouvoir à tout le
+     * réseau. On refuse, sauf demande explicite (--allow-anonymous). */
+    if (!g_auth && !allow_anon && strncmp(bind_addr, "127.", 4) != 0 &&
+        strcmp(bind_addr, "::1") != 0 && strcmp(bind_addr, "localhost") != 0) {
+        fprintf(stderr,
+            "n2k-mux-web : refus d'écouter sur %s sans authentification.\n"
+            "  Poser WEB_AUTH=user:pass dans /etc/default/n2k-mux (ou --auth user:pass),\n"
+            "  ou --bind 127.0.0.1, ou --allow-anonymous pour assumer le risque.\n",
+            bind_addr);
+        return 2;
     }
 
     signal(SIGPIPE, SIG_IGN);

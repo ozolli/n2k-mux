@@ -28,9 +28,15 @@ EnvironmentFile=-/etc/default/n2k-mux
 
 # Lit les JSON du daemon dans /run/n2k-mux ; « Enregistrer » écrit la config puis
 # recharge à chaud les deux instances n2k-mux (principale + --ais-json).
-# WEB_AUTH=user:pass (dans /etc/default/n2k-mux) active l'authentification HTTP
-# Basic ; absent/vide = pas d'auth. ${WEB_AUTH:+...} n'ajoute --auth que si défini.
-ExecStart=/bin/sh -c '"$WEB" "$CONF" --sources /run/n2k-mux/sources.json --stats /run/n2k-mux/stats.json --busmap /run/n2k-mux/busmap.json --port "$PORT" --bind "$BIND" --reload-cmd "pkill -HUP -x n2k-mux" ${WEB_AUTH:+--auth "$WEB_AUTH"}'
+#
+# AUTHENTIFICATION : poser WEB_AUTH=user:pass dans /etc/default/n2k-mux. Le
+# credential est passé par l'ENVIRONNEMENT (N2K_MUX_WEB_AUTH) et non sur la
+# ligne de commande, qui est lisible par tout utilisateur local via /proc.
+# Avec BIND non local (0.0.0.0) et SANS WEB_AUTH, le serveur REFUSE de démarrer
+# et le dit dans le journal : l'interface écrit la config et déclenche le reload,
+# elle ne doit pas être ouverte au réseau sans mot de passe. Pour assumer le
+# risque malgré tout, ajouter --allow-anonymous à la ligne ci-dessous.
+ExecStart=/bin/sh -c 'N2K_MUX_WEB_AUTH="${WEB_AUTH:-}" exec "$WEB" "$CONF" --sources /run/n2k-mux/sources.json --stats /run/n2k-mux/stats.json --busmap /run/n2k-mux/busmap.json --port "$PORT" --bind "$BIND" --reload-cmd "pkill -HUP -x n2k-mux"'
 
 Restart=always
 RestartSec=3
