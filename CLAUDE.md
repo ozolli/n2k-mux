@@ -9,8 +9,9 @@ designed to consume the JSON-lines output of canboat's `analyzer -json` (one JSO
 object per line) and process NMEA 2000 messages.
 
 Modules (a)–(g) are implemented (parser → registry → nmea0183 → config → arbiter
-→ daemon → web), plus deux modules de service : `inimerge` (fusion INI sans perte
-de commentaires, utilisé par l'UI web) et `netout`/`ydraw` (flux N2K réseau). The final binary `n2k-mux` runs the full
+→ daemon → web), plus des modules de service : `inimerge` (fusion INI sans perte
+de commentaires, utilisé par l'UI web), `polar` (polaires qtVlm + interpolation,
+utilisé par le simulateur et l'UI web) et `netout`/`ydraw` (flux N2K réseau). The final binary `n2k-mux` runs the full
 pipeline and is validated live on the bench. Each module ships its own test
 harness (`test_*`). The Makefile and source comments are written incrementally
 ("livrés au fur et à mesure").
@@ -69,7 +70,8 @@ revenir).
 il émet sur stdout du JSON façon `analyzer -json -nv` (un objet par ligne) pour
 **tous les PGN que n2k-mux comprend** + les PGN d'identité (60928 + 126996, sans
 lesquels l'arbitrage ne résout pas src→identité→nom). Valeurs sinusoïdales dans
-le temps (flux « vivant »). Source unique `src/simulator.c`, zéro dépendance.
+le temps (flux « vivant »). Source `src/simulator.c`, qui ne dépend que du
+module `polar` (lecture des polaires).
 
 ```sh
 ./n2k-sim | ./n2k-mux n2k-sim.ini -v           # instruments → phrases 0183
@@ -100,6 +102,45 @@ ramené à l'étrave) ; la giration = dérivée du CAP, nulle si le cap est impo
 la position, intégrée le long du COG obtenu. Le
 130306 sort en trois exemplaires (Apparent, True water referenced, True ground
 referenced to North) → MWV(R), MWV(T) et MWD.
+
+**Vent aléatoire** — clés du même fichier :
+
+```
+wind_random = 1     ; l'aléa s'applique autour de twd/tws, devenus la BASE
+tws_var     = 30    ; amplitude TOTALE de la force, en % de la base (30 → ±15 %)
+twd_var     = 20    ; amplitude TOTALE de la direction, en degrés (20 → ±10°)
+wind_period = 10    ; durée typique d'une séquence, en MINUTES
+seed        = 7     ; graine (0 ou absente = horloge) : aléa reproductible
+```
+
+Modèle par SÉQUENCES, comme sur l'eau : chaque séquence tire une cible uniforme
+dans l'amplitude, une durée entre 0,5 et 1,5 fois la période, et une durée de
+transition entre 15 % et 85 % de la séquence ; la bascule est adoucie en
+cosinus, puis le vent tient la cible jusqu'à la séquence suivante. Force et
+direction ont chacune leur suite indépendante. twd/tws laissés à « auto »
+donnent une base fixe de 225° / 15 nds. Générateur splitmix64 : même graine,
+même vent (vérifié par `make test`).
+
+**Polaire** — `stw_polar = 1` et `polar = /chemin/complet.pol` : la vitesse
+surface n'est plus une entrée, elle vaut polaire(TWA eau, TWS eau). Le vent
+« eau » est le vent vrai MOINS le courant, ramené à l'étrave : c'est celui dans
+lequel le bateau avance, et il ne dépend pas de la STW (aucune boucle de calcul).
+Polaire illisible ou absente : repli sur la STW réglée, message sur stderr.
+Module `src/polar.{h,c}` (testeur `./test_polar`) : formats qtVlm `.pol`/`.csv`,
+séparateur « ; » ou tabulation, décimale « . » ou « , », CRLF, BOM, cellules
+vides, colonnes de vent en double ; refuse ce qui ne commence pas par « TWA »
+(écarte les tables de vagues `*.polwave.csv`). Interpolation BILINÉAIRE, TWA
+replié sur 0-180, valeurs BORNÉES aux extrêmes de la table, jamais extrapolées.
+Validé sur les 27 polaires d'un dossier qtVlm réel, et contre le calcul à la main
+sur CM50.
+
+**`--wind-trace SECONDES`** : déroule du temps SIMULÉ sans attendre et imprime
+`t;twd;tws;stw` toutes les 10 s. Sert à régler l'aléa (des séquences de dix
+minutes ne s'observent pas en temps réel) et à le tester.
+
+**Relecture du fichier de pilotage** : sur inode + date à la NANOseconde + taille.
+La date à la seconde laissait passer deux réglages de même longueur écrits dans
+la même seconde (curseur déplacé vite).
 
 **État déduit — `--state FICHIER`** : le simulateur republie deux fois par
 seconde, dans le même format, ce que le triangle donne (`cog`, `sog`, `twd`,
@@ -404,6 +445,25 @@ Modules prévus (ordre d'implémentation) :
                 /etc/n2k-mux/sim.ctl), --sim-state CHEMIN (défaut
                 /run/n2k-mux/sim.state), et --sim-start/--sim-stop CMD
                 facultatives pour que la bascule pilote la chaîne entière.
+                Sous les six réglages : « Vent aléatoire » (bascule + amplitude
+                totale de la force en %, de la direction en degrés, durée des
+                séquences en minutes) et « Polaire » (menu + « vitesse surface
+                calculée par la polaire », qui grise la STW). Le tableau des
+                valeurs déduites ajoute TWA/TWS eau et la base du vent, avec les
+                étiquettes « polaire » et « aléatoire ». GET /api/polars liste
+                les .pol/.csv de --polar-dir (défaut $HOME/.qtVlm/polar, V
+                MAJUSCULE ; le service tourne en root, poser POLAR_DIR), chacun
+                avec son état de lecture. Le POST n'accepte qu'un NOM de fichier
+                présent et lisible dans ce dossier et écrit le chemin complet :
+                aucun « ../ » ne passe. Les réglages s'affichent SANS attendre la
+                liste des polaires, qui lit chaque fichier (lent sur carte SD).
+                Onglet ouvrable par l'ancre de l'adresse (#sim, #arbitrage,
+                #sources), mémorisée au changement d'onglet.
+                BOUCLE PAR poll : une connexion acceptée n'est servie qu'une fois
+                sa requête arrivée. L'ancien accept → recv bloquant servait dans
+                l'ordre d'arrivée, et une connexion ouverte à vide — ce que font
+                les navigateurs par anticipation — gelait toutes les requêtes
+                suivantes près de 2 s (mesuré). Connexion muette fermée à 10 s.
                 Bascules en-tête : langue FR/EN (dictionnaire L{fr,en} + T(clé),
                 textes statiques via data-i18n) et thème sombre/clair (couleurs en
                 variables CSS, palette .light) ; choix mémorisés en localStorage.

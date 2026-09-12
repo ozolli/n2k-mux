@@ -56,6 +56,8 @@
 #include <signal.h>
 #include <stdint.h>
 
+#include "polar.h"
+
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -139,6 +141,11 @@ static struct {
     double twa;        /* angle du vent vrai / étrave (deg), = twd − hdg */
     double awa;        /* angle du vent apparent / étrave (deg) */
     double aws;        /* vitesse du vent apparent (m/s) */
+    double twa_w;      /* vent vrai RÉFÉRENCÉ EAU : angle / étrave (deg) */
+    double tws_w;      /* vent vrai référencé eau : vitesse (m/s) */
+    double tws_base;   /* vent vrai de base, avant l'aléa (m/s) */
+    double twd_base;   /* direction de base, avant l'aléa (deg) */
+    int    stw_from_polar;  /* 1 si la vitesse surface vient de la polaire */
     double last_t;     /* horodatage du dernier pas (s) */
     int    init;
 } boat;
@@ -153,9 +160,24 @@ typedef struct {
     int    enabled;
     double hdg, stw, set, drift;        /* bateau et courant */
     double twd, tws;                    /* vent VRAI (TWA/AWA/AWS en découlent) */
+    /* vent aléatoire (cf. wseq_t) */
+    int    wind_random;                 /* 1 = aléa appliqué autour de twd/tws */
+    double tws_var;                     /* amplitude TOTALE de la force, en % */
+    double twd_var;                     /* amplitude TOTALE de la direction, en ° */
+    double wind_period;                 /* durée typique d'une séquence, minutes */
+    unsigned long seed;                 /* 0 = graine tirée de l'horloge */
+    /* polaire */
+    int    stw_polar;                   /* 1 = stw calculée par la polaire */
+    char   polar[512];                  /* chemin complet du .pol/.csv */
 } simctl_t;
 
-#define CTL_INIT { 1, NAN, NAN, NAN, NAN, NAN, NAN }
+/* Valeurs par défaut de l'aléa : 30 % de force, 20° de direction, séquences
+ * d'environ 10 minutes, comme on l'observe sur l'eau. */
+#define CTL_INIT { 1, NAN, NAN, NAN, NAN, NAN, NAN, 0, 30.0, 20.0, 10.0, 0, 0, "" }
+
+/* Base du vent quand l'aléa est actif et twd/tws laissés à « auto ». */
+#define WIND_BASE_TWD   225.0
+#define WIND_BASE_TWS_KN 15.0
 
 static simctl_t g_ctl = CTL_INIT;
 static const char *g_ctl_path = NULL;
@@ -169,12 +191,27 @@ static void ctl_load(const char *path)
     if (!f)
         return;
     simctl_t c = CTL_INIT;
-    char line[160];
+    char line[640];
     while (fgets(line, sizeof line, f)) {
         for (char *p = line; *p; p++)
             if (*p == ';' || *p == '#') { *p = '\0'; break; }
-        char key[32] = "", val[64] = "";
-        if (sscanf(line, " %31[A-Za-z_] = %63s", key, val) != 2)
+        /* clé = valeur, la valeur allant jusqu'au bout de la ligne : un chemin
+         * de polaire peut contenir des espaces (« Oceanis 46.csv »). */
+        char *eq = strchr(line, '=');
+        if (!eq)
+            continue;
+        *eq = '\0';
+        char key[32] = "", val[600] = "";
+        if (sscanf(line, " %31[A-Za-z_]", key) != 1)
+            continue;
+        {
+            char *b = eq + 1, *e = b + strlen(b);
+            while (*b == ' ' || *b == '\t') b++;
+            while (e > b && (e[-1] == ' ' || e[-1] == '\t' || e[-1] == '\r' || e[-1] == '\n'))
+                e--;
+            snprintf(val, sizeof val, "%.*s", (int)(e - b), b);
+        }
+        if (!val[0])
             continue;
         for (char *p = key; *p; p++)
             if (*p >= 'A' && *p <= 'Z') *p += 32;
@@ -188,6 +225,14 @@ static void ctl_load(const char *path)
         else if (strcmp(key, "drift") == 0) c.drift = isnan(v) ? v : v * KN_TO_MS;
         else if (strcmp(key, "twd") == 0)   c.twd = v;
         else if (strcmp(key, "tws") == 0)   c.tws = isnan(v) ? v : v * KN_TO_MS;
+        else if (strcmp(key, "wind_random") == 0) c.wind_random = !isnan(v) && v != 0;
+        else if (strcmp(key, "tws_var") == 0 && !isnan(v))     c.tws_var = v < 0 ? 0 : v;
+        else if (strcmp(key, "twd_var") == 0 && !isnan(v))     c.twd_var = v < 0 ? 0 : v;
+        else if (strcmp(key, "wind_period") == 0 && !isnan(v)) c.wind_period = v < 0.5 ? 0.5 : v;
+        else if (strcmp(key, "seed") == 0 && !isnan(v))        c.seed = (unsigned long)v;
+        else if (strcmp(key, "stw_polar") == 0) c.stw_polar = !isnan(v) && v != 0;
+        else if (strcmp(key, "polar") == 0 && strcmp(val, "auto") != 0)
+            snprintf(c.polar, sizeof c.polar, "%s", val);
     }
     fclose(f);
     g_ctl = c;
@@ -197,18 +242,104 @@ static void ctl_load(const char *path)
  * fois par tour de boucle. Retourne 1 si l'état a été rechargé. */
 static int ctl_refresh(void)
 {
-    static time_t last_mt; static long last_sz = -1;
+    /* inode + date à la nanoseconde + taille. La date à la seconde ne suffisait
+     * PAS : deux réglages de même longueur écrits dans la même seconde (curseur
+     * déplacé vite, « hdg = 45.00 » puis « hdg = 46.00 ») passaient inaperçus.
+     * L'interface écrit par rename, donc chaque version a un nouvel inode. */
+    static ino_t last_ino; static struct timespec last_mt; static long last_sz = -1;
     if (!g_ctl_path)
         return 0;
     struct stat sb;
     if (stat(g_ctl_path, &sb) != 0)
         return 0;
-    if (sb.st_mtime == last_mt && (long)sb.st_size == last_sz)
+    if (sb.st_ino == last_ino && sb.st_mtim.tv_sec == last_mt.tv_sec &&
+        sb.st_mtim.tv_nsec == last_mt.tv_nsec && (long)sb.st_size == last_sz)
         return 0;
-    last_mt = sb.st_mtime;
-    last_sz = (long)sb.st_size;
+    last_ino = sb.st_ino;
+    last_mt  = sb.st_mtim;
+    last_sz  = (long)sb.st_size;
     ctl_load(g_ctl_path);
     return 1;
+}
+
+/* --- Hasard reproductible ----------------------------------------------------
+ * splitmix64 : minuscule, sans état global caché, et surtout REPRODUCTIBLE avec
+ * une graine donnée (seed), ce qui permet de tester l'aléa. */
+static uint64_t g_rng;
+static int      g_rng_seeded;
+
+static double rnd01(void)
+{
+    uint64_t z = (g_rng += 0x9E3779B97F4A7C15ull);
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    z ^= z >> 31;
+    return (double)(z >> 11) / 9007199254740992.0;   /* [0, 1) */
+}
+
+static double rnd_between(double a, double b) { return a + (b - a) * rnd01(); }
+
+/* --- Vent aléatoire par SÉQUENCES --------------------------------------------
+ * Sur l'eau, le vent tient un régime puis bascule vers un autre, par séquences
+ * d'une dizaine de minutes. Chaque séquence tire au hasard :
+ *   - sa cible, uniformément dans l'amplitude TOTALE (±amplitude/2) ;
+ *   - sa durée, entre 0,5 et 1,5 fois la période ;
+ *   - la vitesse de sa transition : la bascule occupe entre 15 % et 85 % de la
+ *     séquence, puis le vent tient la cible jusqu'à la séquence suivante.
+ * La transition est adoucie en cosinus : ni à-coup au départ ni à l'arrivée.
+ * Force et direction ont chacune leur propre suite de séquences, indépendante. */
+typedef struct {
+    double from, to;   /* décalage au début et à la fin de la transition */
+    double t0;         /* début de la séquence (s) */
+    double dur;        /* durée totale de la séquence (s) */
+    double ramp;       /* durée de la transition (s) */
+    int    init;
+} wseq_t;
+
+static wseq_t g_seq_tws, g_seq_twd;
+
+/* Décalage courant d'une suite de séquences, dans [-amp/2, +amp/2]. */
+static double wseq_value(wseq_t *q, double t, double amp, double period_s)
+{
+    double half = amp / 2.0;
+    if (!q->init) {
+        q->from = 0.0;            /* on part de la base, sans saut */
+        q->to   = rnd_between(-half, half);
+        q->t0   = t;
+        q->dur  = period_s * rnd_between(0.5, 1.5);
+        q->ramp = q->dur * rnd_between(0.15, 0.85);
+        q->init = 1;
+    }
+    while (t >= q->t0 + q->dur) {  /* séquence(s) écoulée(s) : on enchaîne */
+        q->from = q->to;
+        q->to   = rnd_between(-half, half);
+        q->t0  += q->dur;
+        q->dur  = period_s * rnd_between(0.5, 1.5);
+        q->ramp = q->dur * rnd_between(0.15, 0.85);
+    }
+    double x = (t - q->t0) / q->ramp;
+    double v = (x >= 1.0) ? q->to
+             : q->from + (q->to - q->from) * (1.0 - cos(M_PI * x)) / 2.0;
+    /* amplitude réduite en cours de route : on reste dans la nouvelle borne */
+    if (v >  half) v =  half;
+    if (v < -half) v = -half;
+    return v;
+}
+
+/* --- Polaire (rechargée quand le chemin change) --- */
+static polar_t g_polar;
+static char    g_polar_loaded[512];
+static int     g_polar_ok;
+
+static void polar_refresh(void)
+{
+    if (strcmp(g_ctl.polar, g_polar_loaded) == 0)
+        return;
+    snprintf(g_polar_loaded, sizeof g_polar_loaded, "%s", g_ctl.polar);
+    g_polar_ok = g_ctl.polar[0] && polar_load(&g_polar, g_ctl.polar);
+    if (g_ctl.polar[0] && !g_polar_ok)
+        fprintf(stderr, "n2k-sim : polaire refusée (%s) : %s\n",
+                g_ctl.polar, g_polar.err);
 }
 
 /* Normalise un cap dans [0, 360). */
@@ -241,9 +372,8 @@ static void boat_update(double t)
     boat.last_t = t;
     if (dt < 0) dt = 0;
 
-    /* --- ENTRÉES : cap et vitesse SURFACE (ce que barre et lit l'équipage),
-     * plus le courant. Chacune vient du fichier de contrôle si elle y est
-     * fixée, sinon d'une sinusoïde. --- */
+    /* --- ENTRÉES : cap et courant. Chacun vient du fichier de contrôle s'il y
+     * est fixé, sinon d'une sinusoïde. --- */
     if (isnan(g_ctl.hdg)) {
         boat.hdg = norm360(90.0 + 55.0 * sin(t / 70.0));   /* vire en S */
         boat.rot = (55.0 / 70.0) * cos(t / 70.0);          /* dérivée du CAP */
@@ -251,30 +381,69 @@ static void boat_update(double t)
         boat.hdg = norm360(g_ctl.hdg);
         boat.rot = 0.0;                                    /* cap imposé */
     }
-    boat.stw   = isnan(g_ctl.stw)   ? 4.5 + 1.0 * sin(t / 40.0) : g_ctl.stw;
     boat.set   = isnan(g_ctl.set)   ? norm360(120.0 + 10.0 * sin(t / 40.0))
                                     : norm360(g_ctl.set);
     boat.drift = isnan(g_ctl.drift) ? 0.5 + 0.2 * sin(t / 25.0) : g_ctl.drift;
-    if (boat.stw < 0)   boat.stw = 0;
     if (boat.drift < 0) boat.drift = 0;
 
-    /* --- CALCULÉ : route/vitesse FOND = vecteur surface + vecteur courant.
-     * C'est le triangle des vitesses, dans le sens où l'équipage le vit. --- */
-    double wn, we, cn, ce, gn, ge;
-    vec_of(boat.hdg, boat.stw,   &wn, &we);
+    /* --- VENT VRAI : entrée (direction + vitesse). Avec l'aléa, twd/tws sont
+     * la BASE autour de laquelle le vent évolue par séquences ; laissés à
+     * « auto », la base est fixe (225°, 15 nds) plutôt que sinusoïdale. --- */
+    if (g_ctl.wind_random) {
+        if (!g_rng_seeded) {
+            g_rng = g_ctl.seed ? (uint64_t)g_ctl.seed : (uint64_t)now_ms();
+            g_rng_seeded = 1;
+        }
+        boat.twd_base = isnan(g_ctl.twd) ? WIND_BASE_TWD : norm360(g_ctl.twd);
+        boat.tws_base = isnan(g_ctl.tws) ? WIND_BASE_TWS_KN * KN_TO_MS : g_ctl.tws;
+        double period = g_ctl.wind_period * 60.0;
+        double pct = wseq_value(&g_seq_tws, t, g_ctl.tws_var, period);
+        double deg = wseq_value(&g_seq_twd, t, g_ctl.twd_var, period);
+        boat.tws = boat.tws_base * (1.0 + pct / 100.0);
+        boat.twd = norm360(boat.twd_base + deg);
+    } else {
+        /* aléa coupé : on repartira d'une séquence neuve à la réactivation */
+        g_seq_tws.init = g_seq_twd.init = 0;
+        boat.twd = isnan(g_ctl.twd) ? norm360(225.0 + 15.0 * sin(t / 60.0))
+                                    : norm360(g_ctl.twd);
+        boat.tws = isnan(g_ctl.tws) ? 9.0 + 2.0 * sin(t / 8.0) : g_ctl.tws;
+        boat.twd_base = boat.twd;
+        boat.tws_base = boat.tws;
+    }
+    if (boat.tws < 0) boat.tws = 0;
+    boat.twa = norm360(boat.twd - boat.hdg);
+
+    /* --- VENT VRAI RÉFÉRENCÉ EAU : vent vrai moins le courant, ramené à
+     * l'étrave. C'est le vent dans lequel le bateau navigue, donc celui qui
+     * indexe la polaire. Il ne dépend pas de la vitesse surface : pas de boucle
+     * de calcul. --- */
+    double cn, ce;
     vec_of(boat.set, boat.drift, &cn, &ce);
+    {
+        double an, ae, dir, mag;
+        vec_of(norm360(boat.twd + 180.0), boat.tws, &an, &ae);
+        dir_of(an - cn, ae - ce, &dir, &mag);
+        boat.twa_w = norm360(dir + 180.0 - boat.hdg);
+        boat.tws_w = mag;
+    }
+
+    /* --- VITESSE SURFACE : polaire si demandée et lisible, sinon l'entrée. --- */
+    polar_refresh();
+    boat.stw_from_polar = g_ctl.stw_polar && g_polar_ok;
+    if (boat.stw_from_polar)
+        boat.stw = polar_speed(&g_polar, boat.twa_w, boat.tws_w / KN_TO_MS) * KN_TO_MS;
+    else
+        boat.stw = isnan(g_ctl.stw) ? 4.5 + 1.0 * sin(t / 40.0) : g_ctl.stw;
+    if (boat.stw < 0) boat.stw = 0;
+
+    /* --- CALCULÉ : route/vitesse FOND = vecteur surface + vecteur courant. --- */
+    double wn, we, gn, ge;
+    vec_of(boat.hdg, boat.stw, &wn, &we);
     gn = wn + cn;
     ge = we + ce;
     dir_of(gn, ge, &boat.cog, &boat.sog);
 
-    /* --- VENT : le vrai est l'ENTRÉE (direction + vitesse) ; son angle à
-     * l'étrave et l'apparent en DÉCOULENT. --- */
-    boat.twd = isnan(g_ctl.twd) ? norm360(225.0 + 15.0 * sin(t / 60.0))
-                                : norm360(g_ctl.twd);
-    boat.tws = isnan(g_ctl.tws) ? 9.0 + 2.0 * sin(t / 8.0) : g_ctl.tws;
-    if (boat.tws < 0) boat.tws = 0;
-    boat.twa = norm360(boat.twd - boat.hdg);
-    /* apparent = vent vrai (mouvement de l'air) − vecteur bateau sur le fond */
+    /* --- VENT APPARENT = vent vrai (mouvement de l'air) − vecteur bateau/fond --- */
     {
         double an, ae, dir, mag;
         vec_of(norm360(boat.twd + 180.0), boat.tws, &an, &ae);
@@ -304,11 +473,15 @@ static void state_write(void)
             "# n2k-sim : état déduit (lecture seule)\n"
             "enabled = %d\nhdg = %.1f\nstw = %.2f\ncog = %.1f\nsog = %.2f\n"
             "set = %.1f\ndrift = %.2f\ntwd = %.1f\ntws = %.2f\ntwa = %.1f\n"
-            "awa = %.1f\naws = %.2f\nlat = %.6f\nlon = %.6f\n",
+            "awa = %.1f\naws = %.2f\ntwa_w = %.1f\ntws_w = %.2f\n"
+            "twd_base = %.1f\ntws_base = %.2f\nwind_random = %d\n"
+            "stw_polar = %d\npolar_ok = %d\nlat = %.6f\nlon = %.6f\n",
             g_ctl.enabled, boat.hdg, boat.stw / KN_TO_MS, boat.cog,
             boat.sog / KN_TO_MS, boat.set, boat.drift / KN_TO_MS,
             boat.twd, boat.tws / KN_TO_MS, boat.twa, boat.awa,
-            boat.aws / KN_TO_MS, boat.lat, boat.lon);
+            boat.aws / KN_TO_MS, boat.twa_w, boat.tws_w / KN_TO_MS,
+            boat.twd_base, boat.tws_base / KN_TO_MS, g_ctl.wind_random,
+            boat.stw_from_polar, g_polar_ok, boat.lat, boat.lon);
     fclose(f);
     if (rename(tmp, g_state_path) != 0)
         unlink(tmp);
@@ -321,13 +494,8 @@ static void state_write(void)
  * C'est ce que calcule une centrale à partir de l'apparent et du loch. */
 static void wind_true_water(double *ta, double *ts)
 {
-    double wn, we, cn, ce;
-    vec_of(norm360(boat.twd + 180.0), boat.tws, &wn, &we);
-    vec_of(boat.set, boat.drift, &cn, &ce);
-    double dir, mag;
-    dir_of(wn - cn, we - ce, &dir, &mag);
-    *ta = norm360(dir + 180.0 - boat.hdg);
-    *ts = mag;
+    *ta = boat.twa_w;              /* calculé une fois par pas (boat_update) */
+    *ts = boat.tws_w;
 }
 
 /* --- Identité : 60928 (Unique Number) + 126996 (Model Serial Code) --- */
@@ -1113,6 +1281,9 @@ static void usage(const char *p)
         "                  angles en degrés. TWA, AWA et AWS en découlent.\n"
         "  --state FIC     publie l'état DÉDUIT (cog, sog, twa, awa, aws…) dans ce\n"
         "                  fichier, même format, pour affichage par l'interface web\n"
+        "  --wind-trace S  déroule S secondes de temps SIMULÉ sans attendre et imprime\n"
+        "                  « t;twd;tws;stw » toutes les 10 s (réglage de l'aléa et de\n"
+        "                  la polaire, tests). Utilise --control ; puis s'arrête.\n"
         "\nÉmet du JSON façon `analyzer -json` pour tous les PGN compris par\n"
         "n2k-mux + l'identité. Exemple : %s | ./n2k-mux n2k-sim.ini -v\n",
         p, p);
@@ -1121,6 +1292,7 @@ static void usage(const char *p)
 int main(int argc, char **argv)
 {
     int once = 0, no_ais = 0, actisense = 0;
+    double wind_trace = 0;     /* --wind-trace : secondes de temps simulé */
     double duration = 0;       /* secondes ; 0 = sans fin */
     long tick_ms = 100;
 
@@ -1132,10 +1304,25 @@ int main(int argc, char **argv)
         else if (strcmp(argv[i], "--tick") == 0 && i + 1 < argc)     tick_ms = atol(argv[++i]);
         else if (strcmp(argv[i], "--control") == 0 && i + 1 < argc)  g_ctl_path = argv[++i];
         else if (strcmp(argv[i], "--state") == 0 && i + 1 < argc)    g_state_path = argv[++i];
+        else if (strcmp(argv[i], "--wind-trace") == 0 && i + 1 < argc) wind_trace = atof(argv[++i]);
         else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) { usage(argv[0]); return 0; }
         else { fprintf(stderr, "option inconnue : %s\n", argv[i]); usage(argv[0]); return 2; }
     }
     if (tick_ms < 10) tick_ms = 10;
+
+    /* --wind-trace : pas de flux NMEA, juste la courbe du vent et de la vitesse
+     * surface en temps simulé. Le vent par séquences dure des dizaines de
+     * minutes : on ne va pas l'attendre en temps réel pour le régler. */
+    if (wind_trace > 0) {
+        ctl_refresh();
+        printf("t_s;twd;tws_kn;stw_kn\n");
+        for (double t = 0; t <= wind_trace; t += 10.0) {
+            boat_update(t);
+            printf("%.0f;%.1f;%.2f;%.2f\n", t, boat.twd, boat.tws / KN_TO_MS,
+                   boat.stw / KN_TO_MS);
+        }
+        return 0;
+    }
 
     signal(SIGINT, on_int);
     signal(SIGTERM, on_int);

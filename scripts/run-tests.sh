@@ -38,7 +38,7 @@ run_case() {                      # run_case <nom> <commande...>
 say "== testeurs unitaires =="
 UNITS="test_registry test_nmea0183 test_config test_arbiter test_mapper
        test_aisdedup test_sources test_stats test_netout test_ydraw
-       test_inimerge"
+       test_inimerge test_polar"
 for t in $UNITS; do
   if [ -x "./$t" ]; then
     run_case "$t" "./$t"
@@ -140,6 +140,77 @@ else
   n=$(./n2k-sim --duration 1 --control "$CTL" 2>/dev/null | grep -c '"pgn"' || true)
   if [ "$n" = "0" ]; then ok "désactivé : aucun PGN émis"; else ko "désactivé : $n PGN émis"; fi
   rm -f "$CTL"
+fi
+
+# ---- 4 bis. vent aléatoire et polaire ---------------------------------------
+say "== vent aléatoire et polaire =="
+if [ ! -x ./n2k-sim ]; then
+  ko "n2k-sim absent (make d'abord)"
+else
+  TD=$(mktemp -d)
+  # Aléa : base 225° / 15 nds, amplitudes TOTALES 30 % et 20°, graine fixe.
+  # Deux heures de temps simulé, sans attendre (--wind-trace).
+  printf 'enabled = 1\nhdg = 45\ntwd = 225\ntws = 15\nwind_random = 1\ntws_var = 30\ntwd_var = 20\nwind_period = 10\nseed = 7\n' > "$TD/r.ctl"
+  ./n2k-sim --wind-trace 7200 --control "$TD/r.ctl" > "$TD/a.csv" 2>/dev/null
+  ./n2k-sim --wind-trace 7200 --control "$TD/r.ctl" > "$TD/b.csv" 2>/dev/null
+  run_case "aléa reproductible avec une graine" cmp -s "$TD/a.csv" "$TD/b.csv"
+  if python3 - "$TD/a.csv" <<'PYCHK'
+import csv, sys
+rows = list(csv.DictReader(open(sys.argv[1]), delimiter=';'))
+tws = [float(r['tws_kn']) for r in rows]
+dev = [((float(r['twd']) - 225 + 180) % 360) - 180 for r in rows]
+ok = True
+if not (15 * 0.85 - 1e-6 <= min(tws) and max(tws) <= 15 * 1.15 + 1e-6):
+    print("force hors amplitude :", min(tws), max(tws)); ok = False
+if not (-10 - 1e-6 <= min(dev) and max(dev) <= 10 + 1e-6):
+    print("direction hors amplitude :", min(dev), max(dev)); ok = False
+if max(tws) - min(tws) < 1.0 or max(dev) - min(dev) < 2.0:
+    print("le vent ne varie pas"); ok = False
+sys.exit(0 if ok else 1)
+PYCHK
+  then ok "aléa borné par ses amplitudes et effectivement variable"
+  else ko "aléa : bornes ou variabilité"; fi
+
+  # Polaire SYNTHÉTIQUE (aucune polaire réelle dans le dépôt) : à 90° et 10 nds,
+  # la table donne 6 nds. Cap 90, vent vrai du 180 (TWA 90), sans courant.
+  printf 'TWA\\TWS;0;10;20\n0;0;0;0\n90;0;6;10\n180;0;4;8\n' > "$TD/test.pol"
+  printf 'enabled = 1\nhdg = 90\nstw = 2\nset = 0\ndrift = 0\ntwd = 180\ntws = 10\nstw_polar = 1\npolar = %s\n' "$TD/test.pol" > "$TD/p.ctl"
+  ./n2k-sim --once --control "$TD/p.ctl" --state "$TD/p.state" > /dev/null 2>&1
+  run_case "STW tirée de la polaire (90°, 10 nds → 6 nds)" grep -q '^stw = 6.00$' "$TD/p.state"
+  # 135° et 15 nds : interpolation bilinéaire des quatre cellules 6, 10, 4, 8 → 7.
+  printf 'enabled = 1\nhdg = 45\nset = 0\ndrift = 0\ntwd = 180\ntws = 15\nstw_polar = 1\npolar = %s\n' "$TD/test.pol" > "$TD/p.ctl"
+  ./n2k-sim --once --control "$TD/p.ctl" --state "$TD/p.state" > /dev/null 2>&1
+  run_case "STW interpolée (135°, 15 nds → 7 nds)" grep -q '^stw = 7.00$' "$TD/p.state"
+  # Polaire illisible : repli sur la STW réglée, sans planter.
+  printf 'enabled = 1\nhdg = 45\nstw = 5\nset = 0\ndrift = 0\ntwd = 180\ntws = 15\nstw_polar = 1\npolar = %s\n' "$TD/absente.pol" > "$TD/p.ctl"
+  ./n2k-sim --once --control "$TD/p.ctl" --state "$TD/p.state" > /dev/null 2>&1
+  run_case "polaire absente : repli sur la STW réglée" grep -q '^stw = 5.00$' "$TD/p.state"
+
+  # Interface : liste du dossier et refus des chemins détournés.
+  if [ -x ./n2k-mux-web ] && command -v curl >/dev/null 2>&1; then
+    printf 'TWS=5;0;1\n0;100;98\n' > "$TD/vagues.polwave.csv"
+    printf 'pas une polaire\n' > "$TD/n_importe.csv"
+    printf '[output]\ntalker = II\n' > "$TD/w.ini"
+    ./n2k-mux-web "$TD/w.ini" --port 18124 --sim-control "$TD/w.ctl" --polar-dir "$TD" >/dev/null 2>&1 &
+    WPID=$!
+    for _ in 1 2 3 4 5 6 7 8 9 10; do curl -s -o /dev/null "http://127.0.0.1:18124/" && break; done
+    pol=$(curl -s "http://127.0.0.1:18124/api/polars")
+    case "$pol" in *'"name":"test.pol","ok":true'*) ok "polaire proposée" ;; *) ko "polaire absente de la liste : $pol" ;; esac
+    case "$pol" in *polwave*) ko "table de vagues proposée : $pol" ;; *) ok "table de vagues écartée" ;; esac
+    case "$pol" in *'"name":"n_importe.csv","ok":false'*) ok "fichier illisible signalé" ;; *) ko "fichier illisible mal signalé : $pol" ;; esac
+    rej=$(curl -s -X POST --data-binary 'enabled = 1
+polar = ../../../etc/passwd
+' "http://127.0.0.1:18124/api/sim")
+    case "$rej" in *'"ok":false'*) ok "chemin détourné refusé" ;; *) ko "chemin détourné accepté : $rej" ;; esac
+    acc=$(curl -s -X POST --data-binary 'enabled = 1
+stw_polar = 1
+polar = test.pol
+' "http://127.0.0.1:18124/api/sim")
+    case "$acc" in *'"ok":true'*) ok "polaire du dossier acceptée" ;; *) ko "polaire refusée : $acc" ;; esac
+    run_case "chemin complet écrit" grep -q "^polar = $TD/test.pol$" "$TD/w.ctl"
+    kill "$WPID" 2>/dev/null
+  fi
+  rm -rf "$TD"
 fi
 
 # ---- 5. interface web : aller-retour de l'API simulateur -------------------

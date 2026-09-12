@@ -26,7 +26,9 @@
 
 #include "config.h"
 #include "inimerge.h"
+#include "polar.h"
 
+#include <dirent.h>
 #include <poll.h>
 #include <time.h>
 
@@ -59,6 +61,9 @@ static const char *g_reload_cmd  = NULL;
 static const char *g_sim_path    = "/etc/n2k-mux/sim.ctl";
 /* État DÉDUIT publié par n2k-sim --state : éphémère, donc dans /run. */
 static const char *g_sim_state   = "/run/n2k-mux/sim.state";
+/* Dossier des polaires proposées (.pol / .csv). Défaut : celui de qtVlm de
+ * l'utilisateur qui lance le serveur, $HOME/.qtVlm/polar (V MAJUSCULE). */
+static char        g_polar_dir[512] = "";
 static const char *g_sim_start   = NULL;
 static const char *g_sim_stop    = NULL;
 #define AUTH_RAW_MAX 256                   /* longueur max acceptée de "user:pass" */
@@ -185,7 +190,15 @@ static const char PAGE[] =
 "sim_derived_t:'Valeurs déduites',\n"
 "sim_derived:'Six entrées et tout en découle : route et vitesse fond = vecteur surface plus vecteur courant ; angle du vent vrai = TWD moins le cap ; vent apparent = vent vrai moins le vecteur bateau. Giration = dérivée du cap, nulle si le cap est imposé.',\n"
 "sim_nostart:'La bascule ne fait que rendre le simulateur muet : aucune commande de démarrage n’est configurée (--sim-start).',\n"
-"sim_dir:'°',sim_kn:'nds'\n"
+"sim_dir:'°',sim_kn:'nds',sim_pct:'%',sim_min:'min',\n"
+"sim_random:'Vent aléatoire',sim_tws_var:'Amplitude de la force (totale)',sim_twd_var:'Amplitude de la direction (totale)',\n"
+"sim_wind_period:'Durée typique des séquences',\n"
+"sim_random_help:'Force et direction évoluent par séquences : cible tirée au hasard dans l’amplitude totale, transition plus ou moins rapide, puis palier. TWD et TWS ci-dessus deviennent la BASE autour de laquelle le vent varie.',\n"
+"sim_polar_t:'Polaire',sim_polar_none:'— aucune —',sim_stw_polar:'Vitesse surface calculée par la polaire',\n"
+"sim_polar_help:'STW = polaire(TWA eau, TWS eau), interpolée entre les lignes et colonnes du fichier. Le vent « eau » est le vent vrai moins le courant : c’est celui dans lequel le bateau avance.',\n"
+"sim_polar_dir:'Dossier : ',sim_polar_nodir:'dossier introuvable',sim_polar_bad:'illisible',\n"
+"sim_twa_w:'TWA eau',sim_tws_w:'TWS eau',sim_twd_base:'TWD de base',sim_tws_base:'TWS de base',\n"
+"sim_rand_lbl:'aléatoire',sim_polar_lbl:'polaire'\n"
 "},en:{\n"
 "tab_sources:'Sources',tab_arb:'Arbitration',save_names:'Save names',save_arb:'Save arbitration',refresh:'Refresh',\n"
 "src_help:'naming a source makes it usable in the Arbitration tab',arb_help:'checkbox = selected source · ◀▶ = priority order',\n"
@@ -225,7 +238,15 @@ static const char PAGE[] =
 "sim_derived_t:'Derived values',\n"
 "sim_derived:'Six inputs, everything else follows: course and speed over ground = water vector plus current vector; true wind angle = TWD minus heading; apparent wind = true wind minus boat vector. Rate of turn = heading derivative, zero when the heading is forced.',\n"
 "sim_nostart:'The toggle only silences the simulator: no start command is configured (--sim-start).',\n"
-"sim_dir:'°',sim_kn:'kn'\n"
+"sim_dir:'°',sim_kn:'kn',sim_pct:'%',sim_min:'min',\n"
+"sim_random:'Random wind',sim_tws_var:'Speed amplitude (total)',sim_twd_var:'Direction amplitude (total)',\n"
+"sim_wind_period:'Typical sequence length',\n"
+"sim_random_help:'Speed and direction change in sequences: a random target within the total amplitude, a faster or slower transition, then a plateau. TWD and TWS above become the BASE the wind varies around.',\n"
+"sim_polar_t:'Polar',sim_polar_none:'— none —',sim_stw_polar:'Speed through water from the polar',\n"
+"sim_polar_help:'STW = polar(water TWA, water TWS), interpolated between the file rows and columns. The water wind is the true wind minus the current: the wind the boat actually sails in.',\n"
+"sim_polar_dir:'Folder: ',sim_polar_nodir:'folder not found',sim_polar_bad:'unreadable',\n"
+"sim_twa_w:'Water TWA',sim_tws_w:'Water TWS',sim_twd_base:'Base TWD',sim_tws_base:'Base TWS',\n"
+"sim_rand_lbl:'random',sim_polar_lbl:'polar'\n"
 "}};\n"
 "const T=k=>{const o=L[lang];return (o&&o[k]!=null)?o[k]:k;};\n"
 "function applyI18n(){document.querySelectorAll('[data-i18n]').forEach(e=>{e.textContent=T(e.dataset.i18n);});document.documentElement.lang=lang;}\n"
@@ -235,6 +256,9 @@ static const char PAGE[] =
 "document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{\n"
 " document.querySelectorAll('nav button').forEach(x=>x.classList.remove('on'));b.classList.add('on');\n"
 " document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));$('#'+b.dataset.t).classList.add('on');\n"
+" // L'onglet courant va dans l'ancre de l'adresse : un favori ou un\n"
+" // rechargement rouvre le même onglet (#sim, #arbitrage, #sources).\n"
+" try{history.replaceState(null,'','#'+b.dataset.t);}catch(e){}\n"
 " if(b.dataset.t==='arbitrage')loadArb();\n"
 " if(b.dataset.t==='sources')renderSources();\n"
 " if(b.dataset.t==='sim')loadSim();\n"
@@ -385,51 +409,110 @@ static const char PAGE[] =
 "$('#arb_unseen').onchange=e=>{localStorage.setItem('arb_unseen',e.target.checked?'1':'');if(ARB)drawArb();};\n"
 "$('#src_save').onclick=saveSrc;$('#src_reload').onclick=renderSources;\n"
 "// --- Simulateur ------------------------------------------------------------\n"
-"// Entrées : cap et vitesse SURFACE, courant, et UNE paire de vent. Le triangle\n"
-"// des vitesses interdit d'imposer davantage : route/vitesse fond et les deux\n"
-"// autres expressions du vent sont CALCULÉES par n2k-sim, qui les republie dans\n"
-"// son fichier d'état — c'est ce qu'affiche le tableau « valeurs déduites ».\n"
+"// Six entrées (cap, vitesse surface, courant, vent vrai). Route/vitesse fond,\n"
+"// TWA, AWA et AWS sont CALCULÉS par n2k-sim, qui les republie dans son fichier\n"
+"// d'état — c'est ce qu'affiche le tableau « valeurs déduites ». En plus : un\n"
+"// vent aléatoire par séquences, et une vitesse surface tirée d'une polaire.\n"
 "const SIMF={hdg:[0,359,1,'sim_dir'],stw:[0,20,0.1,'sim_kn'],\n"
 "            set:[0,359,1,'sim_dir'],drift:[0,6,0.1,'sim_kn'],\n"
 "            twd:[0,359,1,'sim_dir'],tws:[0,60,0.5,'sim_kn']};\n"
 "const SIMDEF={hdg:90,stw:6,set:120,drift:1,twd:225,tws:17};\n"
 "// Grandeurs affichées : les six réglages PUIS les valeurs qui en découlent.\n"
-"const SIMST=['hdg','stw','cog','sog','set','drift','twd','tws','twa','awa','aws'];\n"
-"const SIMUNIT={stw:1,sog:1,drift:1,tws:1,aws:1};\n"
-"let SIM=null,simTimer=null;\n"
+"const SIMST=['hdg','stw','cog','sog','set','drift','twd','tws','twa','awa','aws','twa_w','tws_w','twd_base','tws_base'];\n"
+"const SIMUNIT={stw:1,sog:1,drift:1,tws:1,aws:1,tws_w:1,tws_base:1};\n"
+"// Réglages de l'aléa : [min, max, pas, unité].\n"
+"const SIMR={tws_var:[0,100,5,'sim_pct'],twd_var:[0,90,1,'sim_dir'],wind_period:[1,60,1,'sim_min']};\n"
+"let SIM=null,simTimer=null,POLARS=null;\n"
 "// smsg() appartient à l'onglet Sources : ne pas réutiliser ce nom ici.\n"
 "function simsg(t,cls){const m=$('#sim_msg');m.textContent=t;m.className=t?(cls||'ok'):'';}\n"
 "async function loadSim(){try{SIM=await jget('/api/sim');}catch(e){$('#sim_body').innerHTML='<small>'+T('sim_na')+'</small>';return;}\n"
-" $('#sim_on').checked=!!SIM.enabled;drawSim();drawState();\n"
-" simsg(SIM.can_start?'':T('sim_nostart'),'ok');}\n"
+" // Les réglages s'affichent TOUT DE SUITE ; la liste des polaires, qui lit\n"
+" // chaque fichier du dossier (lent sur carte SD), complète le menu ensuite.\n"
+" // Une erreur de rendu ne doit pas laisser l'onglet muet sur « … » : on l'affiche.\n"
+" try{$('#sim_on').checked=!!SIM.enabled;drawSim();drawState();}\n"
+" catch(e){simsg(T('err_pfx')+e+(e&&e.stack?' @ '+e.stack.split('\\n')[0]:''),'err');return;}\n"
+" simsg(SIM.can_start?'':T('sim_nostart'),'ok');\n"
+" try{POLARS=await jget('/api/polars');}catch(e){POLARS={found:false,dir:'',polars:[]};}\n"
+" fillPolars();}\n"
+"// Options du menu des polaires. Tant que la liste n'est pas arrivée, on montre\n"
+"// au moins la polaire déjà choisie, pour ne pas la perdre à l'enregistrement.\n"
+"function polarOptions(){const P=POLARS||{polars:SIM.polar?[{name:SIM.polar,ok:true}]:[]};\n"
+" let o='<option value=\"\">'+T('sim_polar_none')+'</option>';\n"
+" for(const x of P.polars){const lab=esc(x.name)+(x.ok?'':' ('+T('sim_polar_bad')+')');\n"
+"  o+='<option value=\"'+esc(x.name)+'\"'+(x.ok?'':' disabled')+(x.name===SIM.polar?' selected':'')+'>'+lab+'</option>';}\n"
+" return o;}\n"
+"function polarDirNote(){const P=POLARS;if(!P)return '';\n"
+" return T('sim_polar_dir')+'<code>'+esc(P.dir||'')+'</code>'+(P.found?'':' — '+T('sim_polar_nodir'))+'<br>';}\n"
+"function fillPolars(){const sel=$('#sim_polar');if(!sel)return;\n"
+" const cur=sel.value;sel.innerHTML=polarOptions();if(cur)sel.value=cur;\n"
+" const n=$('#sim_polar_note');if(n)n.innerHTML=polarDirNote()+T('sim_polar_help');simLock();}\n"
+"// Ligne de réglage de l'aléa : curseur + champ, sans case « auto ».\n"
+"function simRRow(k){const f=SIMR[k],cur=SIM[k];\n"
+" return '<tr><td style=\"min-width:13em\">'+T('sim_'+k)+'</td>'\n"
+"  +'<td style=\"width:40%\"><input type=range id=sr_'+k+' min='+f[0]+' max='+f[1]+' step='+f[2]+' value='+cur+' style=\"width:100%\"></td>'\n"
+"  +'<td class=n><input class=ri id=sn_'+k+' type=number min='+f[0]+' max='+f[1]+' step='+f[2]+' value='+cur+'> <small>'+T(f[3])+'</small></td><td></td></tr>';}\n"
 "function simRow(k){const f=SIMF[k],v=SIM[k],auto=(v===null||v===undefined),cur=auto?SIMDEF[k]:v;\n"
-" return '<tr><td>'+T('sim_'+k)+'</td>'\n"
-"  +'<td style=\"width:50%\"><input type=range id=sr_'+k+' min='+f[0]+' max='+f[1]+' step='+f[2]+' value='+cur+(auto?' disabled':'')+' style=\"width:100%\"></td>'\n"
+" return '<tr><td style=\"min-width:13em\">'+T('sim_'+k)+'</td>'\n"
+"  +'<td style=\"width:40%\"><input type=range id=sr_'+k+' min='+f[0]+' max='+f[1]+' step='+f[2]+' value='+cur+(auto?' disabled':'')+' style=\"width:100%\"></td>'\n"
 "  +'<td class=n><input class=ri id=sn_'+k+' type=number min='+f[0]+' max='+f[1]+' step='+f[2]+' value='+cur+(auto?' disabled':'')+'> <small>'+T(f[3])+'</small></td>'\n"
 "  +'<td class=c><label class=sl><input type=checkbox id=sa_'+k+(auto?' checked':'')+'> '+T('sim_auto')+'</label></td></tr>';}\n"
 "function drawSim(){let h='<table><tr><th colspan=4>'+T('sim_boat')+'</th></tr>';\n"
 " h+=simRow('hdg')+simRow('stw');\n"
 " h+='<tr><th colspan=4>'+T('sim_cur')+'</th></tr>'+simRow('set')+simRow('drift');\n"
 " h+='<tr><th colspan=4>'+T('sim_wind')+'</th></tr>'+simRow('twd')+simRow('tws');\n"
+" // vent aléatoire\n"
+" h+='<tr><th colspan=4><label class=sl><input type=checkbox id=sim_wr'+(SIM.wind_random?' checked':'')+'> '+T('sim_random')+'</label></th></tr>';\n"
+" h+=simRRow('tws_var')+simRRow('twd_var')+simRRow('wind_period');\n"
+" h+='<tr><td colspan=4><small>'+T('sim_random_help')+'</small></td></tr>';\n"
+" // polaire\n"
+" h+='<tr><th colspan=4>'+T('sim_polar_t')+'</th></tr>';\n"
+" h+='<tr><td colspan=2><select id=sim_polar style=\"width:100%\">'+polarOptions()+'</select></td>'\n"
+"  +'<td colspan=2><label class=sl><input type=checkbox id=sim_sp'+(SIM.stw_polar?' checked':'')+'> '+T('sim_stw_polar')+'</label></td></tr>';\n"
+" h+='<tr><td colspan=4><small id=sim_polar_note>'+polarDirNote()+T('sim_polar_help')+'</small></td></tr>';\n"
 " h+='</table>';$('#sim_body').innerHTML=h;\n"
 " for(const k in SIMF){const r=$('#sr_'+k),nb=$('#sn_'+k),au=$('#sa_'+k);\n"
 "  r.oninput=()=>{nb.value=r.value;pushSim();};\n"
 "  nb.oninput=()=>{r.value=nb.value;pushSim();};\n"
-"  au.onchange=()=>{r.disabled=nb.disabled=au.checked;pushSim();};}}\n"
+"  au.onchange=()=>{r.disabled=nb.disabled=au.checked;simLock();pushSim();};}\n"
+" for(const k in SIMR){const r=$('#sr_'+k),nb=$('#sn_'+k);\n"
+"  r.oninput=()=>{nb.value=r.value;pushSim();};\n"
+"  nb.oninput=()=>{r.value=nb.value;pushSim();};}\n"
+" $('#sim_wr').onchange=()=>{simLock();pushSim();};\n"
+" $('#sim_sp').onchange=()=>{simLock();pushSim();};\n"
+" $('#sim_polar').onchange=()=>{if(!$('#sim_polar').value)$('#sim_sp').checked=false;simLock();pushSim();};\n"
+" simLock();}\n"
+"// Grise ce qui ne pilote plus rien : la STW quand la polaire la calcule, les\n"
+"// réglages d'aléa quand l'aléa est coupé.\n"
+"function simLock(){const sp=$('#sim_sp').checked&&!!$('#sim_polar').value;\n"
+" $('#sim_sp').disabled=!$('#sim_polar').value;\n"
+" const stwAuto=$('#sa_stw').checked;$('#sr_stw').disabled=$('#sn_stw').disabled=sp||stwAuto;$('#sa_stw').disabled=sp;\n"
+" const wr=$('#sim_wr').checked;for(const k in SIMR)$('#sr_'+k).disabled=$('#sn_'+k).disabled=!wr;}\n"
 "// Tableau des valeurs déduites, relu dans l'état publié par le simulateur.\n"
 "function drawState(){const st=(SIM&&SIM.state)||{};\n"
 " if(!Object.keys(st).length){$('#sim_state').innerHTML='<small>'+T('sim_nostate')+'</small>';return;}\n"
 " let h='<table>';\n"
 " for(const k of SIMST){if(st[k]===undefined)continue;\n"
-"  // « réglé » = une des six entrées et non laissée en auto ; sinon « déduit ».\n"
-"  const forced=(SIMF[k]!==undefined)&&SIM[k]!==null&&SIM[k]!==undefined;\n"
+"  // TWD/TWS de base : utiles seulement quand l'aléa tourne.\n"
+"  if((k==='twd_base'||k==='tws_base')&&!st.wind_random)continue;\n"
+"  // Étiquette : « polaire » pour la STW calculée, « aléatoire » pour le vent\n"
+"  // qui varie, « réglé » pour une entrée fixée, sinon « déduit ».\n"
+"  let lbl='sim_calc',cls='bok';\n"
+"  if(k==='stw'&&st.stw_polar){lbl='sim_polar_lbl';}\n"
+"  else if((k==='twd'||k==='tws')&&st.wind_random){lbl='sim_rand_lbl';cls='blo';}\n"
+"  else if(k==='twd_base'||k==='tws_base'){const b=k.slice(0,3);if(SIM[b]!==null&&SIM[b]!==undefined){lbl='sim_set_lbl';cls='bnu';}}\n"
+"  else if(SIMF[k]!==undefined&&SIM[k]!==null&&SIM[k]!==undefined){lbl='sim_set_lbl';cls='bnu';}\n"
 "  h+='<tr><td>'+T('sim_'+k)+'</td><td class=n>'+H(SIMUNIT[k]?2:1,st[k])\n"
 "   +' <small>'+T(SIMUNIT[k]?'sim_kn':'sim_dir')+'</small></td>'\n"
-"   +'<td><small class='+(forced?'bnu':'bok')+'>'+T(forced?'sim_set_lbl':'sim_calc')+'</small></td></tr>';}\n"
+"   +'<td><small class='+cls+'>'+T(lbl)+'</small></td></tr>';}\n"
 " h+='</table>';$('#sim_state').innerHTML=h;}\n"
 "function simBody(){let t='enabled = '+($('#sim_on').checked?1:0)+'\\n';\n"
 " for(const k in SIMF)\n"
 "  t+=k+' = '+($('#sa_'+k).checked?'auto':$('#sn_'+k).value)+'\\n';\n"
+" t+='wind_random = '+($('#sim_wr').checked?1:0)+'\\n';\n"
+" for(const k in SIMR)t+=k+' = '+$('#sn_'+k).value+'\\n';\n"
+" const pol=$('#sim_polar').value;\n"
+" t+='stw_polar = '+($('#sim_sp').checked&&pol?1:0)+'\\n';\n"
+" if(pol)t+='polar = '+pol+'\\n';\n"
 " return t;}\n"
 "// Un geste de curseur produit beaucoup d'événements : on n'écrit qu'une fois\n"
 "// la main relâchée (250 ms sans changement).\n"
@@ -455,7 +538,10 @@ static const char PAGE[] =
 "if(window.matchMedia)matchMedia('(prefers-color-scheme: light)').addEventListener('change',e=>{\n"
 " if(!localStorage.getItem('theme')){theme=e.matches?'light':'dark';applyTheme();}});\n"
 "applyTheme();$('#lang').textContent=lang==='fr'?'EN':'FR';applyI18n();\n"
-"renderSources();tick();setInterval(tick,3000);\n"
+"// Onglet demandé par l'ancre (#sim…), sinon Sources.\n"
+"{const want=(location.hash||'').slice(1),nb=document.querySelector('nav button[data-t=\"'+want+'\"]');\n"
+" if(nb&&want!=='sources')nb.click();else renderSources();}\n"
+"tick();setInterval(tick,3000);\n"
 "</script></body></html>\n";
 
 /* --- E/S fichier (sans alloc) --- */
@@ -648,7 +734,8 @@ static const char *SIM_KEYS[] = {
 /* Grandeurs publiées par --state (état déduit, lecture seule). */
 static const char *SIM_STATE_KEYS[] = {
     "hdg", "stw", "cog", "sog", "set", "drift",
-    "twd", "tws", "twa", "awa", "aws", "lat", "lon"
+    "twd", "tws", "twa", "awa", "aws", "twa_w", "tws_w",
+    "twd_base", "tws_base", "wind_random", "stw_polar", "polar_ok", "lat", "lon"
 };
 #define SIM_NSTATE ((int)(sizeof SIM_STATE_KEYS / sizeof *SIM_STATE_KEYS))
 
@@ -681,6 +768,106 @@ static int sim_get(const char *text, const char *key, double *out)
     return 0;
 }
 
+/* Lit la valeur TEXTE d'une clé (jusqu'en fin de ligne, espaces rognés). */
+static int sim_get_str(const char *text, const char *key, char *out, size_t sz)
+{
+    size_t kl = strlen(key);
+    for (const char *p = text; *p; ) {
+        while (*p == ' ' || *p == '\t') p++;
+        const char *eol = p;
+        while (*eol && *eol != '\n') eol++;
+        if (strncasecmp(p, key, kl) == 0) {
+            const char *q = p + kl;
+            while (*q == ' ' || *q == '\t') q++;
+            if (*q == '=') {
+                q++;
+                while (*q == ' ' || *q == '\t') q++;
+                const char *e = eol;
+                while (e > q && (e[-1] == ' ' || e[-1] == '\t' || e[-1] == '\r')) e--;
+                snprintf(out, sz, "%.*s", (int)(e - q), q);
+                return 1;
+            }
+        }
+        p = *eol ? eol + 1 : eol;
+    }
+    return 0;
+}
+
+/* Nom de fichier seul (après le dernier '/'). */
+static const char *base_name(const char *path)
+{
+    const char *s = strrchr(path, '/');
+    return s ? s + 1 : path;
+}
+
+/* Une polaire proposée : nom SANS chemin, filtré par extension, présent dans
+ * le dossier des polaires et lisible comme polaire de vitesse. C'est la seule
+ * porte d'entrée d'un chemin dans le fichier de pilotage : pas de « ../ ». */
+static int polar_name_valid(const char *name, char *path, size_t sz)
+{
+    if (!name[0] || strchr(name, '/') || !polar_name_ok(name) || !g_polar_dir[0])
+        return 0;
+    snprintf(path, sz, "%s/%s", g_polar_dir, name);
+    static polar_t p;
+    return polar_load(&p, path);
+}
+
+static int cmp_names(const void *a, const void *b)
+{
+    return strcasecmp((const char *)a, (const char *)b);
+}
+
+/* GET /api/polars : polaires du dossier, triées, avec leur étendue. Un fichier
+ * qui porte la bonne extension mais ne se lit pas est listé avec son erreur,
+ * pour qu'on comprenne pourquoi il n'est pas choisissable. */
+static void serve_polars(int fd)
+{
+    static char names[256][256];
+    int n = 0;
+    DIR *d = g_polar_dir[0] ? opendir(g_polar_dir) : NULL;
+    if (d) {
+        struct dirent *e;
+        while ((e = readdir(d)) && n < 256)
+            if (polar_name_ok(e->d_name))
+                snprintf(names[n++], sizeof names[0], "%s", e->d_name);
+        closedir(d);
+    }
+    qsort(names, (size_t)n, sizeof names[0], cmp_names);
+
+    static char out[65536];
+    size_t len = 0;
+    char edir[1024];
+    json_escape(g_polar_dir, edir, sizeof edir);
+    int w = snprintf(out, sizeof out, "{\"dir\":\"%s\",\"found\":%s,\"polars\":[",
+                     edir, d ? "true" : "false");
+    if (w < 0 || (size_t)w >= sizeof out) { send_text(fd, 500, "Error", "application/json", "{}"); return; }
+    len += (size_t)w;
+    static polar_t p;
+    for (int i = 0; i < n; i++) {
+        char path[1024], ename[512], eerr[400];
+        int pl = snprintf(path, sizeof path, "%s/%s", g_polar_dir, names[i]);
+        int ok = (pl > 0 && (size_t)pl < sizeof path) && polar_load(&p, path);
+        if (!ok && pl >= (int)sizeof path)
+            snprintf(p.err, sizeof p.err, "chemin trop long");
+        json_escape(names[i], ename, sizeof ename);
+        if (ok)
+            w = snprintf(out + len, sizeof out - len,
+                         "%s{\"name\":\"%s\",\"ok\":true,\"tws_max\":%.0f,"
+                         "\"max_speed\":%.2f}",
+                         i ? "," : "", ename, p.tws[p.n_tws - 1], p.max_speed);
+        else {
+            json_escape(p.err, eerr, sizeof eerr);
+            w = snprintf(out + len, sizeof out - len,
+                         "%s{\"name\":\"%s\",\"ok\":false,\"err\":\"%s\"}",
+                         i ? "," : "", ename, eerr);
+        }
+        if (w < 0 || (size_t)w >= sizeof out - len) break;   /* liste tronquée */
+        len += (size_t)w;
+    }
+    snprintf(out + len, sizeof out - len, "]}");
+    send_text(fd, 200, "OK", "application/json", out);
+}
+
 /* GET /api/sim : état courant du pilotage, en JSON (null = automatique). */
 static void serve_sim(int fd)
 {
@@ -697,7 +884,7 @@ static void serve_sim(int fd)
     if (read_file(g_sim_state, sbuf, sizeof sbuf, &slen) != 0)
         sbuf[0] = '\0';
 
-    char out[1024];
+    char out[2048];
     size_t n = 0;
     int w = snprintf(out, sizeof out, "{\"enabled\":%s,\"can_start\":%s",
                      enabled ? "true" : "false",
@@ -709,6 +896,24 @@ static void serve_sim(int fd)
         int has = sim_get(buf, SIM_KEYS[i], &v);
         w = has ? snprintf(out + n, sizeof out - n, ",\"%s\":%.2f", SIM_KEYS[i], v)
                 : snprintf(out + n, sizeof out - n, ",\"%s\":null", SIM_KEYS[i]);
+        if (w < 0 || (size_t)w >= sizeof out - n) { send_text(fd, 500, "Error", "application/json", "{}"); return; }
+        n += (size_t)w;
+    }
+    /* aléa du vent et polaire */
+    {
+        double v;
+        int    wr = sim_get(buf, "wind_random", &v) ? (v != 0) : 0;
+        int    sp = sim_get(buf, "stw_polar", &v) ? (v != 0) : 0;
+        double tv = sim_get(buf, "tws_var", &v) ? v : 30.0;
+        double dv = sim_get(buf, "twd_var", &v) ? v : 20.0;
+        double wp = sim_get(buf, "wind_period", &v) ? v : 10.0;
+        char   ppath[600] = "", pname[520];
+        sim_get_str(buf, "polar", ppath, sizeof ppath);
+        json_escape(base_name(ppath), pname, sizeof pname);
+        w = snprintf(out + n, sizeof out - n,
+                     ",\"wind_random\":%s,\"tws_var\":%.1f,\"twd_var\":%.1f,"
+                     "\"wind_period\":%.1f,\"stw_polar\":%s,\"polar\":\"%s\"",
+                     wr ? "true" : "false", tv, dv, wp, sp ? "true" : "false", pname);
         if (w < 0 || (size_t)w >= sizeof out - n) { send_text(fd, 500, "Error", "application/json", "{}"); return; }
         n += (size_t)w;
     }
@@ -739,7 +944,7 @@ static void handle_sim_post(int fd, const char *body)
     double en = 1;
     int enabled = sim_get(body, "enabled", &en) ? (en != 0) : 1;
 
-    char text[1024];
+    char text[2048];
     size_t n = 0;
     int w = snprintf(text, sizeof text,
                      "# n2k-sim : pilotage écrit par l'interface web\n"
@@ -754,7 +959,7 @@ static void handle_sim_post(int fd, const char *body)
             w = snprintf(text + n, sizeof text - n, "%s = auto\n", SIM_KEYS[i]);
         } else {
             /* bornes : un cap tourne, une vitesse ne descend pas sous zéro */
-            int is_dir = (strcmp(SIM_KEYS[i], "cog") == 0 ||
+            int is_dir = (strcmp(SIM_KEYS[i], "hdg") == 0 ||
                           strcmp(SIM_KEYS[i], "set") == 0 ||
                           strcmp(SIM_KEYS[i], "twd") == 0);
             if (is_dir) {
@@ -765,6 +970,51 @@ static void handle_sim_post(int fd, const char *body)
             }
             w = snprintf(text + n, sizeof text - n, "%s = %.2f\n", SIM_KEYS[i], v);
         }
+        if (w < 0 || (size_t)w >= sizeof text - n) { send_text(fd, 500, "Error", "application/json", "{}"); return; }
+        n += (size_t)w;
+    }
+
+    /* Vent aléatoire : amplitudes TOTALES (force en %, direction en degrés) et
+     * durée typique des séquences en minutes. Bornées pour rester physiques. */
+    {
+        double v;
+        int    wr = sim_get(body, "wind_random", &v) ? (v != 0) : 0;
+        double tv = sim_get(body, "tws_var", &v) ? v : 30.0;
+        double dv = sim_get(body, "twd_var", &v) ? v : 20.0;
+        double wp = sim_get(body, "wind_period", &v) ? v : 10.0;
+        if (tv < 0)   tv = 0;
+        if (tv > 100) tv = 100;
+        if (dv < 0)   dv = 0;
+        if (dv > 180) dv = 180;
+        if (wp < 0.5) wp = 0.5;
+        if (wp > 240) wp = 240;
+        w = snprintf(text + n, sizeof text - n,
+                     "wind_random = %d\ntws_var = %.1f\ntwd_var = %.1f\nwind_period = %.1f\n",
+                     wr, tv, dv, wp);
+        if (w < 0 || (size_t)w >= sizeof text - n) { send_text(fd, 500, "Error", "application/json", "{}"); return; }
+        n += (size_t)w;
+    }
+
+    /* Polaire : l'UI envoie un NOM ; on ne l'accepte que s'il désigne une
+     * polaire lisible du dossier, et on écrit le chemin complet. */
+    {
+        double v;
+        int  sp = sim_get(body, "stw_polar", &v) ? (v != 0) : 0;
+        char pname[256] = "", ppath[800] = "";
+        sim_get_str(body, "polar", pname, sizeof pname);
+        if (pname[0] && strcmp(pname, "auto") != 0 &&
+            !polar_name_valid(pname, ppath, sizeof ppath)) {
+            char out[512], e[300];
+            json_escape(pname, e, sizeof e);
+            snprintf(out, sizeof out,
+                     "{\"ok\":false,\"err\":\"polaire refusée : %s\"}", e);
+            send_text(fd, 200, "OK", "application/json", out);
+            return;
+        }
+        if (!ppath[0])
+            sp = 0;                 /* pas de polaire : pas de vitesse par polaire */
+        w = snprintf(text + n, sizeof text - n, "stw_polar = %d\n%s%s%s",
+                     sp, ppath[0] ? "polar = " : "", ppath, ppath[0] ? "\n" : "");
         if (w < 0 || (size_t)w >= sizeof text - n) { send_text(fd, 500, "Error", "application/json", "{}"); return; }
         n += (size_t)w;
     }
@@ -978,6 +1228,8 @@ static void handle_client(int fd)
             serve_rules(fd);
         else if (strcmp(path, "/api/sim") == 0)
             serve_sim(fd);
+        else if (strcmp(path, "/api/polars") == 0)
+            serve_polars(fd);
         else if (strcmp(path, "/api/config") == 0) {
             static char buf[FILE_MAX]; size_t len = 0;
             if (g_cfg_path && read_file(g_cfg_path, buf, sizeof buf, &len) == 0)
@@ -1017,6 +1269,8 @@ int main(int argc, char **argv)
         else if (strcmp(argv[i], "--allow-anonymous") == 0) allow_anon = 1;
         else if (strcmp(argv[i], "--sim-control") == 0 && i + 1 < argc) g_sim_path = argv[++i];
         else if (strcmp(argv[i], "--sim-state") == 0 && i + 1 < argc) g_sim_state = argv[++i];
+        else if (strcmp(argv[i], "--polar-dir") == 0 && i + 1 < argc)
+            snprintf(g_polar_dir, sizeof g_polar_dir, "%s", argv[++i]);
         else if (strcmp(argv[i], "--sim-start") == 0 && i + 1 < argc) g_sim_start = argv[++i];
         else if (strcmp(argv[i], "--sim-stop") == 0 && i + 1 < argc) g_sim_stop = argv[++i];
         else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -1033,6 +1287,8 @@ int main(int argc, char **argv)
                 "  --allow-anonymous  autorise l'écoute réseau SANS authentification\n"
                 "  --sim-control P    fichier de pilotage du simulateur\n"
                 "                (défaut /etc/n2k-mux/sim.ctl ; cf. n2k-sim --control)\n"
+                "  --polar-dir D      dossier des polaires proposées (.pol/.csv)\n"
+                "                (défaut $HOME/.qtVlm/polar)\n"
                 "  --sim-state P      état déduit publié par n2k-sim --state\n"
                 "                (défaut /run/n2k-mux/sim.state ; affiché par l'UI)\n"
                 "  --sim-start CMD    commande lançant la chaîne simulée (optionnel)\n"
@@ -1041,6 +1297,12 @@ int main(int argc, char **argv)
             return 0;
         } else if (argv[i][0] != '-') g_cfg_path = argv[i];
         else { fprintf(stderr, "option inconnue : %s\n", argv[i]); return 2; }
+    }
+
+    if (!g_polar_dir[0]) {
+        const char *home = getenv("HOME");
+        if (home && home[0])
+            snprintf(g_polar_dir, sizeof g_polar_dir, "%s/.qtVlm/polar", home);
     }
 
     /* Le credential peut venir de l'environnement plutôt que de la ligne de
