@@ -25,24 +25,28 @@
  * que sa date de modification change (c'est ce que l'interface web écrit) :
  *
  *     enabled = 1        ; 0 = le simulateur n'émet RIEN (chaîne silencieuse)
- *     cog     = 50       ; route fond, degrés vrais  (auto = sinusoïde)
- *     sog     = 6.2      ; vitesse fond, NŒUDS
+ *     hdg     = 45       ; cap vrai, degrés          (auto = sinusoïde)
+ *     stw     = 6.2      ; vitesse SURFACE, NŒUDS
  *     set     = 120      ; direction du courant (VERS laquelle il porte), degrés
  *     drift   = 1.0      ; vitesse du courant, NŒUDS
- *     twd     = 225      ; direction du vent vrai (D'OÙ il vient), degrés
- *     tws     = 14       ; vitesse du vent vrai, NŒUDS
+ *
+ * puis le vent, défini par UNE de ces trois paires (priorité dans cet ordre) :
+ *     awa = 40, aws = 18 ; vent APPARENT : angle/étrave + vitesse, NŒUDS
+ *     twa = 55, tws = 15 ; vent VRAI par son angle/étrave + vitesse
+ *     twd = 225, tws = 15 ; vent VRAI par sa direction (D'OÙ il vient)
  *
  * Toute clé absente ou à « auto » garde le comportement automatique.
  *
- * Ces six grandeurs sont les ENTRÉES ; tout le reste en DÉCOULE, pour que le
- * flux reste cohérent d'un instrument à l'autre :
- *   - vitesse/cap surface (STW, HDG) = vecteur fond − vecteur courant ;
- *   - taux de giration = dérivée du COG (nul si le COG est imposé) ;
- *   - vent apparent (AWA/AWS) = vent vrai − vecteur bateau sur le fond ;
- *   - vent vrai référencé eau = vent vrai − courant, exprimé par rapport à
- *     l'étrave ; la position s'intègre le long du COG.
- * Régler l'apparent ou le cap à la main les mettrait en contradiction avec le
- * reste à l'écran.
+ * POURQUOI une seule paire : le triangle des vitesses lie le vent vrai,
+ * l'apparent et le vecteur bateau. Imposer les trois à la fois serait
+ * contradictoire ; on impose donc une paire et le reste est CALCULÉ :
+ *   - route et vitesse fond (COG, SOG) = vecteur surface + vecteur courant ;
+ *   - taux de giration = dérivée du CAP (nul si le cap est imposé) ;
+ *   - les deux autres expressions du vent, dont le vent vrai référencé eau ;
+ *   - la position s'intègre le long du COG ainsi obtenu.
+ *
+ * L'état déduit est publié en clair avec --state (même format), ce que
+ * l'interface web affiche à côté des réglages.
  */
 
 #include <stdio.h>
@@ -126,15 +130,18 @@ static void emit(int prio, int src, int pgn, const char *desc, const char *field
  * position VERS L'AVANT le long du COG, avec un cap ≈ COG (+ petite dérive). */
 static struct {
     double lat, lon;   /* position courante (degrés) */
-    double cog;        /* route fond (deg, 0=N, sens horaire) */
-    double sog;        /* vitesse fond (m/s) */
-    double stw;        /* vitesse surface (m/s), CALCULÉE */
-    double hdg;        /* cap vrai (deg), CALCULÉ = route sur l'eau */
-    double rot;        /* taux de giration (deg/s) = dCOG/dt */
+    double cog;        /* route fond (deg), CALCULÉE */
+    double sog;        /* vitesse fond (m/s), CALCULÉE */
+    double stw;        /* vitesse surface (m/s), ENTRÉE */
+    double hdg;        /* cap vrai (deg), ENTRÉE */
+    double rot;        /* taux de giration (deg/s) = dHDG/dt */
     double set;        /* direction du courant, vers laquelle il porte (deg) */
     double drift;      /* vitesse du courant (m/s) */
     double twd;        /* direction du vent VRAI, d'où il vient (deg) */
     double tws;        /* vitesse du vent vrai (m/s) */
+    double twa;        /* angle du vent vrai / étrave (deg), = twd − hdg */
+    double awa;        /* angle du vent apparent / étrave (deg) */
+    double aws;        /* vitesse du vent apparent (m/s) */
     double last_t;     /* horodatage du dernier pas (s) */
     int    init;
 } boat;
@@ -147,11 +154,15 @@ static struct {
 
 typedef struct {
     int    enabled;
-    double cog, sog, set, drift, twd, tws;
+    double hdg, stw, set, drift;        /* bateau et courant */
+    double twd, tws, twa, awa, aws;     /* vent : une paire suffit */
 } simctl_t;
 
-static simctl_t g_ctl = { 1, NAN, NAN, NAN, NAN, NAN, NAN };
+#define CTL_INIT { 1, NAN, NAN, NAN, NAN, NAN, NAN, NAN, NAN, NAN }
+
+static simctl_t g_ctl = CTL_INIT;
 static const char *g_ctl_path = NULL;
+static const char *g_state_path = NULL;
 
 /* Lit « clé = valeur » ; « auto » ou clé absente → NAN. Tolérant : une ligne
  * incomprise est ignorée, un fichier illisible laisse l'état inchangé. */
@@ -160,7 +171,7 @@ static void ctl_load(const char *path)
     FILE *f = fopen(path, "r");
     if (!f)
         return;
-    simctl_t c = { 1, NAN, NAN, NAN, NAN, NAN, NAN };
+    simctl_t c = CTL_INIT;
     char line[160];
     while (fgets(line, sizeof line, f)) {
         for (char *p = line; *p; p++)
@@ -174,12 +185,15 @@ static void ctl_load(const char *path)
         if      (strcmp(key, "enabled") == 0)
             c.enabled = (strcmp(val, "0") && strcmp(val, "false") &&
                          strcmp(val, "off") && strcmp(val, "no"));
-        else if (strcmp(key, "cog") == 0)   c.cog = v;
-        else if (strcmp(key, "sog") == 0)   c.sog = isnan(v) ? v : v * KN_TO_MS;
+        else if (strcmp(key, "hdg") == 0)   c.hdg = v;
+        else if (strcmp(key, "stw") == 0)   c.stw = isnan(v) ? v : v * KN_TO_MS;
         else if (strcmp(key, "set") == 0)   c.set = v;
         else if (strcmp(key, "drift") == 0) c.drift = isnan(v) ? v : v * KN_TO_MS;
         else if (strcmp(key, "twd") == 0)   c.twd = v;
         else if (strcmp(key, "tws") == 0)   c.tws = isnan(v) ? v : v * KN_TO_MS;
+        else if (strcmp(key, "twa") == 0)   c.twa = v;
+        else if (strcmp(key, "awa") == 0)   c.awa = v;
+        else if (strcmp(key, "aws") == 0)   c.aws = isnan(v) ? v : v * KN_TO_MS;
     }
     fclose(f);
     g_ctl = c;
@@ -233,53 +247,96 @@ static void boat_update(double t)
     boat.last_t = t;
     if (dt < 0) dt = 0;
 
-    /* --- ENTRÉES : route/vitesse fond, courant, vent vrai. Chacune vient du
-     * fichier de contrôle si elle y est fixée, sinon d'une sinusoïde. --- */
-    if (isnan(g_ctl.cog)) {
-        boat.cog = norm360(90.0 + 55.0 * sin(t / 70.0));   /* vire en S */
-        boat.rot = (55.0 / 70.0) * cos(t / 70.0);          /* dérivée du COG */
+    /* --- ENTRÉES : cap et vitesse SURFACE (ce que barre et lit l'équipage),
+     * plus le courant. Chacune vient du fichier de contrôle si elle y est
+     * fixée, sinon d'une sinusoïde. --- */
+    if (isnan(g_ctl.hdg)) {
+        boat.hdg = norm360(90.0 + 55.0 * sin(t / 70.0));   /* vire en S */
+        boat.rot = (55.0 / 70.0) * cos(t / 70.0);          /* dérivée du CAP */
     } else {
-        boat.cog = norm360(g_ctl.cog);
-        boat.rot = 0.0;                                    /* route imposée */
+        boat.hdg = norm360(g_ctl.hdg);
+        boat.rot = 0.0;                                    /* cap imposé */
     }
-    boat.sog   = isnan(g_ctl.sog)   ? 4.5 + 1.0 * sin(t / 40.0) : g_ctl.sog;
+    boat.stw   = isnan(g_ctl.stw)   ? 4.5 + 1.0 * sin(t / 40.0) : g_ctl.stw;
     boat.set   = isnan(g_ctl.set)   ? norm360(120.0 + 10.0 * sin(t / 40.0))
                                     : norm360(g_ctl.set);
     boat.drift = isnan(g_ctl.drift) ? 0.5 + 0.2 * sin(t / 25.0) : g_ctl.drift;
-    boat.twd   = isnan(g_ctl.twd)   ? norm360(225.0 + 15.0 * sin(t / 60.0))
-                                    : norm360(g_ctl.twd);
-    boat.tws   = isnan(g_ctl.tws)   ? 9.0 + 2.0 * sin(t / 8.0) : g_ctl.tws;
-    if (boat.sog < 0)   boat.sog = 0;
+    if (boat.stw < 0)   boat.stw = 0;
     if (boat.drift < 0) boat.drift = 0;
-    if (boat.tws < 0)   boat.tws = 0;
 
-    /* --- CALCULÉ : mouvement sur l'eau = fond − courant. C'est ce que mesure
-     * un loch/speedo, et le cap suit (pas de dérive aérodynamique modélisée). */
-    double gn, ge, cn, ce;
-    vec_of(boat.cog, boat.sog,   &gn, &ge);
+    /* --- CALCULÉ : route/vitesse FOND = vecteur surface + vecteur courant.
+     * C'est le triangle des vitesses, dans le sens où l'équipage le vit. --- */
+    double wn, we, cn, ce, gn, ge;
+    vec_of(boat.hdg, boat.stw,   &wn, &we);
     vec_of(boat.set, boat.drift, &cn, &ce);
-    dir_of(gn - cn, ge - ce, &boat.hdg, &boat.stw);
+    gn = wn + cn;
+    ge = we + ce;
+    dir_of(gn, ge, &boat.cog, &boat.sog);
+
+    /* --- VENT : une seule paire imposée, les autres expressions calculées.
+     * Priorité à l'apparent (la grandeur réellement mesurée à bord), puis à
+     * l'angle vrai, puis à la direction vraie. --- */
+    if (!isnan(g_ctl.awa) && !isnan(g_ctl.aws)) {
+        boat.awa = norm360(g_ctl.awa);
+        boat.aws = g_ctl.aws < 0 ? 0 : g_ctl.aws;
+        /* on remonte au vent vrai : air vu du bateau + vecteur bateau/fond */
+        double rn, re;
+        vec_of(norm360(boat.hdg + boat.awa + 180.0), boat.aws, &rn, &re);
+        double dir, mag;
+        dir_of(rn + gn, re + ge, &dir, &mag);
+        boat.twd = norm360(dir + 180.0);
+        boat.tws = mag;
+    } else {
+        if (!isnan(g_ctl.twa))
+            boat.twd = norm360(boat.hdg + g_ctl.twa);
+        else
+            boat.twd = isnan(g_ctl.twd) ? norm360(225.0 + 15.0 * sin(t / 60.0))
+                                        : norm360(g_ctl.twd);
+        boat.tws = isnan(g_ctl.tws) ? 9.0 + 2.0 * sin(t / 8.0) : g_ctl.tws;
+        if (boat.tws < 0) boat.tws = 0;
+        /* apparent = vent vrai (mouvement de l'air) − vecteur bateau/fond */
+        double an, ae;
+        vec_of(norm360(boat.twd + 180.0), boat.tws, &an, &ae);
+        double dir, mag;
+        dir_of(an - gn, ae - ge, &dir, &mag);
+        boat.awa = norm360(dir + 180.0 - boat.hdg);
+        boat.aws = mag;
+    }
+    boat.twa = norm360(boat.twd - boat.hdg);
 
     /* avance le long du COG (1° lat ≈ 111320 m) */
     boat.lat += (gn * dt) / 111320.0;
     boat.lon += (ge * dt) / (111320.0 * cos(boat.lat * M_PI / 180.0));
 }
 
+/* Publie l'état DÉDUIT (--state) : même format « clé = valeur », unités de
+ * l'utilisateur. L'interface web l'affiche à côté des réglages, pour qu'on voie
+ * ce que le triangle donne sans lire le flux NMEA. Écriture atomique. */
+static void state_write(void)
+{
+    if (!g_state_path)
+        return;
+    char tmp[512];
+    snprintf(tmp, sizeof tmp, "%s.tmp", g_state_path);
+    FILE *f = fopen(tmp, "w");
+    if (!f)
+        return;
+    fprintf(f,
+            "# n2k-sim : état déduit (lecture seule)\n"
+            "enabled = %d\nhdg = %.1f\nstw = %.2f\ncog = %.1f\nsog = %.2f\n"
+            "set = %.1f\ndrift = %.2f\ntwd = %.1f\ntws = %.2f\ntwa = %.1f\n"
+            "awa = %.1f\naws = %.2f\nlat = %.6f\nlon = %.6f\n",
+            g_ctl.enabled, boat.hdg, boat.stw / KN_TO_MS, boat.cog,
+            boat.sog / KN_TO_MS, boat.set, boat.drift / KN_TO_MS,
+            boat.twd, boat.tws / KN_TO_MS, boat.twa, boat.awa,
+            boat.aws / KN_TO_MS, boat.lat, boat.lon);
+    fclose(f);
+    if (rename(tmp, g_state_path) != 0)
+        unlink(tmp);
+}
+
 /* --- Vent : le vrai (twd/tws) est l'entrée, l'apparent et le « vrai eau » en
  * découlent. Convention : twd = direction D'OÙ vient le vent. --- */
-
-/* Vent apparent : vent vrai moins le vecteur bateau sur le fond, ramené à
- * l'étrave. `aa` dans [0,360), `as` en m/s. */
-static void wind_apparent(double *aa, double *as)
-{
-    double wn, we, bn, be;
-    vec_of(norm360(boat.twd + 180.0), boat.tws, &wn, &we);  /* l'air se déplace */
-    vec_of(boat.cog, boat.sog, &bn, &be);                   /* le bateau aussi */
-    double dir, mag;
-    dir_of(wn - bn, we - be, &dir, &mag);                   /* air vu du bateau */
-    *aa = norm360(dir + 180.0 - boat.hdg);                  /* d'où il vient / étrave */
-    *as = mag;
-}
 
 /* Vent vrai RÉFÉRENCÉ EAU : vent vrai moins le courant, ramené à l'étrave.
  * C'est ce que calcule une centrale à partir de l'apparent et du loch. */
@@ -424,12 +481,12 @@ static void e_wind(double t)   /* 130306 → MWV(R), MWV(T), MWD */
 {
     (void)t;
     char f[160];
-    double aa, as, ta, ts;
-    wind_apparent(&aa, &as);
+    double ta, ts;
     wind_true_water(&ta, &ts);
-    /* apparent : angle relatif à l'étrave */
+    /* apparent : angle relatif à l'étrave (état déduit ou imposé) */
     snprintf(f, sizeof f,
-             "\"Reference\":\"Apparent\",\"Wind Speed\":%.2f,\"Wind Angle\":%.1f", as, aa);
+             "\"Reference\":\"Apparent\",\"Wind Speed\":%.2f,\"Wind Angle\":%.1f",
+             boat.aws, boat.awa);
     emit(2, MAD_SRC, 130306, "Wind Data", f);
     /* vrai référencé eau : angle relatif à l'étrave aussi */
     snprintf(f, sizeof f,
@@ -989,6 +1046,7 @@ static int run_actisense(double duration, long tick, int once, int no_ais)
     };
     int n = (int)(sizeof S / sizeof *S);
     uint64_t start = now_ms();
+    double last_state_ms = -1e9;
     do {
         uint64_t now = now_ms();
         double el = (double)(now - start);
@@ -996,6 +1054,7 @@ static int run_actisense(double duration, long tick, int once, int no_ais)
         double t = el / 1000.0;
         ctl_refresh();                 /* --control : mêmes réglages qu'en JSON */
         boat_update(t);
+        if (el - last_state_ms >= 500.0) { state_write(); last_state_ms = el; }
         if (!g_ctl.enabled) {          /* désactivé : aucune trame émise */
             usleep((useconds_t)(tick * 1000));
             continue;
@@ -1069,9 +1128,12 @@ static void usage(const char *p)
         "                  + fast-packet GNSS/loch/AIS) à piper dans ./ydraw-bridge\n"
         "                  → YDRAW/TCP → qtVlm en N2K\n"
         "  --tick MS       période de la boucle d'émission (défaut 100 ms)\n"
-        "  --control FIC   pilotage à chaud (enabled/cog/sog/set/drift/twd/tws)\n"
-        "                  relu à chaque changement du fichier ; c'est ce que\n"
-        "                  l'interface web écrit. Vitesses en nœuds, caps en degrés.\n"
+        "  --control FIC   pilotage à chaud : enabled, hdg, stw, set, drift, et le\n"
+        "                  vent par UNE paire (awa+aws, twa+tws ou twd+tws). Relu à\n"
+        "                  chaque changement du fichier ; c'est ce que l'interface\n"
+        "                  web écrit. Vitesses en nœuds, angles en degrés.\n"
+        "  --state FIC     publie l'état DÉDUIT (cog, sog, twa, awa, aws…) dans ce\n"
+        "                  fichier, même format, pour affichage par l'interface web\n"
         "\nÉmet du JSON façon `analyzer -json` pour tous les PGN compris par\n"
         "n2k-mux + l'identité. Exemple : %s | ./n2k-mux n2k-sim.ini -v\n",
         p, p);
@@ -1090,6 +1152,7 @@ int main(int argc, char **argv)
         else if (strcmp(argv[i], "--duration") == 0 && i + 1 < argc) duration = atof(argv[++i]);
         else if (strcmp(argv[i], "--tick") == 0 && i + 1 < argc)     tick_ms = atol(argv[++i]);
         else if (strcmp(argv[i], "--control") == 0 && i + 1 < argc)  g_ctl_path = argv[++i];
+        else if (strcmp(argv[i], "--state") == 0 && i + 1 < argc)    g_state_path = argv[++i];
         else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) { usage(argv[0]); return 0; }
         else { fprintf(stderr, "option inconnue : %s\n", argv[i]); usage(argv[0]); return 2; }
     }
@@ -1112,6 +1175,7 @@ int main(int argc, char **argv)
          * « un de chaque PGN » sortait toujours les valeurs automatiques. */
         ctl_refresh();
         boat_update(0.0);
+        state_write();
         if (!g_ctl.enabled) {
             fflush(stdout);
             return 0;              /* désactivé : rien que l'en-tête */
@@ -1128,6 +1192,7 @@ int main(int argc, char **argv)
 
     uint64_t start = now_ms();
     int was_enabled = 1;
+    double last_state_ms = -1e9;
     while (!g_stop) {
         uint64_t now = now_ms();
         double el = (double)(now - start);          /* ms écoulées */
@@ -1136,6 +1201,9 @@ int main(int argc, char **argv)
 
         ctl_refresh();                               /* --control : relecture */
         boat_update(t);                              /* avance la position/cap */
+
+        /* état déduit publié ~2 fois par seconde (affichage web) */
+        if (el - last_state_ms >= 500.0) { state_write(); last_state_ms = el; }
 
         /* Porte « enabled » : désactivé, le simulateur n'émet RIEN. La chaîne
          * reste debout (kplex, n2kd, web) et le daemon publie un âge de dernier

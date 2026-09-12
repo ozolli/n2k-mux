@@ -5,7 +5,7 @@
 # source n'est plus le bus : c'est n2k-sim, piloté à chaud par un fichier de
 # contrôle que l'interface web écrit (onglet Simulateur).
 #
-#   n2k-sim --control $SIMCTL
+#   n2k-sim --control $SIMCTL --state $RUN/sim.state
 #     → tee ais.fifo ─┬→ n2k-mux conf (instruments) → out0183.fifo → kplex (10110)
 #                     └→ n2k-mux --ais-json conf → n2kd (AIS → 2599)
 #
@@ -14,6 +14,10 @@
 #
 # Variables (Environment / EnvironmentFile du service) :
 #   CONF KPLEX_CONF SIMCTL N2KSIM N2KMUX N2KD KPLEX
+#
+# Le simulateur lit ses RÉGLAGES dans $SIMCTL (persistant, /etc) et republie
+# l'état DÉDUIT dans $RUN/sim.state (éphémère) : route et vitesse fond, les trois
+# expressions du vent, la position. L'interface web lit les deux.
 
 set -uo pipefail
 
@@ -22,6 +26,7 @@ set -uo pipefail
 SIMCTL="${SIMCTL:-/etc/n2k-mux/sim.ctl}"
 
 RUN="${RUNTIME_DIRECTORY:-/run/n2k-mux}"
+SIMSTATE="$RUN/sim.state"    # état DÉDUIT publié par le simulateur (UI web)
 AISFIFO="$RUN/ais.fifo"      # copie du flux simulé → branche AIS
 OUTFIFO="$RUN/out0183.fifo"  # 0183 du n2k-mux principal → kplex
 mkfifo -m 0600 "$AISFIFO" "$OUTFIFO" 2>/dev/null || true
@@ -48,7 +53,7 @@ PIDS+=($!)
 # Branche principale. tee --output-error=exit : si une sortie casse (ais.fifo ou
 # n2k-mux principal), le tee MEURT au lieu de masquer la panne (cf. n2k-mux-run).
 # $! = n2k-mux principal (dernier élément AVANT la redirection > OUTFIFO).
-"$N2KSIM" --control "$SIMCTL" \
+"$N2KSIM" --control "$SIMCTL" --state "$SIMSTATE" \
   | tee --output-error=exit "$AISFIFO" \
   | "$N2KMUX" "$CONF" \
         --sources "$RUN/sources.json" --stats "$RUN/stats.json" \

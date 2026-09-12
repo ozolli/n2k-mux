@@ -52,6 +52,8 @@ static const char *g_reload_cmd  = NULL;
  * commandes, la bascule ne fait que réduire le simulateur au silence (ce qui
  * suffit si la chaîne simulée tourne déjà). */
 static const char *g_sim_path    = "/etc/n2k-mux/sim.ctl";
+/* État DÉDUIT publié par n2k-sim --state : éphémère, donc dans /run. */
+static const char *g_sim_state   = "/run/n2k-mux/sim.state";
 static const char *g_sim_start   = NULL;
 static const char *g_sim_stop    = NULL;
 #define AUTH_RAW_MAX 256                   /* longueur max acceptée de "user:pass" */
@@ -132,7 +134,8 @@ static const char PAGE[] =
 "<small> &nbsp;<span data-i18n='sim_help'></span></small></div>\n"
 "<div id='sim_body' style='max-width:760px'>…</div>\n"
 "<div class='card' style='max-width:760px;margin-top:.6em'>"
-"<h3 data-i18n='sim_derived_t'></h3><small><span data-i18n='sim_derived'></span></small></div>\n"
+"<h3 data-i18n='sim_derived_t'></h3><div id='sim_state'></div>"
+"<small><span data-i18n='sim_derived'></span></small></div>\n"
 "</section>\n"
 "</main>\n"
 "<script>\n"
@@ -166,11 +169,17 @@ static const char PAGE[] =
 "stale:'FLUX MORT : aucun message depuis',stale_never:'FLUX MORT : aucun message reçu',\n"
 "tab_sim:'Simulateur',sim_on:'Simulateur actif',\n"
 "sim_help:'bateau simulé, sans matériel : ces six grandeurs pilotent tout le flux',\n"
+"sim_hdg:'Cap vrai (HDG)',sim_stw:'Vitesse surface (STW)',\n"
 "sim_cog:'Route fond (COG)',sim_sog:'Vitesse fond (SOG)',sim_set:'Direction du courant (set)',\n"
 "sim_drift:'Vitesse du courant (drift)',sim_twd:'Direction du vent vrai (TWD)',sim_tws:'Vitesse du vent vrai (TWS)',\n"
+"sim_twa:'Angle du vent vrai (TWA)',sim_awa:'Angle du vent apparent (AWA)',sim_aws:'Vitesse du vent apparent (AWS)',\n"
+"sim_lat:'Latitude',sim_lon:'Longitude',\n"
 "sim_auto:'auto',sim_saved:'Simulateur mis à jour.',sim_na:'Pilotage indisponible (chemin --sim-control accessible ?).',\n"
+"sim_boat:'Bateau',sim_cur:'Courant',sim_wind:'Vent',sim_windby:'Vent défini par',\n"
+"sim_by_twd:'direction vraie (TWD + TWS)',sim_by_twa:'angle vrai (TWA + TWS)',sim_by_awa:'apparent (AWA + AWS)',\n"
+"sim_set_lbl:'réglé',sim_calc:'déduit',sim_nostate:'État déduit indisponible : le simulateur ne tourne pas, ou --state n’est pas publié.',\n"
 "sim_derived_t:'Valeurs déduites',\n"
-"sim_derived:'Cap et vitesse surface = vecteur fond moins vecteur courant. Vent apparent = vent vrai moins vecteur bateau. Giration = dérivée du COG, nulle si la route est imposée. Position intégrée le long du COG. Les régler à la main les mettrait en contradiction.',\n"
+"sim_derived:'Le triangle des vitesses lie tout : route et vitesse fond = vecteur surface plus vecteur courant, et le vent vrai, son angle et l’apparent sont trois façons de dire la même chose. On impose donc UNE paire de vent et le reste est calculé. Giration = dérivée du cap, nulle si le cap est imposé.',\n"
 "sim_nostart:'La bascule ne fait que rendre le simulateur muet : aucune commande de démarrage n’est configurée (--sim-start).',\n"
 "sim_dir:'°',sim_kn:'nds'\n"
 "},en:{\n"
@@ -201,11 +210,17 @@ static const char PAGE[] =
 "stale:'STREAM DEAD: no message for',stale_never:'STREAM DEAD: no message received',\n"
 "tab_sim:'Simulator',sim_on:'Simulator running',\n"
 "sim_help:'simulated boat, no hardware: these six inputs drive the whole stream',\n"
+"sim_hdg:'True heading (HDG)',sim_stw:'Speed through water (STW)',\n"
 "sim_cog:'Course over ground (COG)',sim_sog:'Speed over ground (SOG)',sim_set:'Current direction (set)',\n"
 "sim_drift:'Current speed (drift)',sim_twd:'True wind direction (TWD)',sim_tws:'True wind speed (TWS)',\n"
+"sim_twa:'True wind angle (TWA)',sim_awa:'Apparent wind angle (AWA)',sim_aws:'Apparent wind speed (AWS)',\n"
+"sim_lat:'Latitude',sim_lon:'Longitude',\n"
 "sim_auto:'auto',sim_saved:'Simulator updated.',sim_na:'Control unavailable (is --sim-control writable?).',\n"
+"sim_boat:'Boat',sim_cur:'Current',sim_wind:'Wind',sim_windby:'Wind defined by',\n"
+"sim_by_twd:'true direction (TWD + TWS)',sim_by_twa:'true angle (TWA + TWS)',sim_by_awa:'apparent (AWA + AWS)',\n"
+"sim_set_lbl:'set',sim_calc:'derived',sim_nostate:'Derived state unavailable: the simulator is not running, or --state is not published.',\n"
 "sim_derived_t:'Derived values',\n"
-"sim_derived:'Heading and water speed = ground vector minus current vector. Apparent wind = true wind minus boat vector. Rate of turn = COG derivative, zero when the course is forced. Position integrated along COG. Setting those by hand would contradict the inputs.',\n"
+"sim_derived:'The velocity triangle ties everything together: course and speed over ground = water vector plus current vector, and true wind, its angle and the apparent wind are three ways of saying the same thing. So ONE wind pair is imposed and the rest is computed. Rate of turn = heading derivative, zero when the heading is forced.',\n"
 "sim_nostart:'The toggle only silences the simulator: no start command is configured (--sim-start).',\n"
 "sim_dir:'°',sim_kn:'kn'\n"
 "}};\n"
@@ -367,35 +382,65 @@ static const char PAGE[] =
 "$('#arb_unseen').onchange=e=>{localStorage.setItem('arb_unseen',e.target.checked?'1':'');if(ARB)drawArb();};\n"
 "$('#src_save').onclick=saveSrc;$('#src_reload').onclick=renderSources;\n"
 "// --- Simulateur ------------------------------------------------------------\n"
-"// Six ENTRÉES seulement : tout le reste est calculé par n2k-sim (cap, vitesse\n"
-"// surface, vent apparent, giration, position). On écrit le fichier de pilotage\n"
-"// via /api/sim ; le simulateur le relit tout seul, sans redémarrage.\n"
-"const SIMF=[['cog',0,359,1,'sim_dir'],['sog',0,20,0.1,'sim_kn'],\n"
-"            ['set',0,359,1,'sim_dir'],['drift',0,6,0.1,'sim_kn'],\n"
-"            ['twd',0,359,1,'sim_dir'],['tws',0,50,0.5,'sim_kn']];\n"
-"const SIMDEF={cog:90,sog:9,set:120,drift:1,twd:225,tws:17};\n"
-"let SIM=null,simTimer=null;\n"
+"// Entrées : cap et vitesse SURFACE, courant, et UNE paire de vent. Le triangle\n"
+"// des vitesses interdit d'imposer davantage : route/vitesse fond et les deux\n"
+"// autres expressions du vent sont CALCULÉES par n2k-sim, qui les republie dans\n"
+"// son fichier d'état — c'est ce qu'affiche le tableau « valeurs déduites ».\n"
+"const SIMF={hdg:[0,359,1,'sim_dir'],stw:[0,20,0.1,'sim_kn'],\n"
+"            set:[0,359,1,'sim_dir'],drift:[0,6,0.1,'sim_kn'],\n"
+"            twd:[0,359,1,'sim_dir'],tws:[0,60,0.5,'sim_kn'],\n"
+"            twa:[0,359,1,'sim_dir'],awa:[0,359,1,'sim_dir'],aws:[0,60,0.5,'sim_kn']};\n"
+"const SIMDEF={hdg:90,stw:6,set:120,drift:1,twd:225,tws:17,twa:60,awa:45,aws:20};\n"
+"const WMODES={twd:['twd','tws'],twa:['twa','tws'],awa:['awa','aws']};\n"
+"const SIMST=['hdg','stw','cog','sog','set','drift','twd','tws','twa','awa','aws'];\n"
+"let SIM=null,simTimer=null,wmode='twd';\n"
 "// smsg() appartient à l'onglet Sources : ne pas réutiliser ce nom ici.\n"
 "function simsg(t,cls){const m=$('#sim_msg');m.textContent=t;m.className=t?(cls||'ok'):'';}\n"
+"function simActive(){return ['hdg','stw','set','drift'].concat(WMODES[wmode]);}\n"
 "async function loadSim(){try{SIM=await jget('/api/sim');}catch(e){$('#sim_body').innerHTML='<small>'+T('sim_na')+'</small>';return;}\n"
-" $('#sim_on').checked=!!SIM.enabled;drawSim();\n"
+" // Le mode de saisie du vent se déduit des clés réellement fixées.\n"
+" wmode=(SIM.awa!==null&&SIM.aws!==null)?'awa':((SIM.twa!==null)?'twa':'twd');\n"
+" $('#sim_on').checked=!!SIM.enabled;drawSim();drawState();\n"
 " simsg(SIM.can_start?'':T('sim_nostart'),'ok');}\n"
-"function drawSim(){let h='<table>';\n"
-" for(const f of SIMF){const k=f[0],v=SIM[k],auto=(v===null||v===undefined);\n"
-"  const cur=auto?SIMDEF[k]:v;\n"
-"  h+='<tr><td>'+T('sim_'+k)+'</td>'\n"
-"   +'<td style=\"width:55%\"><input type=range id=sr_'+k+' min='+f[1]+' max='+f[2]+' step='+f[3]+' value='+cur+(auto?' disabled':'')+' style=\"width:100%\"></td>'\n"
-"   +'<td class=n><input class=ri id=sn_'+k+' type=number min='+f[1]+' max='+f[2]+' step='+f[3]+' value='+cur+(auto?' disabled':'')+'> <small>'+T(f[4])+'</small></td>'\n"
-"   +'<td class=c><label class=sl><input type=checkbox id=sa_'+k+(auto?' checked':'')+'> '+T('sim_auto')+'</label></td></tr>';}\n"
+"function simRow(k){const f=SIMF[k],v=SIM[k],auto=(v===null||v===undefined),cur=auto?SIMDEF[k]:v;\n"
+" return '<tr><td>'+T('sim_'+k)+'</td>'\n"
+"  +'<td style=\"width:50%\"><input type=range id=sr_'+k+' min='+f[0]+' max='+f[1]+' step='+f[2]+' value='+cur+(auto?' disabled':'')+' style=\"width:100%\"></td>'\n"
+"  +'<td class=n><input class=ri id=sn_'+k+' type=number min='+f[0]+' max='+f[1]+' step='+f[2]+' value='+cur+(auto?' disabled':'')+'> <small>'+T(f[3])+'</small></td>'\n"
+"  +'<td class=c><label class=sl><input type=checkbox id=sa_'+k+(auto?' checked':'')+'> '+T('sim_auto')+'</label></td></tr>';}\n"
+"function drawSim(){let h='<table><tr><th colspan=4>'+T('sim_boat')+'</th></tr>';\n"
+" h+=simRow('hdg')+simRow('stw');\n"
+" h+='<tr><th colspan=4>'+T('sim_cur')+'</th></tr>'+simRow('set')+simRow('drift');\n"
+" h+='<tr><th colspan=4>'+T('sim_wind')+' &nbsp;<small>'+T('sim_windby')+' </small>'\n"
+"  +'<select id=sim_wmode>'\n"
+"  +'<option value=twd'+(wmode==='twd'?' selected':'')+'>'+T('sim_by_twd')+'</option>'\n"
+"  +'<option value=twa'+(wmode==='twa'?' selected':'')+'>'+T('sim_by_twa')+'</option>'\n"
+"  +'<option value=awa'+(wmode==='awa'?' selected':'')+'>'+T('sim_by_awa')+'</option>'\n"
+"  +'</select></th></tr>';\n"
+" for(const k of WMODES[wmode])h+=simRow(k);\n"
 " h+='</table>';$('#sim_body').innerHTML=h;\n"
-" for(const f of SIMF){const k=f[0],r=$('#sr_'+k),nb=$('#sn_'+k),au=$('#sa_'+k);\n"
+" for(const k of simActive()){const r=$('#sr_'+k),nb=$('#sn_'+k),au=$('#sa_'+k);\n"
 "  r.oninput=()=>{nb.value=r.value;pushSim();};\n"
 "  nb.oninput=()=>{r.value=nb.value;pushSim();};\n"
 "  au.onchange=()=>{r.disabled=nb.disabled=au.checked;pushSim();};}\n"
-"}\n"
+" $('#sim_wmode').onchange=e=>{wmode=e.target.value;\n"
+"  // On repart des valeurs courantes : les clés de l'ancien mode passent à auto.\n"
+"  for(const k of WMODES[wmode])if(SIM[k]===null||SIM[k]===undefined)SIM[k]=SIMDEF[k];\n"
+"  drawSim();pushSim();};}\n"
+"// Tableau des valeurs déduites, relu dans l'état publié par le simulateur.\n"
+"function drawState(){const st=(SIM&&SIM.state)||{};const act=simActive();\n"
+" if(!Object.keys(st).length){$('#sim_state').innerHTML='<small>'+T('sim_nostate')+'</small>';return;}\n"
+" let h='<table>';\n"
+" for(const k of SIMST){if(st[k]===undefined)continue;\n"
+"  const forced=act.indexOf(k)>=0&&SIM[k]!==null&&SIM[k]!==undefined;\n"
+"  h+='<tr><td>'+T('sim_'+k)+'</td><td class=n>'+H(SIMF[k]&&SIMF[k][2]<1?2:1,st[k])\n"
+"   +' <small>'+T((k==='stw'||k==='sog'||k==='drift'||k==='tws'||k==='aws')?'sim_kn':'sim_dir')+'</small></td>'\n"
+"   +'<td><small class='+(forced?'bnu':'bok')+'>'+T(forced?'sim_set_lbl':'sim_calc')+'</small></td></tr>';}\n"
+" h+='</table>';$('#sim_state').innerHTML=h;}\n"
 "function simBody(){let t='enabled = '+($('#sim_on').checked?1:0)+'\\n';\n"
-" for(const f of SIMF){const k=f[0];\n"
-"  t+=k+' = '+($('#sa_'+k).checked?'auto':$('#sn_'+k).value)+'\\n';}\n"
+" const act=simActive();\n"
+" for(const k in SIMF){\n"
+"  const on=act.indexOf(k)>=0&&!$('#sa_'+k).checked;\n"
+"  t+=k+' = '+(on?$('#sn_'+k).value:'auto')+'\\n';}\n"
 " return t;}\n"
 "// Un geste de curseur produit beaucoup d'événements : on n'écrit qu'une fois\n"
 "// la main relâchée (250 ms sans changement).\n"
@@ -405,9 +450,12 @@ static const char PAGE[] =
 "  if(!d.ok){simsg(T('err_pfx')+(d.err||''),'err');return;}\n"
 "  simsg((SIM&&SIM.can_start)?T('sim_saved'):T('sim_nostart'),'ok');\n"
 " }catch(e){simsg(T('err_pfx')+e,'err');}}\n"
+"// Rafraîchit l'état déduit sans toucher aux champs en cours d'édition.\n"
+"async function refreshState(){try{const d=await jget('/api/sim');if(SIM){SIM.state=d.state;drawState();}}catch(e){}}\n"
 "$('#sim_on').onchange=pushSim;$('#sim_reload').onclick=loadSim;\n"
 "function tick(){$('#clock').textContent=new Date().toLocaleTimeString();\n"
-" if($('#arbitrage').classList.contains('on'))updateLoad();}\n"
+" if($('#arbitrage').classList.contains('on'))updateLoad();\n"
+" if($('#sim').classList.contains('on'))refreshState();}\n"
 "function applyTheme(){document.body.classList.toggle('light',theme==='light');$('#theme').textContent=theme==='dark'?'☀':'🌙';}\n"
 "function applyLang(){$('#lang').textContent=lang==='fr'?'EN':'FR';applyI18n();\n"
 " if($('#arbitrage').classList.contains('on'))loadArb();\n"
@@ -601,8 +649,20 @@ static const char *mode_str(cfg_mode_t m)
  * --control) : l'UI l'envoie tel quel, on le valide puis on l'écrit. Pas de
  * parser JSON côté serveur, et le simulateur lit le même format. */
 
-static const char *SIM_KEYS[] = { "cog", "sog", "set", "drift", "twd", "tws" };
+/* Réglages acceptés. Le vent est défini par UNE paire : awa+aws, twa+tws ou
+ * twd+tws (le simulateur applique cette priorité) ; les autres clés sont
+ * écrites à « auto ». Le triangle des vitesses interdit de tout imposer. */
+static const char *SIM_KEYS[] = {
+    "hdg", "stw", "set", "drift", "twd", "tws", "twa", "awa", "aws"
+};
 #define SIM_NKEYS ((int)(sizeof SIM_KEYS / sizeof *SIM_KEYS))
+
+/* Grandeurs publiées par --state (état déduit, lecture seule). */
+static const char *SIM_STATE_KEYS[] = {
+    "hdg", "stw", "cog", "sog", "set", "drift",
+    "twd", "tws", "twa", "awa", "aws", "lat", "lon"
+};
+#define SIM_NSTATE ((int)(sizeof SIM_STATE_KEYS / sizeof *SIM_STATE_KEYS))
 
 /* Lit une clé du fichier de pilotage. Retourne 1 si présente et numérique,
  * 0 si absente ou « auto ». */
@@ -644,7 +704,12 @@ static void serve_sim(int fd)
     double en = 1;
     int    enabled = sim_get(buf, "enabled", &en) ? (en != 0) : 1;
 
-    char out[512];
+    static char sbuf[4096];
+    size_t slen = 0;
+    if (read_file(g_sim_state, sbuf, sizeof sbuf, &slen) != 0)
+        sbuf[0] = '\0';
+
+    char out[1024];
     size_t n = 0;
     int w = snprintf(out, sizeof out, "{\"enabled\":%s,\"can_start\":%s",
                      enabled ? "true" : "false",
@@ -659,7 +724,22 @@ static void serve_sim(int fd)
         if (w < 0 || (size_t)w >= sizeof out - n) { send_text(fd, 500, "Error", "application/json", "{}"); return; }
         n += (size_t)w;
     }
-    snprintf(out + n, sizeof out - n, "}");
+    /* état déduit, tel que le simulateur le calcule (vide s'il ne tourne pas) */
+    w = snprintf(out + n, sizeof out - n, ",\"state\":{");
+    if (w < 0 || (size_t)w >= sizeof out - n) { send_text(fd, 500, "Error", "application/json", "{}"); return; }
+    n += (size_t)w;
+    int first = 1;
+    for (int i = 0; i < SIM_NSTATE; i++) {
+        double v = 0;
+        if (!sim_get(sbuf, SIM_STATE_KEYS[i], &v))
+            continue;
+        w = snprintf(out + n, sizeof out - n, "%s\"%s\":%.2f",
+                     first ? "" : ",", SIM_STATE_KEYS[i], v);
+        if (w < 0 || (size_t)w >= sizeof out - n) { send_text(fd, 500, "Error", "application/json", "{}"); return; }
+        n += (size_t)w;
+        first = 0;
+    }
+    snprintf(out + n, sizeof out - n, "}}");
     send_text(fd, 200, "OK", "application/json", out);
 }
 
@@ -948,6 +1028,7 @@ int main(int argc, char **argv)
         else if (strcmp(argv[i], "--auth") == 0 && i + 1 < argc) g_auth = argv[++i];
         else if (strcmp(argv[i], "--allow-anonymous") == 0) allow_anon = 1;
         else if (strcmp(argv[i], "--sim-control") == 0 && i + 1 < argc) g_sim_path = argv[++i];
+        else if (strcmp(argv[i], "--sim-state") == 0 && i + 1 < argc) g_sim_state = argv[++i];
         else if (strcmp(argv[i], "--sim-start") == 0 && i + 1 < argc) g_sim_start = argv[++i];
         else if (strcmp(argv[i], "--sim-stop") == 0 && i + 1 < argc) g_sim_stop = argv[++i];
         else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -963,7 +1044,9 @@ int main(int argc, char **argv)
                 "                (ou variable d'environnement N2K_MUX_WEB_AUTH)\n"
                 "  --allow-anonymous  autorise l'écoute réseau SANS authentification\n"
                 "  --sim-control P    fichier de pilotage du simulateur\n"
-                "                (défaut /run/n2k-mux/sim.ctl ; cf. n2k-sim --control)\n"
+                "                (défaut /etc/n2k-mux/sim.ctl ; cf. n2k-sim --control)\n"
+                "  --sim-state P      état déduit publié par n2k-sim --state\n"
+                "                (défaut /run/n2k-mux/sim.state ; affiché par l'UI)\n"
                 "  --sim-start CMD    commande lançant la chaîne simulée (optionnel)\n"
                 "  --sim-stop CMD     commande arrêtant la chaîne simulée (optionnel)\n",
                 argv[0]);

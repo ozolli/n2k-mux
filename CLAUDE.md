@@ -78,29 +78,42 @@ le temps (flux « vivant »). Source unique `src/simulator.c`, zéro dépendance
 ```
 
 **Pilotage à chaud — `--control FICHIER`** : un fichier « clé = valeur » relu dès
-que sa date change. SIX entrées seulement, tout le reste en découle :
+que sa date change. Les ENTRÉES sont celles que vit l'équipage, cap et vitesse
+SURFACE, plus le courant, plus UNE paire de vent :
 
 ```
 enabled = 1     ; 0 = le simulateur n'émet RIEN (chaîne debout, flux mort)
-cog     = 45    ; route fond, degrés vrais   (auto = sinusoïde)
-sog     = 6.5   ; vitesse fond, NŒUDS
+hdg     = 45    ; cap vrai, degrés           (auto = sinusoïde)
+stw     = 6.0   ; vitesse SURFACE, NŒUDS
 set     = 120   ; direction du courant (VERS laquelle il porte), degrés
 drift   = 1.0   ; vitesse du courant, NŒUDS
-twd     = 225   ; direction du vent vrai (D'OÙ il vient), degrés
-tws     = 20    ; vitesse du vent vrai, NŒUDS
+; le vent par UNE paire, priorité dans cet ordre :
+awa = 40, aws = 18   ; vent APPARENT (angle/étrave + vitesse)
+twa = 60, tws = 20   ; vent VRAI par son angle/étrave
+twd = 225, tws = 20  ; vent VRAI par sa direction (d'où il vient)
 ```
 
-DÉDUIT par le simulateur (et donc PAS réglable, sous peine de se contredire à
-l'écran) : cap et vitesse surface = vecteur fond − vecteur courant ; vent
-apparent = vent vrai − vecteur bateau sur le fond ; vent vrai référencé eau =
-vent vrai − courant, ramené à l'étrave ; giration = dérivée du COG, nulle si la
-route est imposée ; position intégrée le long du COG. Le 130306 sort en trois
-exemplaires (Apparent, True water referenced, True ground referenced to North)
-→ MWV(R), MWV(T) et MWD.
+POURQUOI une seule paire de vent : le triangle des vitesses lie le vent vrai,
+son angle et l'apparent. Les imposer tous serait contradictoire, donc on en
+impose deux valeurs et le reste est CALCULÉ. Le calcul est réversible : imposer
+l'apparent obtenu redonne le vent vrai de départ (vérifié par `make test`).
 
-C'est ce fichier que l'interface web écrit (onglet **Simulateur**, `/api/sim`),
-d'où le chemin PERSISTANT `/etc/n2k-mux/sim.ctl` : `/run` est nettoyé par
-systemd à l'arrêt de l'unité.
+DÉDUIT par le simulateur : route et vitesse fond (COG, SOG) = vecteur surface +
+vecteur courant ; les deux autres expressions du vent ; le vent vrai référencé
+eau (vent vrai − courant, ramené à l'étrave) ; la giration = dérivée du CAP,
+nulle si le cap est imposé ; la position, intégrée le long du COG obtenu. Le
+130306 sort en trois exemplaires (Apparent, True water referenced, True ground
+referenced to North) → MWV(R), MWV(T) et MWD.
+
+**État déduit — `--state FICHIER`** : le simulateur republie deux fois par
+seconde, dans le même format, ce que le triangle donne (`cog`, `sog`, `twd`,
+`tws`, `twa`, `awa`, `aws`, `lat`, `lon`). L'interface l'affiche à côté des
+réglages, avec l'étiquette « réglé » ou « déduit » par grandeur : on voit donc
+TWA, AWA et AWS même quand ce n'est pas par eux qu'on pilote.
+
+Les RÉGLAGES sont écrits par l'interface web (onglet **Simulateur**,
+`/api/sim`), d'où leur chemin PERSISTANT `/etc/n2k-mux/sim.ctl` ; l'ÉTAT, lui,
+est éphémère et vit dans `/run/n2k-mux/sim.state`.
 
 **Chaîne simulée complète — `n2k-mux-sim.service` + `n2k-mux-sim-run`** : même
 aval que les chaînes réelles (arbitrage, AIS via n2kd, kplex 10110, UI web), mais
@@ -119,7 +132,7 @@ chaîne réelle, que l'unité simulée a arrêtée, sinon le bord reste sans don
 C'est pour ça que ce n'est pas câblé par défaut.
 
 Options : `--once` (couverture : un de chaque PGN puis sort), `--duration SEC`,
-`--no-ais`, `--tick MS`, `--control FICHIER`. La config compagnon **`n2k-sim.ini`** porte les Model
+`--no-ais`, `--tick MS`, `--control FICHIER`, `--state FICHIER`. La config compagnon **`n2k-sim.ini`** porte les Model
 Serial Code émis par le simulateur (SCX/VER/MAD/DST_BB/DST_TB/AIS/DH) → arbitrage
 résolu d'emblée, toute la table de conversion sort. Sert de test bout-en-bout
 (daemon, --ais-json, web) sans bus ni passerelle réels.
@@ -380,15 +393,22 @@ Modules prévus (ordre d'implémentation) :
                 par device) → colonne « PGNs publiés ».
                 Consultable depuis tablettes/téléphone sans X-forwarding, cohérent
                 avec la direction « tout réseau ».
-                Onglet « Simulateur » : bascule d'activation + six réglages
-                (cog, sog, set, drift, twd, tws), chacun avec une case « auto »
-                qui redonne la main à la sinusoïde. Curseur et champ numérique
-                liés, écriture différée de 250 ms (un geste de curseur produit
-                beaucoup d'événements). GET/POST /api/sim ; le corps EST le
-                fichier de pilotage (même format que n2k-sim --control), validé
-                clé par clé puis écrit en temporaire + rename. --sim-control
-                CHEMIN (défaut /etc/n2k-mux/sim.ctl), et --sim-start/--sim-stop
-                CMD facultatives pour que la bascule pilote la chaîne entière.
+                Onglet « Simulateur » : bascule d'activation, réglages du bateau
+                (hdg, stw) et du courant (set, drift), et un sélecteur « vent
+                défini par » (TWD+TWS | TWA+TWS | AWA+AWS) qui n'ouvre à la
+                saisie que la paire choisie — le triangle des vitesses interdit
+                d'imposer les trois. Chaque réglage a une case « auto » qui
+                redonne la main à la sinusoïde. Curseur et champ numérique liés,
+                écriture différée de 250 ms (un geste de curseur produit beaucoup
+                d'événements). Sous les réglages, le tableau des VALEURS DÉDUITES
+                (lu dans le fichier d'état du simulateur) montre chaque grandeur
+                avec son étiquette « réglé » ou « déduit », rafraîchi toutes les
+                3 s. GET/POST /api/sim ; le corps EST le fichier de pilotage
+                (même format que n2k-sim --control), validé clé par clé puis
+                écrit en temporaire + rename. --sim-control CHEMIN (défaut
+                /etc/n2k-mux/sim.ctl), --sim-state CHEMIN (défaut
+                /run/n2k-mux/sim.state), et --sim-start/--sim-stop CMD
+                facultatives pour que la bascule pilote la chaîne entière.
                 Bascules en-tête : langue FR/EN (dictionnaire L{fr,en} + T(clé),
                 textes statiques via data-i18n) et thème sombre/clair (couleurs en
                 variables CSS, palette .light) ; choix mémorisés en localStorage.

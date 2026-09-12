@@ -43,7 +43,7 @@ EnvironmentFile=-/etc/default/n2k-mux
 # la chaîne simulée, définir SIM_START et SIM_STOP dans /etc/default/n2k-mux —
 # SIM_STOP doit remettre TA chaîne réelle, que l'unité simulée a arrêtée
 # (Conflicts), sinon le bord reste sans données. Exemples dans n2k-mux.env.example.
-ExecStart=/bin/sh -c 'N2K_MUX_WEB_AUTH="${WEB_AUTH:-}" exec "$WEB" "$CONF" --sources /run/n2k-mux/sources.json --stats /run/n2k-mux/stats.json --busmap /run/n2k-mux/busmap.json --port "$PORT" --bind "$BIND" --reload-cmd "pkill -HUP -x n2k-mux" --sim-control "${SIMCTL:-/etc/n2k-mux/sim.ctl}" ${SIM_START:+--sim-start "$SIM_START"} ${SIM_STOP:+--sim-stop "$SIM_STOP"}'
+ExecStart=/bin/sh -c 'N2K_MUX_WEB_AUTH="${WEB_AUTH:-}" exec "$WEB" "$CONF" --sources /run/n2k-mux/sources.json --stats /run/n2k-mux/stats.json --busmap /run/n2k-mux/busmap.json --port "$PORT" --bind "$BIND" --reload-cmd "pkill -HUP -x n2k-mux" --sim-control "${SIMCTL:-/etc/n2k-mux/sim.ctl}" --sim-state "${SIMSTATE:-/run/n2k-mux/sim.state}" ${SIM_START:+--sim-start "$SIM_START"} ${SIM_STOP:+--sim-stop "$SIM_STOP"}'
 
 Restart=always
 RestartSec=3

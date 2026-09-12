@@ -116,18 +116,26 @@ say "== simulateur piloté (--control) =="
 if [ ! -x ./n2k-sim ]; then
   ko "n2k-sim absent (make d'abord)"
 else
-  CTL=$(mktemp)
-  printf 'enabled = 1\ncog = 45\nsog = 6.5\nset = 0\ndrift = 0\ntwd = 225\ntws = 20\n' > "$CTL"
+  CTL=$(mktemp); STATE=$(mktemp)
+  # Entrées : cap 45, 6 nds surface, courant 2 nds portant à l'est, TWA 60.
+  # 6 nds = 3,09 m/s. Route fond = surface + courant : 55,8° à 7,55 nds.
+  printf 'enabled = 1\nhdg = 45\nstw = 6\nset = 90\ndrift = 2\ntwa = 60\ntws = 20\n' > "$CTL"
   SIMOUT=$(mktemp)
-  ./n2k-sim --once --control "$CTL" > "$SIMOUT" 2>/dev/null
-  # COG/SOG imposés : 6,5 nds = 3,34 m/s. Sans courant, le cap suit la route et
-  # la vitesse surface égale la vitesse fond.
-  run_case "COG imposé"        grep -q '"COG":45.0' "$SIMOUT"
-  run_case "SOG imposé"        grep -q '"SOG":3.34' "$SIMOUT"
-  run_case "cap déduit"        grep -q '"Heading":45.0,"Reference":"True"' "$SIMOUT"
-  run_case "vitesse surface déduite" grep -q '"Speed Water Referenced":3.34' "$SIMOUT"
-  run_case "vent vrai imposé"  grep -q '"Wind Angle":225.0' "$SIMOUT"
-  rm -f "$SIMOUT"
+  ./n2k-sim --once --control "$CTL" --state "$STATE" > "$SIMOUT" 2>/dev/null
+  run_case "cap imposé"            grep -q '"Heading":45.0,"Reference":"True"' "$SIMOUT"
+  run_case "vitesse surface imposée" grep -q '"Speed Water Referenced":3.09' "$SIMOUT"
+  run_case "route fond déduite"    grep -q '"COG":55.8' "$SIMOUT"
+  run_case "vitesse fond déduite"  grep -q '"SOG":3.88' "$SIMOUT"
+  run_case "état publié : TWA"     grep -q '^twa = 60.0$' "$STATE"
+  run_case "état publié : TWD"     grep -q '^twd = 105.0$' "$STATE"
+  run_case "état publié : apparent" grep -q '^awa = 47.1$' "$STATE"
+  # Le triangle doit être réversible : imposer l'apparent obtenu redonne le
+  # vent vrai de départ (même bateau, même courant).
+  printf 'enabled = 1\nhdg = 45\nstw = 6\nset = 90\ndrift = 2\nawa = 47.1\naws = 25.58\n' > "$CTL"
+  ./n2k-sim --once --control "$CTL" --state "$STATE" > /dev/null 2>&1
+  run_case "réversibilité : TWA retrouvé" grep -qE '^twa = 60\.[01]$' "$STATE"
+  run_case "réversibilité : TWS retrouvé" grep -qE '^tws = (19|20)\.[0-9]+$' "$STATE"
+  rm -f "$SIMOUT" "$STATE"
   # Porte « enabled » : plus rien que l'en-tête analyzer.
   printf 'enabled = 0\n' > "$CTL"
   n=$(./n2k-sim --duration 1 --control "$CTL" 2>/dev/null | grep -c '"pgn"' || true)
@@ -150,17 +158,20 @@ else
     curl -s -o /dev/null "http://127.0.0.1:$PORT/" && break
   done
   curl -s -X POST --data-binary 'enabled = 1
-cog = 200
-sog = 7
+hdg = 200
+stw = 7
 set = auto
 drift = auto
 twd = 90
 tws = 12
+twa = auto
+awa = auto
+aws = auto
 ' "http://127.0.0.1:$PORT/api/sim" > /dev/null
   got=$(curl -s "http://127.0.0.1:$PORT/api/sim")
   kill "$WPID" 2>/dev/null
   case "$got" in
-    *'"cog":200.00'*) ok "POST puis GET /api/sim" ;;
+    *'"hdg":200.00'*) ok "POST puis GET /api/sim" ;;
     *) ko "aller-retour /api/sim : $got" ;;
   esac
   case "$got" in
