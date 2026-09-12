@@ -119,7 +119,9 @@ Known limitations baked in intentionally: `\uXXXX` escapes are not decoded (the
 4 hex digits are skipped and a `?` inserted — relevant canboat fields are ASCII).
 Arbitrary arrays inside `fields` are still skipped (`JSONL_NULL`), **except** the
 canboat repeating set emitted under the key `"list"` (e.g. the satellite list of
-PGN 129540): it is captured into `jsonl_msg_t.list[]` (fixed cap `JSONL_MAX_LIST`
+PGN 129540): it is captured into `jsonl_msg_t.list[]` (fixed cap `JSONL_MAX_LIST`,
+32 — un récepteur multiconstellation dépasse couramment 18 satellites en vue, et
+la liste était tronquée en silence ; 32 sats = 8 phrases GSV = `MAP_MAX_SENT`)
 × `JSONL_LIST_FIELDS`, zero-alloc) and read via `jsonl_list_count` /
 `jsonl_list_get_num` / `jsonl_list_get_str`.
 
@@ -272,10 +274,20 @@ Modules prévus (ordre d'implémentation) :
                 usage : n2k-mux-web [config.ini] [--sources P] [--stats P]
                   [--port N (défaut 8080)] [--bind ADDR (défaut 127.0.0.1 ;
                   0.0.0.0 = LAN)] [--reload-cmd CMD] [--auth user:pass].
+                Sauvegarde : « Enregistrer » copie d'abord la version précédente en
+                `<config>.bak` PUIS écrit en temporaire + rename (atomique). L'éditeur
+                régénère l'INI ENTIER depuis les structures parsées : commentaires et
+                mise en page ne survivent PAS à un enregistrement, d'où le .bak.
                 --auth : authentification HTTP Basic (toutes routes) ; le mot de
                 passe attendu est encodé en base64 au démarrage et comparé à temps
                 constant ; 401 + WWW-Authenticate sinon. HTTP Basic n'est PAS
-                chiffré (LAN/tunnel/terminateur TLS). Service : variable WEB_AUTH.
+                chiffré (LAN/tunnel/terminateur TLS). Service : variable WEB_AUTH,
+                transmise par l'ENVIRONNEMENT (N2K_MUX_WEB_AUTH) et non sur la ligne
+                de commande (argv est lisible via /proc par tout utilisateur local).
+                REFUS DE DÉMARRER si --bind n'est pas local (127.x / ::1) et qu'aucune
+                auth n'est configurée : l'interface écrit la config et déclenche le
+                reload, elle ne s'ouvre pas au réseau sans mot de passe. Dérogation
+                explicite : --allow-anonymous.
                 Pont daemon→web : module sources (src/sources.{h,c}, testeur
                 ./test_sources) → JSON (défaut /run/n2k-mux/sources.json) ; chaque
                 source porte sa liste de PGN publiés (registry suit pgn→compteur
@@ -458,7 +470,10 @@ AIS = em-trak B953 · VER = Veratron GO · DH = DataHub PredictWind · M510 = IC
 ### Règles de génération
 - **HDG** porte cap magnétique + déviation + variation (le plus complet) ; **HDT** = cap vrai ; **HDM** = cap magnétique seul. Générer selon le champ Reference du 127250.
 - **MWV(R)** = vent apparent (Reference "R") ; **MWV(T)** = vent vrai (Reference "T") ; **MWD** = direction/vitesse vent vrai/sol. Le 130306 Apparent → MWV(R) ; le 130306 True → MWV(T) + MWD.
-- **MDA** (Meteorological Composite) agrège pression (130314, champs 3-4 en bar) + température air (130316/Outside, champ "Temperature"). Une seule phrase MDA pour les deux.
+- **MDA** (Meteorological Composite) agrège pression (130314, champs 3-4 en bar) + température air (130316/Outside, champ "Temperature"). Une seule phrase MDA pour les deux : le mapper garde la dernière valeur de chacune (fenêtre `MAP_MDA_FRESH_MS`, 30 s) et la **pression cadence** l'émission ; la température ne déclenche la phrase que si la pression manque (appareil absent du bus). Sans cela chaque PGN émettait sa propre MDA en vidant le champ de l'autre.
+- **GGA** : la qualité de fix vient du champ "Method" du 129029 via la table GNS_METHOD de canboat (`gga_quality`), comparaison INSENSIBLE à la casse — « no GNSS » est en minuscule et faisait passer une absence de fix pour un fix valide. Champ absent = qualité 0 (invalide).
+- **DPT / VLW** (modes min / max) : toutes les sources vivantes sont acceptées par l'arbitre, mais **seule celle qui porte la valeur retenue émet** (égalité : la 1re de la règle). Sinon la même phrase sortait une fois par capteur.
+- **XDR attitude** : aucune phrase si ni Pitch ni Roll (un `$IIXDR*hh` sans champ n'est pas exploitable et son type n'est pas extractible).
 - **MTW** = température eau, depuis 130316 (Temperature Extended Range, champ "Temperature") dont Temperature Source = "Sea Temperature". 130312 (déprécié, champ "Actual Temperature") reste accepté en entrée.
 - **XDR** type pression/température/attitude. Pour 127257 : pitch + roll (pas le yaw).
 - **DPT** : profondeur = valeur minimale des deux DST810 (sécurité haut-fond), pas de moyenne.
