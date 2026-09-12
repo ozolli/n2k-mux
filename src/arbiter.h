@@ -23,8 +23,9 @@
  * timeout_ms. Si la source prioritaire se tait, la suivante prend le relais.
  * L'horloge (now_ms, monotone) est fournie par l'appelant (testable).
  *
- * Exclusions appliquées d'office : src <= 0 et PGN >= 262144 (messages de
- * contrôle/proprio Actisense/CANboat), en plus de la liste [ignore] de la config.
+ * Exclusions appliquées d'office : src < 0 (absent) et PGN >= 262144 (messages
+ * de contrôle/proprio Actisense/CANboat), en plus de la liste [ignore] de la
+ * config. L'adresse 0 est légale sur un bus N2K et n'est PAS exclue.
  *
  * Prérequis : l'appelant tient le registre à jour (registry_observe) AVANT
  * d'appeler arbiter_decide, pour que src → identité soit résolu.

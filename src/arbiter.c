@@ -88,8 +88,11 @@ arb_decision_t arbiter_decide(arbiter_t *a, const jsonl_msg_t *m, uint64_t now_m
     int pgn = m->pgn;
     int src = m->has_src ? m->src : -1;
 
-    /* exclusions d'office + [ignore] */
-    if (src <= 0 || pgn >= 262144 ||
+    /* Exclusions d'office + [ignore]. src == 0 est une adresse NMEA 2000
+     * PARFAITEMENT légale : seuls les PGN de contrôle canboat/Actisense
+     * (>= 262144) justifiaient de l'écarter, et ils le sont déjà par le test
+     * suivant. Un appareil qui revendique l'adresse 0 était invisible. */
+    if (src < 0 || pgn >= 262144 ||
         config_ignore_src(a->cfg, src) || config_ignore_pgn(a->cfg, pgn)) {
         d.result = ARB_IGNORED;
         return d;

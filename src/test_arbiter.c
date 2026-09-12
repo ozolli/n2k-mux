@@ -120,7 +120,10 @@ int main(void)
     expect("pgn sans règle", decide(&arb, "{\"src\":5,\"pgn\":127999,\"fields\":{}}", 9000).result, ARB_REJECT_NO_RULE);
 
     /* --- exclusions --- */
-    expect("src=0 ignoré", decide(&arb, "{\"src\":0,\"pgn\":129025,\"fields\":{}}", 9000).result, ARB_IGNORED);
+    /* src == 0 est une adresse N2K légale : elle n'est PAS exclue d'office (ici
+     * le registre ne la connaît pas, donc identité non résolue). Seule la liste
+     * [ignore] de la config peut l'écarter. */
+    expect("src=0 non exclu d'office", decide(&arb, "{\"src\":0,\"pgn\":129025,\"fields\":{}}", 9000).result, ARB_REJECT_UNKNOWN_SRC);
     expect("PGN>=262144 ignoré", decide(&arb, "{\"src\":5,\"pgn\":262161,\"fields\":{}}", 9000).result, ARB_IGNORED);
     expect("PGN [ignore] config", decide(&arb, "{\"src\":5,\"pgn\":130311,\"fields\":{}}", 9000).result, ARB_IGNORED);
 
