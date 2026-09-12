@@ -9,6 +9,7 @@
 
 #include <string.h>
 #include <errno.h>
+#include <poll.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/socket.h>
@@ -84,22 +85,52 @@ int netout_accept(netout_t *s)
     return added;
 }
 
+/* Envoi COMPLET d'un message à un client, ou échec. Retourne 1 si tout est
+ * parti, 0 si le client doit être retiré, -1 si rien n'a pu partir (client
+ * saturé mais flux encore intact : la perte est tolérée, message par message).
+ *
+ * Un envoi PARTIEL est le piège : la socket est non bloquante, send peut
+ * n'écrire qu'une fraction du message et le reste était purement jeté, ce qui
+ * livrait au client une ligne YDRAW ou une phrase 0183 coupée en deux. On
+ * termine donc le message, avec une courte attente d'écrivabilité ; si le
+ * client reste bouché en cours de message, le flux est désynchronisé et on le
+ * ferme plutôt que de lui envoyer n'importe quoi. */
+static int send_all(int fd, const char *buf, size_t len)
+{
+    size_t off = 0;
+    int    waits = 0;
+    while (off < len) {
+        ssize_t n = send(fd, buf + off, len - off, MSG_NOSIGNAL);
+        if (n > 0) { off += (size_t)n; continue; }
+        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            if (off == 0)
+                return -1;              /* rien n'est parti : message sauté */
+            if (++waits > NETOUT_PARTIAL_WAITS)
+                return 0;               /* message à moitié écrit : on ferme */
+            struct pollfd pfd = { .fd = fd, .events = POLLOUT, .revents = 0 };
+            poll(&pfd, 1, NETOUT_PARTIAL_MS);
+            continue;
+        }
+        if (n < 0 && errno == EINTR)
+            continue;
+        return 0;                       /* déconnexion / erreur */
+    }
+    return 1;
+}
+
 int netout_broadcast(netout_t *s, const char *buf, size_t len)
 {
     int ok = 0;
     for (int i = 0; i < s->n_clients; ) {
-        ssize_t n = send(s->clients[i], buf, len, MSG_NOSIGNAL);
-        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-            i++;                 /* client lent : on saute (perte tolérée) */
-            continue;
-        }
-        if (n <= 0) {            /* déconnexion / erreur : retrait */
+        int r = send_all(s->clients[i], buf, len);
+        if (r == 0) {            /* déconnexion, erreur, ou flux désynchronisé */
             close(s->clients[i]);
             s->clients[i] = s->clients[--s->n_clients];
             continue;
         }
-        ok++;
-        i++;
+        if (r > 0)
+            ok++;
+        i++;                     /* r < 0 : client saturé, message sauté */
     }
     return ok;
 }

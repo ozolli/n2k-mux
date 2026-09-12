@@ -20,6 +20,12 @@
 
 #include <stddef.h>
 
+/* Un message commencé doit être TERMINÉ : au plus NETOUT_PARTIAL_WAITS attentes
+ * de NETOUT_PARTIAL_MS ms chacune pour finir d'écrire, sinon le client est
+ * fermé (mieux vaut une déconnexion qu'une trame tronquée). */
+#define NETOUT_PARTIAL_WAITS  5
+#define NETOUT_PARTIAL_MS    20
+
 #define NETOUT_MAX_CLIENTS 16
 
 typedef struct {
