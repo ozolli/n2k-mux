@@ -76,7 +76,7 @@ static const char *INI =
     "[priority]\n"
     "129025=GPS\n129026=GPS\n126992=GPS\n129029=GPS\n"
     "127250=CMP\n127251=CMP\n127257=CMP\n"
-    "130306/Apparent=WND\n130306/True=WND\n"
+    "130306/Apparent=WND\n130306/True=WND\n130306/Magnetic=WND\n"
     "127245=RUD\n128259=LOG\n129291=WND\n"
     "130316/Sea=TMP\n130316/Outside=TMP\n"
     "130312/Sea=TMP\n130312/Outside=TMP\n130314=BAR\n"
@@ -127,12 +127,17 @@ int main(void)
     o = run("{\"src\":7,\"pgn\":127257,\"fields\":{\"Pitch\":2.0,\"Roll\":-3.0}}", 1000);
     chk("XDR", &o, 0, "$IIXDR,A,2.0,D,PTCH,A,-3.0,D,ROLL*");
 
-    /* Vent apparent → MWV(R) ; vent vrai → MWV(T) + MWD. 5 m/s → 9.7 kn */
+    /* Vent : le champ "Wind Angle" est un ANGLE d'étrave pour Apparent et les
+     * variantes boat/water referenced (→ MWV), une DIRECTION depuis le nord pour
+     * les variantes ground referenced (→ MWD). 5 m/s → 9.7 kn */
     o = run("{\"src\":8,\"pgn\":130306,\"fields\":{\"Reference\":\"Apparent\",\"Wind Speed\":5.0,\"Wind Angle\":30.0}}", 1000);
     chk("MWV(R)", &o, 0, "$IIMWV,30.0,R,9.7,N,A*");
     o = run("{\"src\":8,\"pgn\":130306,\"fields\":{\"Reference\":\"True (ground referenced to North)\",\"Wind Speed\":5.0,\"Wind Angle\":215.0}}", 1000);
-    chk("MWV(T)", &o, 0, "$IIMWV,215.0,T,9.7,N,A*");
-    chk("MWD",    &o, 1, "$IIMWD,215.0,T,,M,9.7,N,5.0,M*");
+    chk("MWD (référence nord)", &o, 0, "$IIMWD,215.0,T,,M,9.7,N,5.0,M*");
+    o = run("{\"src\":8,\"pgn\":130306,\"fields\":{\"Reference\":\"True (boat referenced)\",\"Wind Speed\":5.0,\"Wind Angle\":35.0}}", 1000);
+    chk("MWV(T) (référence bateau)", &o, 0, "$IIMWV,35.0,T,9.7,N,A*");
+    o = run("{\"src\":8,\"pgn\":130306,\"fields\":{\"Reference\":\"Magnetic (ground referenced to Magnetic North)\",\"Wind Speed\":5.0,\"Wind Angle\":200.0}}", 1000);
+    chk("MWD (référence magnétique)", &o, 0, "$IIMWD,,T,200.0,M,9.7,N,5.0,M*");
 
     /* Courant (set & drift) → VDR. 0.72 m/s → 1.4 kn ; True → champ T rempli */
     o = run("{\"src\":8,\"pgn\":129291,\"fields\":{\"Set Reference\":\"True\",\"Set\":95.0,\"Drift\":0.72}}", 1000);

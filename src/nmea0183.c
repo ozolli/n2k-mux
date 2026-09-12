@@ -290,12 +290,12 @@ const char *nmea_mwv(nmea_t *s, const char *talker,
 }
 
 const char *nmea_mwd(nmea_t *s, const char *talker,
-                     double dir_true, double speed_knots)
+                     double dir_true, double dir_mag, double speed_knots)
 {
     double ms = isnan(speed_knots) ? NMEA_NA : speed_knots / 1.943844;
     nmea_begin(s, talker, "MWD");
     nmea_field_f(s, dir_true, 1); nmea_field_char(s, 'T');
-    nmea_field_empty(s);         nmea_field_char(s, 'M');  /* dir magnétique */
+    nmea_field_f(s, dir_mag, 1);  nmea_field_char(s, 'M');
     nmea_field_f(s, speed_knots, 1); nmea_field_char(s, 'N');
     nmea_field_f(s, ms, 1);          nmea_field_char(s, 'M');
     return nmea_end(s);
@@ -331,7 +331,9 @@ const char *nmea_rot(nmea_t *s, const char *talker, double rate)
 {
     nmea_begin(s, talker, "ROT");
     nmea_field_f(s, rate, 1);
-    nmea_field_char(s, 'A');   /* statut : valide */
+    /* Statut : 'A' seulement si la valeur existe. Annoncer « valide » sur un
+     * champ vide invite le consommateur à retenir une donnée qu'on n'a pas. */
+    nmea_field_char(s, isnan(rate) ? 'V' : 'A');
     return nmea_end(s);
 }
 
@@ -339,7 +341,7 @@ const char *nmea_rsa(nmea_t *s, const char *talker, double starboard, double por
 {
     nmea_begin(s, talker, "RSA");
     nmea_field_f(s, starboard, 1);
-    nmea_field_char(s, 'A');
+    nmea_field_char(s, isnan(starboard) ? 'V' : 'A');
     nmea_field_f(s, port, 1);
     nmea_field_char(s, isnan(port) ? 'V' : 'A');
     return nmea_end(s);
@@ -419,6 +421,33 @@ const char *nmea_mda(nmea_t *s, const char *talker,
     nmea_field_empty(s);             nmea_field_char(s, 'M');   /* dir vent mag */
     nmea_field_empty(s);             nmea_field_char(s, 'N');   /* vent nœuds */
     nmea_field_empty(s);             nmea_field_char(s, 'M');   /* vent m/s */
+    return nmea_end(s);
+}
+
+const char *nmea_rmc(nmea_t *s, const char *talker, int hh, int mm, double ss,
+                     bool valid, double lat, double lon,
+                     double sog_knots, double cog_true,
+                     int day, int month, int year, double variation)
+{
+    nmea_begin(s, talker, "RMC");
+    field_time(s, hh, mm, ss);
+    nmea_field_char(s, valid ? 'A' : 'V');
+    field_lat(s, lat);
+    field_lon(s, lon);
+    nmea_field_f(s, sog_knots, 1);
+    nmea_field_f(s, cog_true, 1);
+    /* Date en ddmmyy (2 chiffres d'année), format imposé par la phrase. */
+    if (day > 0 && month > 0 && year > 0) {
+        char t[16];
+        /* bornage par modulo : comme ailleurs dans le projet, il rassure
+         * -Wformat-truncation sans changer le résultat sur des dates valides. */
+        snprintf(t, sizeof t, ",%02d%02d%02d", day % 100, month % 100, year % 100);
+        put_s(s, t);
+    } else {
+        nmea_field_empty(s);
+    }
+    field_ew(s, variation, 1);
+    nmea_field_char(s, valid ? 'A' : 'N');   /* indicateur de mode (NMEA 2.3+) */
     return nmea_end(s);
 }
 

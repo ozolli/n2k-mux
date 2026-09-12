@@ -229,13 +229,20 @@ int mapper_map(mapper_t *mp, const jsonl_msg_t *m, const arb_decision_t *d,
         emit(out, nmea_gll(&s, tk, getf(m, "Latitude"), getf(m, "Longitude"), -1, 0, 0));
         break;
 
-    case 129026: { /* COG & SOG → VTG */
+    case 129026: { /* COG & SOG → VTG (+ état pour la RMC) */
         double cog = getf(m, "COG");
         double sog = getf(m, "SOG");
         double kn  = isnan(sog) ? NAN : sog * MS_TO_KN;
         const char *ref = gets(m, "COG Reference");
         double cog_t = has_word(ref, "Magnetic") ? NAN : cog;
         double cog_m = has_word(ref, "Magnetic") ? cog : NAN;
+        /* La RMC réclame SOG et COG vrai, que le 129029 ne porte pas. */
+        if (!isnan(kn) || !isnan(cog_t)) {
+            mp->rmc_sog_kn   = kn;
+            mp->rmc_cog_true = cog_t;
+            mp->rmc_sog_t    = now_ms;
+            mp->rmc_sog_seen = true;
+        }
         emit(out, nmea_vtg(&s, tk, cog_t, cog_m, kn));
         break;
     }
@@ -251,12 +258,32 @@ int mapper_map(mapper_t *mp, const jsonl_msg_t *m, const arb_decision_t *d,
     case 129029: { /* GNSS Position Data → GGA */
         int h, mi; double se;
         int quality = gga_quality(gets(m, "Method"));
-        if (parse_time(gets(m, "Time"), &h, &mi, &se))
-            emit(out, nmea_gga(&s, tk, h, mi, se,
+        if (!parse_time(gets(m, "Time"), &h, &mi, &se))
+            break;
+        emit(out, nmea_gga(&s, tk, h, mi, se,
+                           getf(m, "Latitude"), getf(m, "Longitude"),
+                           quality, geti(m, "Number of SVs", 0),
+                           getf(m, "HDOP"), getf(m, "Altitude"),
+                           getf(m, "Geoidal Separation")));
+        /* RMC : la phrase la plus consommée. Le 129029 porte date, heure et
+         * position ; SOG/COG viennent du 129026 et la variation du 127250,
+         * mémorisés plus haut (champs vides si ces PGN se taisent). */
+        {
+            int y, mo, dd;
+            if (!parse_date(gets(m, "Date"), &y, &mo, &dd))
+                y = mo = dd = 0;
+            bool fresh_sog = mp->rmc_sog_seen &&
+                             now_ms - mp->rmc_sog_t <= MAP_RMC_FRESH_MS;
+            bool fresh_var = mp->rmc_var_seen &&
+                             now_ms - mp->rmc_var_t <= MAP_RMC_FRESH_MS;
+            nmea_t sr;
+            emit(out, nmea_rmc(&sr, tk, h, mi, se, quality != 0,
                                getf(m, "Latitude"), getf(m, "Longitude"),
-                               quality, geti(m, "Number of SVs", 0),
-                               getf(m, "HDOP"), getf(m, "Altitude"),
-                               getf(m, "Geoidal Separation")));
+                               fresh_sog ? mp->rmc_sog_kn : NAN,
+                               fresh_sog ? mp->rmc_cog_true : NAN,
+                               dd, mo, y,
+                               fresh_var ? mp->rmc_variation : NAN));
+        }
         break;
     }
 
@@ -305,6 +332,12 @@ int mapper_map(mapper_t *mp, const jsonl_msg_t *m, const arb_decision_t *d,
     case 127250: { /* Vessel Heading → HDG+HDM (magnétique) ou HDT (vrai) */
         double head = getf(m, "Heading");
         const char *ref = gets(m, "Reference");
+        double var = getf(m, "Variation");
+        if (!isnan(var)) {                 /* la RMC porte la variation */
+            mp->rmc_variation = var;
+            mp->rmc_var_t     = now_ms;
+            mp->rmc_var_seen  = true;
+        }
         if (has_word(ref, "True")) {
             emit(out, nmea_hdt(&s, tk, head));
         } else { /* Magnetic (défaut) */
@@ -326,16 +359,24 @@ int mapper_map(mapper_t *mp, const jsonl_msg_t *m, const arb_decision_t *d,
         emit(out, nmea_xdr_attitude(&s, tk, getf(m, "Pitch"), getf(m, "Roll")));
         break;
 
-    case 130306: { /* Wind Data → MWV(R) apparent, ou MWV(T)+MWD vrai */
+    case 130306: { /* Wind Data → MWV (angle relatif) ou MWD (direction) */
         double wa = getf(m, "Wind Angle");
         double ws = getf(m, "Wind Speed");
         double kn = isnan(ws) ? NAN : ws * MS_TO_KN;
         const char *ref = gets(m, "Reference");
-        if (has_word(ref, "True")) {
+        /* Le champ "Wind Angle" ne veut pas dire la même chose selon la
+         * référence : un ANGLE relatif à l'étrave pour Apparent et les variantes
+         * « boat/water referenced », une DIRECTION depuis le nord pour les
+         * variantes « ground referenced ». MWV veut un angle, MWD une direction :
+         * les confondre faisait sortir une direction compas dans MWV(T) et un
+         * angle d'étrave dans MWD. */
+        if (has_word(ref, "ground referenced to North")) {
+            emit(out, nmea_mwd(&s, tk, wa, NMEA_NA, kn));
+        } else if (has_word(ref, "Magnetic")) {
+            emit(out, nmea_mwd(&s, tk, NMEA_NA, wa, kn));
+        } else if (has_word(ref, "True")) {   /* boat / water referenced */
             emit(out, nmea_mwv(&s, tk, wa, 'T', kn, 'N'));
-            nmea_t s2;
-            emit(out, nmea_mwd(&s2, tk, wa, kn));
-        } else { /* Apparent */
+        } else {                              /* Apparent (défaut) */
             emit(out, nmea_mwv(&s, tk, wa, 'R', kn, 'N'));
         }
         break;

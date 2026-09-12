@@ -105,10 +105,11 @@ const char *nmea_gsv(nmea_t *s, const char *talker,
 const char *nmea_mwv(nmea_t *s, const char *talker,
                      double angle, char reference, double speed, char unit);
 
-/* Direction/vitesse du vent vrai/sol : direction vraie (deg) + vitesse (nœuds).
- * km/h... non : émet vitesse en nœuds et en m/s. */
+/* Direction/vitesse du vent vrai/sol : direction vraie et/ou magnétique (deg)
+ * + vitesse (nœuds, m/s calculée). Une direction NMEA_NA laisse son champ vide :
+ * le PGN 130306 porte soit l'une soit l'autre selon sa référence. */
 const char *nmea_mwd(nmea_t *s, const char *talker,
-                     double dir_true, double speed_knots);
+                     double dir_true, double dir_mag, double speed_knots);
 
 /* Courant (set & drift) : direction du courant vraie + magnétique (deg) +
  * vitesse (nœuds). Une seule des deux directions est en général connue ;
@@ -147,6 +148,14 @@ const char *nmea_xdr_attitude(nmea_t *s, const char *talker,
 /* Composite météo : pression (bar, inHg calculé) + température air (°C). */
 const char *nmea_mda(nmea_t *s, const char *talker,
                      double pressure_bar, double air_temp_c);
+
+/* Position/vitesse/route recommandées (la phrase la plus consommée) : heure,
+ * validité, lat/lon, SOG (nœuds), COG vrai, date, variation magnétique signée
+ * (Est +), indicateur de mode. `valid` false → statut 'V' et mode 'N'. */
+const char *nmea_rmc(nmea_t *s, const char *talker, int hh, int mm, double ss,
+                     bool valid, double lat, double lon,
+                     double sog_knots, double cog_true,
+                     int day, int month, int year, double variation);
 
 /* Date/heure UTC. */
 const char *nmea_zda(nmea_t *s, const char *talker,

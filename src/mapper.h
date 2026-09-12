@@ -39,6 +39,11 @@
  * large entre les deux PGN sans vider un champ. */
 #define MAP_MDA_FRESH_MS  30000u
 
+/* Fenêtre de fraîcheur pour composer une RMC : le PGN 129029 ne porte ni SOG ni
+ * COG (129026) ni la variation magnétique (127250). Ces grandeurs changent vite,
+ * la fenêtre est donc courte. */
+#define MAP_RMC_FRESH_MS   5000u
+
 typedef struct {
     char s[MAP_MAX_SENT][NMEA_MAX_LEN];
     int  n;
@@ -66,6 +71,14 @@ typedef struct {
     double   mda_air;                    /* °C (130316 / Outside) */
     uint64_t mda_air_t;
     bool     mda_air_seen;
+    /* état RMC : valeurs empruntées à d'autres PGN pour compléter la phrase. */
+    double   rmc_sog_kn;                 /* nœuds (129026) */
+    double   rmc_cog_true;               /* deg vrais (129026) */
+    uint64_t rmc_sog_t;
+    bool     rmc_sog_seen;
+    double   rmc_variation;              /* deg signés, Est + (127250) */
+    uint64_t rmc_var_t;
+    bool     rmc_var_seen;
 } mapper_t;
 
 /* Initialise (talker NULL → "II"). */

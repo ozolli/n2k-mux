@@ -35,8 +35,9 @@ DH     = 000A520AF6A0        ; DataHub PredictWind    (résolu sur banc)
 127250/True     = SCX, MAD             ; HDT
 127251          = SCX, MAD             ; ROT
 127257          = SCX, MAD             ; XDR (pitch/roll)
-130306/Apparent = MAD                  ; MWV(R)
-130306/True     = MAD                  ; MWV(T) + MWD
+130306/Apparent = MAD                  ; MWV(R), angle relatif à l'étrave
+130306/True     = MAD                  ; MWV(T) si référence bateau/eau, MWD si référence nord
+130306/Magnetic = MAD                  ; MWD (direction magnétique, référence sol)
 127245          = MAD                  ; RSA
 129291          = MAD                  ; VDR (courant set/drift)
 128259          = MAD                  ; VHW
@@ -60,7 +61,8 @@ DH     = 000A520AF6A0        ; DataHub PredictWind    (résolu sur banc)
 129810 = fusion: AIS, DH
 
 [ignore]
-src = 0
+; src = 0 n'a PAS à être listé : 0 est une adresse NMEA 2000 légale, et les
+; messages de contrôle canboat/Actisense sont déjà exclus par leur PGN.
 pgn = 262161, 262656                   ; Actisense Operating mode / CANboat Startup
 
 [rate]
