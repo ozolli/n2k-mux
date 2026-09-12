@@ -16,8 +16,13 @@ Description=n2k-mux — multiplexeur NMEA 2000 (entrée socketcan)
 Documentation=https://github.com/ozolli/n2k-mux
 After=local-fs.target
 Conflicts=kplex.service n2k-mux.service
-StartLimitIntervalSec=60
-StartLimitBurst=5
+# Chaîne de navigation : on veut qu'elle REVIENNE, pas qu'elle abandonne.
+# 5 échecs en 60 s laissaient l'unité morte jusqu'à une intervention
+# manuelle, alors qu'une cause transitoire (périphérique pas encore là,
+# port occupé) se résout d'elle-même. Avec 20 tentatives sur 600 s et
+# RestartSec=3, on insiste une dizaine de minutes avant de renoncer.
+StartLimitIntervalSec=600
+StartLimitBurst=20
 
 [Service]
 Type=simple
