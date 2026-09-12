@@ -117,9 +117,14 @@ static void sentence_type(const char *s, char out[4])
     out[0] = '\0';
     if (s[0] != '$' && s[0] != '!')
         return;
-    /* champ d'adresse = jusqu'à la virgule ; type = 3 derniers caractères. */
-    const char *comma = strchr(s, ',');
-    size_t addr = comma ? (size_t)(comma - (s + 1)) : strlen(s + 1);
+    /* Champ d'adresse = jusqu'à la virgule, au checksum ou à la fin de ligne ;
+     * le type est ses 3 derniers caractères. Borner sur '*' et CR/LF est
+     * indispensable : sur une phrase sans aucun champ, la fin de chaîne donnait
+     * un « type » fabriqué à partir du checksum, CR/LF compris. */
+    const char *e = s + 1;
+    while (*e && *e != ',' && *e != '*' && *e != '\r' && *e != '\n')
+        e++;
+    size_t addr = (size_t)(e - (s + 1));
     if (addr < 3)
         return;
     const char *t = s + 1 + addr - 3;

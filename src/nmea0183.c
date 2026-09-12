@@ -383,6 +383,10 @@ const char *nmea_xdr(nmea_t *s, const char *talker,
 const char *nmea_xdr_attitude(nmea_t *s, const char *talker,
                               double pitch, double roll)
 {
+    /* Aucun des deux axes : pas de phrase. Un "$IIXDR*hh" sans le moindre
+     * champ n'apporte rien et son type n'est même pas extractible. */
+    if (isnan(pitch) && isnan(roll))
+        return NULL;
     nmea_begin(s, talker, "XDR");
     if (!isnan(pitch)) {
         nmea_field_char(s, 'A');

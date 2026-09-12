@@ -6,6 +6,8 @@
  */
 
 #include "stats.h"
+#include <ctype.h>
+#include <stdbool.h>
 #include <string.h>
 #include <stdio.h>
 #include <sys/stat.h>
@@ -92,11 +94,25 @@ void stats_observe_out_bytes(stats_t *s, size_t bytes)
     s->out_bytes += (unsigned long)bytes;
 }
 
+/* Un type de phrase 0183 est alphanumérique (« GLL », « MWV »…). Tout le reste
+ * est refusé au lieu d'être compté : un type mal formé finissait tel quel dans
+ * le JSON publié et, s'il contenait un caractère de contrôle, le rendait
+ * INVALIDE — l'interface web ne pouvait plus lire /api/stats. */
+static bool type_ok(const char *t)
+{
+    if (!t || !t[0])
+        return false;
+    for (int i = 0; t[i]; i++)
+        if (!isalnum((unsigned char)t[i]))
+            return false;
+    return true;
+}
+
 void stats_observe_out(stats_t *s, const char *type, size_t bytes)
 {
     s->out_sent++;
     s->out_bytes += (unsigned long)bytes;
-    if (!type || !type[0])
+    if (!type_ok(type))
         return;
     for (int i = 0; i < s->n_types; i++)
         if (strcmp(s->types[i].type, type) == 0) {
