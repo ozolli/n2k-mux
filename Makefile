@@ -29,6 +29,8 @@ STATS_OBJ    := $(BUILD)/stats.o
 # inimerge : fusion d'un INI régénéré dans l'INI existant en préservant les
 # commentaires (utilisé par l'interface web à l'enregistrement).
 INIMERGE_OBJ := $(BUILD)/inimerge.o
+# polar : polaires qtVlm (.pol/.csv) + interpolation bilinéaire (simulateur, web).
+POLAR_OBJ    := $(BUILD)/polar.o
 # netout : plomberie TCP fan-out, testée et prête pour le futur flux N2K arbité ;
 # pas encore liée au daemon (cf. test_netout).
 NETOUT_OBJ   := $(BUILD)/netout.o
@@ -42,7 +44,7 @@ DAEMON_OBJ   := $(BUILD)/daemon.o
 CORE_OBJ := $(JSONL_OBJ) $(REGISTRY_OBJ) $(CONFIG_OBJ) $(ARBITER_OBJ) $(NMEA_OBJ) $(MAPPER_OBJ) $(AISDEDUP_OBJ) $(SOURCES_OBJ) $(STATS_OBJ)
 
 .PHONY: all clean install uninstall test debug
-all: n2k-mux n2k-mux-web n2k-sim n2k-filter ydraw-bridge test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout test_ydraw test_inimerge
+all: n2k-mux n2k-mux-web n2k-sim n2k-filter ydraw-bridge test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout test_ydraw test_inimerge test_polar
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -94,6 +96,10 @@ test_netout: $(NETOUT_OBJ) $(BUILD)/test_netout.o
 test_ydraw: $(YDRAW_OBJ) $(BUILD)/test_ydraw.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
+# --- Polaires (lecture + interpolation) + son testeur ---
+test_polar: $(POLAR_OBJ) $(BUILD)/test_polar.o
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lm
+
 # --- Fusion INI (préservation des commentaires) + son testeur ---
 test_inimerge: $(INIMERGE_OBJ) $(CONFIG_OBJ) $(BUILD)/test_inimerge.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
@@ -103,15 +109,15 @@ n2k-mux: $(CORE_OBJ) $(BUILD)/cansock.o $(BUILD)/busmap.o $(DAEMON_OBJ)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lm
 
 # --- Interface web de gestion (zéro dépendance) ---
-n2k-mux-web: $(CONFIG_OBJ) $(INIMERGE_OBJ) $(BUILD)/web.o
-	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+n2k-mux-web: $(CONFIG_OBJ) $(INIMERGE_OBJ) $(POLAR_OBJ) $(BUILD)/web.o
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lm
 
 # --- Outil de test : pont canboat/actisense → YDRAW → TCP (pour qtVlm N2K) ---
 ydraw-bridge: $(YDRAW_OBJ) $(NETOUT_OBJ) $(BUILD)/ydraw_bridge.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 # --- Outil de test : simulateur de flux N2K (JSON-lines) pour tous les PGN ---
-n2k-sim: $(BUILD)/simulator.o
+n2k-sim: $(BUILD)/simulator.o $(POLAR_OBJ)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lm
 
 # --- Filtre N2K→N2K socketcan (frame-passthrough can0 → vcan0 + YDRAW/TCP) ---
@@ -175,7 +181,7 @@ uninstall:
 	rm -f $(DESTDIR)/etc/n2k-mux/n2k-mux.ini.example
 
 clean:
-	rm -rf $(BUILD) n2k-mux n2k-mux-web n2k-sim n2k-filter ydraw-bridge test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout test_ydraw test_inimerge
+	rm -rf $(BUILD) n2k-mux n2k-mux-web n2k-sim n2k-filter ydraw-bridge test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout test_ydraw test_inimerge test_polar
 
 # Dépendances d'en-têtes générées par -MMD (recompile si un .h change).
 -include $(wildcard $(BUILD)/*.d)

@@ -20,6 +20,7 @@ build/
 /test_netout
 /test_ydraw
 /test_inimerge
+/test_polar
 
 # Réglages locaux Claude Code (spécifiques à la machine)
 .claude/
