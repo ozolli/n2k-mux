@@ -856,13 +856,24 @@ static void p64(uint8_t *b, int off, long long v)
     for (int i = 0; i < 8; i++) { b[off + i] = (uint8_t)(v & 0xff); v >>= 8; }
 }
 
+/* Flux des trames binaires (format texte actisense). stdout en mode
+ * --actisense ; un FIFO distinct avec --actisense-out, pour servir le N2K
+ * (ydraw-bridge → port 2700) EN MÊME TEMPS que le JSON, depuis le même état. */
+static FILE *g_act_fp = NULL;
+
 static void emit_frame(int prio, int src, int pgn, const uint8_t *d, int len)
 {
+    FILE *o = g_act_fp ? g_act_fp : stdout;
     char ts[40]; ts_now(ts, sizeof ts);
-    printf("%s,%d,%d,%d,255,%d", ts, prio, pgn, src, len);
-    for (int i = 0; i < len; i++)
-        printf(",%02x", d[i]);
-    printf("\n");
+    /* une ligne = une écriture : deux trames ne s'entremêlent jamais */
+    char line[1024];
+    int n = snprintf(line, sizeof line, "%s,%d,%d,%d,255,%d", ts, prio, pgn, src, len);
+    for (int i = 0; i < len && n > 0 && (size_t)n < sizeof line - 4; i++)
+        n += snprintf(line + n, sizeof line - (size_t)n, ",%02x", d[i]);
+    if (n > 0 && (size_t)n < sizeof line - 1) {
+        line[n++] = '\n';
+        fwrite(line, 1, (size_t)n, o);
+    }
 }
 
 static void a_pos(void)            /* 129025 Position Rapid Update */
@@ -906,20 +917,40 @@ static void a_attitude(double t)   /* 127257 Attitude (yaw/pitch/roll) */
     emit_frame(2, SCX_SRC, 127257, b, 7);
 }
 
-static void a_wind(double t)       /* 130306 Wind Data (apparent) */
+/* Une trame 130306 : vitesse (m/s), angle (deg) et code de référence
+ * (WIND_REFERENCE : 0 vrai/nord, 2 apparent, 4 vrai/eau). Les 5 bits hauts de
+ * l'octet 5 sont réservés, donc à 1. */
+static void a_wind1(double speed_ms, double angle_deg, int ref)
 {
-    uint8_t b[8] = { 0xff, 0, 0, 0, 0, 0xfa, 0xff, 0xff };  /* ref=Apparent(2) */
-    double as = 8.0 + 2.0 * sin(t / 8.0);
-    double aa = 45.0 + 20.0 * sin(t / 10.0);
-    p16(b, 1, (int)lround(as / 0.01));
-    p16(b, 3, (int)lround(DEG2RAD(aa) / 1e-4));
+    uint8_t b[8] = { 0xff, 0, 0, 0, 0, 0, 0xff, 0xff };
+    p16(b, 1, (int)lround(speed_ms / 0.01));
+    p16(b, 3, (int)lround(DEG2RAD(angle_deg) / 1e-4));
+    b[5] = (uint8_t)(0xf8 | (ref & 0x07));
     emit_frame(2, MAD_SRC, 130306, b, 8);
+}
+
+static void a_wind(double t)       /* 130306 Wind Data : mêmes 3 expressions qu'en JSON */
+{
+    (void)t;
+    a_wind1(boat.aws,   boat.awa,   2);   /* apparent, angle / étrave */
+    a_wind1(boat.tws_w, boat.twa_w, 4);   /* vrai référencé eau, angle / étrave */
+    a_wind1(boat.tws,   boat.twd,   0);   /* vrai référencé nord : DIRECTION */
+}
+
+static void a_setdrift(void)       /* 129291 Set & Drift, Rapid Update */
+{
+    uint8_t b[8] = { 0xff, 0xfc, 0, 0, 0, 0, 0xff, 0xff };  /* SID ; réf. vraie (0) */
+    p16(b, 2, (int)lround(DEG2RAD(boat.set) / 1e-4));
+    p16(b, 4, (int)lround(boat.drift / 0.01));
+    emit_frame(3, MAD_SRC, 129291, b, 8);
 }
 
 static void a_stw(double t)        /* 128259 Speed (water referenced) */
 {
+    (void)t;
     uint8_t b[8] = { 0xff, 0, 0, 0xff, 0xff, 0, 0xff, 0xff };
-    p16(b, 1, (int)lround((boat.sog - 0.3 + 0.2 * sin(t / 12.0)) / 0.01));
+    /* STW de l'état : réglée, sinusoïdale ou tirée de la polaire, comme en JSON */
+    p16(b, 1, (int)lround(boat.stw / 0.01));
     emit_frame(2, MAD_SRC, 128259, b, 8);
 }
 
@@ -1182,16 +1213,49 @@ static void a_ais(double t)
     a_ais_static_b(AIS_SRC, 227000002);
 }
 
+/* Ordonnancement des trames binaires, partagé par le mode --actisense et par
+ * --actisense-out (JSON + trames en parallèle). id → émetteur, iv = période ms. */
+static struct { int id; double iv, next; } ACT_SCHED[] = {
+    {0,250,0},{1,1000,0},{2,200,0},{3,500,0},{4,200,0},
+    {5,250,0},{6,500,0},{7,500,0},{8,2000,0},{9,2000,0},{10,1000,0},
+    {11,2000,0},{12,200,0},{13,1000,0},{14,5000,0},{15,2000,0},
+    {16,2000,0},{17,3000,0},{18,1000,0},
+};
+
+/* Émet les trames dues à l'instant el (ms depuis le départ). */
+static void act_tick(double el, double t, int once, int no_ais)
+{
+    int n = (int)(sizeof ACT_SCHED / sizeof *ACT_SCHED);
+    for (int i = 0; i < n; i++) {
+        if (!once && el < ACT_SCHED[i].next) continue;
+        switch (ACT_SCHED[i].id) {
+            case 0: a_pos(); break;
+            case 1: a_cogsog(); break;
+            case 2: a_heading(); break;
+            case 3: a_rot(); break;
+            case 4: a_attitude(t); break;
+            case 5: a_wind(t); break;
+            case 6: a_stw(t); break;
+            case 7: a_depth(t); break;
+            case 8: a_temp(t); break;
+            case 9: a_press(t); break;
+            case 10: a_systime(); break;
+            case 11: a_envparams(t); break;
+            case 12: a_rudder(t); break;
+            case 13: a_gnss(); break;
+            case 14: a_gsv(t); break;
+            case 15: a_dops(); break;
+            case 16: a_log(t); break;
+            case 17: if (!no_ais) a_ais(t); break;
+            case 18: a_setdrift(); break;
+        }
+        ACT_SCHED[i].next = el + ACT_SCHED[i].iv;
+    }
+    fflush(g_act_fp ? g_act_fp : stdout);
+}
+
 static int run_actisense(double duration, long tick, int once, int no_ais)
 {
-    /* (fn0 sans arg) et (fn1 avec t) regroupées via un switch indexé. */
-    struct { int id; double iv, next; } S[] = {
-        {0,250,0},{1,1000,0},{2,200,0},{3,500,0},{4,200,0},
-        {5,250,0},{6,500,0},{7,500,0},{8,2000,0},{9,2000,0},{10,1000,0},
-        {11,2000,0},{12,200,0},{13,1000,0},{14,5000,0},{15,2000,0},
-        {16,2000,0},{17,3000,0},
-    };
-    int n = (int)(sizeof S / sizeof *S);
     uint64_t start = now_ms();
     double last_state_ms = -1e9;
     do {
@@ -1206,31 +1270,7 @@ static int run_actisense(double duration, long tick, int once, int no_ais)
             usleep((useconds_t)(tick * 1000));
             continue;
         }
-        for (int i = 0; i < n; i++) {
-            if (!once && el < S[i].next) continue;
-            switch (S[i].id) {
-                case 0: a_pos(); break;
-                case 1: a_cogsog(); break;
-                case 2: a_heading(); break;
-                case 3: a_rot(); break;
-                case 4: a_attitude(t); break;
-                case 5: a_wind(t); break;
-                case 6: a_stw(t); break;
-                case 7: a_depth(t); break;
-                case 8: a_temp(t); break;
-                case 9: a_press(t); break;
-                case 10: a_systime(); break;
-                case 11: a_envparams(t); break;
-                case 12: a_rudder(t); break;
-                case 13: a_gnss(); break;
-                case 14: a_gsv(t); break;
-                case 15: a_dops(); break;
-                case 16: a_log(t); break;
-                case 17: if (!no_ais) a_ais(t); break;
-            }
-            S[i].next = el + S[i].iv;
-        }
-        fflush(stdout);
+        act_tick(el, t, once, no_ais);
         if (once) return 0;
         usleep((useconds_t)(tick * 1000));
     } while (!g_stop);
@@ -1281,6 +1321,9 @@ static void usage(const char *p)
         "                  angles en degrés. TWA, AWA et AWS en découlent.\n"
         "  --state FIC     publie l'état DÉDUIT (cog, sog, twa, awa, aws…) dans ce\n"
         "                  fichier, même format, pour affichage par l'interface web\n"
+        "  --actisense-out FIC  émet AUSSI les trames N2K binaires (format actisense)\n"
+        "                  dans FIC (typiquement un FIFO lu par ydraw-bridge), en plus\n"
+        "                  du JSON sur stdout, depuis le MÊME état bateau\n"
         "  --wind-trace S  déroule S secondes de temps SIMULÉ sans attendre et imprime\n"
         "                  « t;twd;tws;stw » toutes les 10 s (réglage de l'aléa et de\n"
         "                  la polaire, tests). Utilise --control ; puis s'arrête.\n"
@@ -1293,6 +1336,7 @@ int main(int argc, char **argv)
 {
     int once = 0, no_ais = 0, actisense = 0;
     double wind_trace = 0;     /* --wind-trace : secondes de temps simulé */
+    const char *act_out = NULL; /* --actisense-out : trames N2K en parallèle */
     double duration = 0;       /* secondes ; 0 = sans fin */
     long tick_ms = 100;
 
@@ -1305,6 +1349,7 @@ int main(int argc, char **argv)
         else if (strcmp(argv[i], "--control") == 0 && i + 1 < argc)  g_ctl_path = argv[++i];
         else if (strcmp(argv[i], "--state") == 0 && i + 1 < argc)    g_state_path = argv[++i];
         else if (strcmp(argv[i], "--wind-trace") == 0 && i + 1 < argc) wind_trace = atof(argv[++i]);
+        else if (strcmp(argv[i], "--actisense-out") == 0 && i + 1 < argc) act_out = argv[++i];
         else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) { usage(argv[0]); return 0; }
         else { fprintf(stderr, "option inconnue : %s\n", argv[i]); usage(argv[0]); return 2; }
     }
@@ -1333,6 +1378,19 @@ int main(int argc, char **argv)
     if (actisense)
         return run_actisense(duration, tick_ms, once, no_ais);
 
+    /* --actisense-out : second flux, TRAMES N2K, depuis le même état que le JSON.
+     * Sur un FIFO, l'ouverture attend le lecteur (ydraw-bridge), lancé avant.
+     * Si le lecteur meurt, l'écriture lève SIGPIPE et le simulateur s'arrête :
+     * la chaîne le voit et systemd relance tout, plutôt qu'un port 2700 muet. */
+    if (act_out) {
+        g_act_fp = fopen(act_out, "w");
+        if (!g_act_fp) {
+            fprintf(stderr, "n2k-sim : --actisense-out %s : ouverture impossible\n", act_out);
+            return 1;
+        }
+        setvbuf(g_act_fp, NULL, _IOLBF, 0);
+    }
+
     /* En-tête analyzer (exigé par n2kd ; le parser le marque is_header). */
     printf("{\"version\":\"n2k-sim 1.0\",\"showLookupValues\":true}\n");
 
@@ -1353,6 +1411,8 @@ int main(int argc, char **argv)
             SCHED[i].fn(0.0);
         }
         fflush(stdout);
+        if (g_act_fp)
+            act_tick(0.0, 0.0, 1, no_ais);
         return 0;
     }
 
@@ -1394,6 +1454,8 @@ int main(int argc, char **argv)
             }
         }
         fflush(stdout);
+        if (g_act_fp)
+            act_tick(el, t, 0, no_ais);  /* même pas de temps, même état */
         usleep((useconds_t)(tick_ms * 1000));
     }
     return 0;

@@ -186,6 +186,15 @@ PYCHK
   ./n2k-sim --once --control "$TD/p.ctl" --state "$TD/p.state" > /dev/null 2>&1
   run_case "polaire absente : repli sur la STW réglée" grep -q '^stw = 5.00$' "$TD/p.state"
 
+  # Trames N2K en parallèle du JSON (--actisense-out, port 2700 de la chaîne
+  # simulée) : même état que le JSON. 6 nds de surface = 3,09 m/s → 309 = 0x0135,
+  # soit les octets 35 01 du PGN 128259 ; le vent sort en trois trames 130306.
+  printf 'enabled = 1\nhdg = 45\nstw = 6\nset = 90\ndrift = 2\ntwd = 105\ntws = 20\n' > "$TD/n.ctl"
+  ./n2k-sim --once --control "$TD/n.ctl" --actisense-out "$TD/frames.txt" > /dev/null 2>&1
+  run_case "trames N2K : STW identique au JSON" grep -qE ',128259,[0-9]+,255,8,ff,35,01,' "$TD/frames.txt"
+  run_case "trames N2K : trois expressions du vent" sh -c "[ \$(grep -c ',130306,' '$TD/frames.txt') -eq 3 ]"
+  run_case "trames N2K : courant (129291)" grep -q ',129291,' "$TD/frames.txt"
+
   # Interface : liste du dossier et refus des chemins détournés.
   if [ -x ./n2k-mux-web ] && command -v curl >/dev/null 2>&1; then
     printf 'TWS=5;0;1\n0;100;98\n' > "$TD/vagues.polwave.csv"

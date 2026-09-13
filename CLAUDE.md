@@ -153,8 +153,18 @@ Les RÉGLAGES sont écrits par l'interface web (onglet **Simulateur**,
 est éphémère et vit dans `/run/n2k-mux/sim.state`.
 
 **Chaîne simulée complète — `n2k-mux-sim.service` + `n2k-mux-sim-run`** : même
-aval que les chaînes réelles (arbitrage, AIS via n2kd, kplex 10110, UI web), mais
-la source est `n2k-sim --control` au lieu du bus. Ni actisense ni analyzer (le
+aval que les chaînes réelles (arbitrage, AIS via n2kd, kplex 10110, N2K YDRAW sur
+2700, UI web), mais la source est `n2k-sim --control` au lieu du bus. Le port
+2700 est servi par `ydraw-bridge` (s'il est installé), alimenté par
+`n2k-sim --actisense-out n2k.fifo` : le MÊME processus simulateur émet le JSON
+(0183) et les trames N2K, depuis un seul état bateau, donc les mêmes valeurs des
+deux côtés (deux simulateurs auraient chacun leur vent aléatoire). Oubli corrigé
+le 2026-09-13 : la première version ne servait rien sur 2700, et qtVlm perdait sa
+source N2K en basculant de la chaîne socketcan à la chaîne simulée. Les
+émetteurs binaires ont été alignés sur le modèle (vent apparent, vrai eau et vrai
+nord tirés de l'état, STW réglée ou polaire, 129291 ajouté) et vérifiés par
+décodage dans l'analyzer canboat. Le script ne crée PAS le fichier de pilotage :
+l'unité protège /etc en lecture seule (ProtectSystem=full). Ni actisense ni analyzer (le
 simulateur émet déjà le JSON de l'analyzer), ni ISO Request (il annonce ses
 identités spontanément). EXCLUSIVE des deux chaînes réelles (Conflicts).
 
@@ -169,7 +179,8 @@ chaîne réelle, que l'unité simulée a arrêtée, sinon le bord reste sans don
 C'est pour ça que ce n'est pas câblé par défaut.
 
 Options : `--once` (couverture : un de chaque PGN puis sort), `--duration SEC`,
-`--no-ais`, `--tick MS`, `--control FICHIER`, `--state FICHIER`. La config compagnon **`n2k-sim.ini`** porte les Model
+`--no-ais`, `--tick MS`, `--control FICHIER`, `--state FICHIER`,
+`--actisense-out FICHIER` (trames N2K en parallèle du JSON), `--wind-trace SEC`. La config compagnon **`n2k-sim.ini`** porte les Model
 Serial Code émis par le simulateur (SCX/VER/MAD/DST_BB/DST_TB/AIS/DH) → arbitrage
 résolu d'emblée, toute la table de conversion sort. Sert de test bout-en-bout
 (daemon, --ais-json, web) sans bus ni passerelle réels.
