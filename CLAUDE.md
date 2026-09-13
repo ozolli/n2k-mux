@@ -164,7 +164,15 @@ source N2K en basculant de la chaîne socketcan à la chaîne simulée. Les
 émetteurs binaires ont été alignés sur le modèle (vent apparent, vrai eau et vrai
 nord tirés de l'état, STW réglée ou polaire, 129291 ajouté) et vérifiés par
 décodage dans l'analyzer canboat. Le script ne crée PAS le fichier de pilotage :
-l'unité protège /etc en lecture seule (ProtectSystem=full). Ni actisense ni analyzer (le
+l'unité protège /etc en lecture seule (ProtectSystem=full).
+CONFIG D'ARBITRAGE PROPRE : la chaîne simulée tourne avec `SIMCONF`
+(`/etc/n2k-mux/n2k-sim.ini`, posé par `make install` s'il est absent, jamais
+écrasé), et NON avec la config de production. Celle-ci ne connaît que les
+appareils réels : les identités simulées (SCX20-SIM, MAD-SIM…) y étaient
+« non configurées », et la chaîne ne sortait AUCUNE phrase d'instrument sur
+10110, seulement l'AIS (défaut constaté le 2026-09-13 ; le port 2700 marchait,
+ydraw-bridge n'arbitrant pas). Limite connue : l'onglet Arbitrage de l'UI édite
+toujours la config de production, pas n2k-sim.ini. Ni actisense ni analyzer (le
 simulateur émet déjà le JSON de l'analyzer), ni ISO Request (il annonce ses
 identités spontanément). EXCLUSIVE des deux chaînes réelles (Conflicts).
 

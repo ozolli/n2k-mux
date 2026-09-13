@@ -24,7 +24,10 @@ StartLimitBurst=20
 [Service]
 Type=simple
 
-Environment=CONF=/etc/n2k-mux/n2k-mux.ini KPLEX_CONF=/etc/kplex.conf
+# Config d'ARBITRAGE propre au simulateur : elle nomme les identités simulées
+# (SCX20-SIM, MAD-SIM…). Avec la config de production, qui ne connaît que les
+# appareils réels, tout était rejeté et rien ne sortait en 0183.
+Environment=SIMCONF=/etc/n2k-mux/n2k-sim.ini KPLEX_CONF=/etc/kplex.conf
 Environment=SIMCTL=/etc/n2k-mux/sim.ctl
 Environment=N2KSIM=/usr/local/bin/n2k-sim
 Environment=N2KMUX=/usr/local/bin/n2k-mux

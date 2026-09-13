@@ -161,6 +161,10 @@ install: n2k-mux n2k-mux-web n2k-filter ydraw-bridge n2k-sim
 	install -Dm644 n2k-mux-sim.service $(DESTDIR)/etc/systemd/system/n2k-mux-sim.service
 	install -Dm644 n2k-mux-web.service $(DESTDIR)/etc/systemd/system/n2k-mux-web.service
 	install -Dm644 n2k-mux.ini.example $(DESTDIR)/etc/n2k-mux/n2k-mux.ini.example
+	@# config d'arbitrage de la chaîne simulée : posée si ABSENTE (jamais écrasée,
+	@# elle peut avoir été ajustée) ; la référence à jour reste en .example.
+	install -Dm644 n2k-sim.ini $(DESTDIR)/etc/n2k-mux/n2k-sim.ini.example
+	@test -e $(DESTDIR)/etc/n2k-mux/n2k-sim.ini || install -m644 n2k-sim.ini $(DESTDIR)/etc/n2k-mux/n2k-sim.ini
 	install -Dm644 kplex.conf.example $(DESTDIR)/etc/n2k-mux/kplex.conf.example
 	install -Dm644 n2k-mux.env.example $(DESTDIR)/etc/default/n2k-mux.example
 	@echo "Installé. Pense à : cp /etc/n2k-mux/n2k-mux.ini.example /etc/n2k-mux/n2k-mux.ini"

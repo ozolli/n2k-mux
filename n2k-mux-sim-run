@@ -18,7 +18,14 @@
 # Pas d'ISO Request non plus : il annonce ses identités spontanément.
 #
 # Variables (Environment / EnvironmentFile du service) :
-#   CONF KPLEX_CONF SIMCTL N2KSIM N2KMUX N2KD KPLEX
+#   SIMCONF KPLEX_CONF SIMCTL N2KSIM N2KMUX N2KD KPLEX
+#
+# SIMCONF, et NON CONF : la configuration de production ne connaît que les
+# appareils réels du bord. Les appareils simulés (SCX20-SIM, MAD-SIM…) y étaient
+# rejetés comme « non configurés » et la chaîne ne sortait AUCUNE phrase
+# d'instrument sur 10110, seulement l'AIS. SIMCONF pointe sur la config
+# compagnon du simulateur (n2k-sim.ini), qui nomme ces identités. Variable
+# distincte parce que /etc/default/n2k-mux définit souvent CONF.
 #
 # Le simulateur lit ses RÉGLAGES dans $SIMCTL (persistant, /etc) et republie
 # l'état DÉDUIT dans $RUN/sim.state (éphémère) : route et vitesse fond, les trois
@@ -26,7 +33,7 @@
 
 set -uo pipefail
 
-: "${CONF:?}" "${KPLEX_CONF:?}"
+: "${SIMCONF:?}" "${KPLEX_CONF:?}"
 : "${N2KSIM:?}" "${N2KMUX:?}" "${N2KD:?}" "${KPLEX:?}"
 SIMCTL="${SIMCTL:-/etc/n2k-mux/sim.ctl}"
 
@@ -59,7 +66,7 @@ if [ -x "$YDRAW" ]; then
 fi
 
 # Branche AIS : flux dupliqué → dédup MMSI → n2kd (VDM sur TCP 2599).
-"$N2KMUX" --ais-json "$CONF" < "$AISFIFO" | "$N2KD" &
+"$N2KMUX" --ais-json "$SIMCONF" < "$AISFIFO" | "$N2KD" &
 PIDS+=($!)
 
 # kplex lit le 0183 du n2k-mux principal via OUTFIFO (jobs distincts, PID suivis).
@@ -71,7 +78,7 @@ PIDS+=($!)
 # $! = n2k-mux principal (dernier élément AVANT la redirection > OUTFIFO).
 "$N2KSIM" --control "$SIMCTL" --state "$SIMSTATE" "${ACT_OPT[@]}" \
   | tee --output-error=exit "$AISFIFO" \
-  | "$N2KMUX" "$CONF" \
+  | "$N2KMUX" "$SIMCONF" \
         --sources "$RUN/sources.json" --stats "$RUN/stats.json" \
         --busmap "$RUN/busmap.json" --sources-interval 2 \
   > "$OUTFIFO" &
