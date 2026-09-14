@@ -14,7 +14,7 @@ Une fois installé, vous disposez de quatre points de connexion :
 | qtVlm **sur le PC de bord** (local) | interface **`vcan0`** (socketcan) | N2K natif |
 | qtVlm **en réseau** (N2K) | `hôte:2700` (source NMEA **TCP**) | YDRAW |
 | Tablettes / qtVlm en **NMEA 0183** | `hôte:10110` (TCP, + UDP) | 0183 |
-| **Administrer** (config, équipements, charge) | `http://hôte:8080/` | Web |
+| **Administrer** (config, équipements, charge, simulateur) | `http://hôte:8080/` | Web |
 
 > Montage recommandé : PC de bord (Linux) relié au bus N2K par un **adaptateur
 > socketcan** (PEAK PCAN-USB FD…). Une passerelle série **Actisense NGX-1/NGT-1**
@@ -99,12 +99,10 @@ git clone https://github.com/ozolli/n2k-mux && cd n2k-mux
 make          # daemon + filtre + UI web + ydraw-bridge + simulateur + testeurs
 ```
 
-Vérifier que tout est sain (tous les testeurs à 0 échec) :
+Vérifier que tout est sain — une commande, un seul code de sortie (voir §8.3) :
 
 ```sh
-for t in test_config test_mapper test_arbiter test_nmea0183 test_aisdedup \
-         test_sources test_stats test_netout test_ydraw; do ./$t && echo "$t OK"; done
-./test_jsonl --selftest
+make test
 ```
 
 ### 2.3 Installer le service (socketcan, recommandé)
@@ -134,7 +132,13 @@ YDRAW_PORT=2700            # flux N2K arbitré servi en YDRAW/TCP (qtVlm réseau
 ANALYZER=/home/vous/canboat/rel/linux-x86_64/analyzer
 N2KD=/home/vous/canboat/rel/linux-x86_64/n2kd
 CANDUMP2ANALYZER=/home/vous/canboat/rel/linux-x86_64/candump2analyzer
+WEB_AUTH=admin:choisir-un-mot-de-passe   # OBLIGATOIRE : l'UI web écoute sur le LAN
 ```
+
+> **`WEB_AUTH` est obligatoire** avec le service par défaut : `n2k-mux-web` écoute
+> sur le LAN (`BIND=0.0.0.0`) et **refuse de démarrer** sans authentification,
+> puisque l'interface écrit la config. Sinon, posez `BIND=127.0.0.1` pour un accès
+> local seulement (voir §5).
 
 Désactivez un éventuel ancien service `kplex` autonome (il entrerait en conflit),
 puis démarrez :
@@ -211,6 +215,7 @@ commenté : `n2k-mux.ini.example`.
 ```ini
 [output]
 talker = II                 ; talker des phrases 0183 (qtVlm l'ignore)
+no_0183 = 129291            ; pas de phrase VDR : qtVlm la rejette (voir §8.2)
 
 [sources]
 ; nom logique = Model Serial Code (ou Unique Number) de l'équipement
@@ -227,8 +232,8 @@ DH  = 000A520AF6A0          ; DataHub PredictWind (AIS, capteurs)
 129039          = fusion: AIS, DH     ; AIS : em-trak prioritaire sur DataHub
 
 [ignore]
-src = 0                     ; ignorer l'adresse 0
 pgn = 262161, 262656        ; messages de contrôle Actisense/CANboat
+; src = 12                  ; exclure une adresse du bus (0 est une adresse légale)
 
 [rate]
 ; type de phrase = intervalle minimum en ms (limite le débit 0183)
@@ -302,8 +307,9 @@ pare-feu/redirection maîtrisé sur votre box.
 
 ## 5. Administrer par le web
 
-Ouvrez `http://hôte:8080/`. **Deux onglets** : toute la configuration s'édite ici,
-sans jamais toucher au fichier INI à la main. Deux bascules en haut à droite :
+Ouvrez `http://hôte:8080/`. **Trois onglets** — Sources, Arbitrage et Simulateur
+(§7) : toute la configuration s'édite ici, sans jamais toucher au fichier INI à la
+main. Deux bascules en haut à droite :
 **langue** (FR/EN, initialisée d'après celle du navigateur) et **thème**
 (sombre/clair, initialisé d'après la préférence système), mémorisées dans le
 navigateur.
@@ -333,11 +339,20 @@ en-têtes portent une info-bulle d'aide au survol.
 redémarrage** : le fichier est validé, écrit, puis le daemon reçoit `SIGHUP` et
 relit sa config (si le fichier est invalide, l'ancienne reste active et l'erreur
 est journalisée). Le message de confirmation s'efface seul après 15 s.
+L'enregistrement **garde votre fichier INI tel que vous l'avez écrit** :
+commentaires, ordre des sections et alignement sont préservés, seules les valeurs
+changent. La version précédente est conservée en `n2k-mux.ini.bak`.
+
+**Flux mort.** Un débit nul veut dire « bus calme » ou « chaîne arrêtée ». Quand
+rien n'a été reçu depuis plus de 10 s, un bandeau rouge **FLUX MORT** s'affiche en
+tête du tableau d'arbitrage.
 
 > **Sécurité** : l'API web écrit la config et déclenche un rechargement. Le
-> service écoute par défaut sur le LAN (`0.0.0.0:8080`) ; réservez-le à un réseau
-> de confiance. Activez l'**authentification HTTP Basic** avec `--auth user:pass`
-> (ou `WEB_AUTH=user:pass` dans `/etc/default/n2k-mux`). HTTP Basic n'étant **pas
+> binaire `n2k-mux-web` écoute par défaut sur `127.0.0.1` ; le service systemd pose
+> `BIND=0.0.0.0` (LAN). **Écouter ailleurs qu'en local sans authentification est
+> refusé** : posez `WEB_AUTH=user:pass` dans `/etc/default/n2k-mux` (transmis par
+> l'environnement, jamais sur la ligne de commande, lisible par tout utilisateur
+> local). `--allow-anonymous` lève ce refus, à vos risques. HTTP Basic n'étant **pas
 > chiffré**, gardez-le sur le LAN ou derrière un tunnel SSH / un terminateur TLS.
 
 ---
@@ -353,6 +368,10 @@ est journalisée). Le message de confirmation s'efface seul après 15 s.
 | **Aucune phrase 0183 sur 10110** | Idem : identités non résolues, ou kplex/n2kd down. `journalctl -u n2k-mux-can -f`. |
 | **« Address already in use »** | Un `n2kd` résiduel (ports 2597-2602). Le service fait le ménage au démarrage ; sinon `sudo pkill -x n2kd` puis restart. |
 | **Collision port 2600** | `n2kd` réquisitionne 2597-2602. Le N2K/YDRAW est sur **2700** (réglable `YDRAW_PORT`), surtout pas 2600. |
+| **`n2k-mux-web` ne démarre pas** | `journalctl -u n2k-mux-web` : un `BIND` non local sans `WEB_AUTH` est refusé (§5). |
+| **Bandeau « FLUX MORT »** | La chaîne ne reçoit rien : `systemctl is-active n2k-mux-can` (ou `n2k-mux-sim` en mode simulateur), puis son journal. |
+| **qtVlm : « Unrecognized or wrong message $IIVDR »** | qtVlm ne connaît pas VDR. Ajouter `no_0183 = 129291` sous `[output]` (déjà dans les exemples livrés). |
+| **Plus rien après avoir décoché « Simulateur actif »** | La chaîne réelle est lancée par `n2k-mux-switch real` : il faut que `n2k-mux-can` ou `n2k-mux` soit **activé** (enable), ou poser `REAL_UNIT` (§7). |
 | **La config web ne s'enregistre pas** | `/etc/n2k-mux/n2k-mux.ini` doit être inscriptible par l'utilisateur du service web (root par défaut → OK). |
 | **NGX-1 : rien** | Mode **Transfer** (pas Convert), `DEVICE`/`BAUD` corrects dans `/etc/default/n2k-mux`. |
 
@@ -362,28 +381,93 @@ Sniff brut du bus (sans rien casser) : `candump can0` (paquet `can-utils`).
 
 ## 7. Banc de test sans matériel
 
-Le simulateur `n2k-sim` rejoue un flux N2K cohérent (bateau qui avance, cap qui
-infléchit la route, cibles AIS) pour **tous les PGN compris**, sans bus ni
-adaptateur. La config compagnon `n2k-sim.ini` porte les identités simulées →
-arbitrage résolu d'emblée.
+Le simulateur `n2k-sim` produit un flux N2K cohérent (bateau qui avance, courant,
+vent, cibles AIS) pour **tous les PGN que n2k-mux comprend**, sans bus ni
+adaptateur. Sa config compagnon `n2k-sim.ini` porte les identités simulées :
+l'arbitrage est résolu d'emblée.
+
+### 7.1 Chaîne simulée et bascule
+
+`n2k-mux-sim.service` fait tourner **la même chaîne aval** que les chaînes réelles
+(arbitrage, AIS par n2kd, kplex sur **10110**, N2K YDRAW sur **2700**, UI web),
+alimentée par le simulateur au lieu du bus. qtVlm garde ses connexions telles
+quelles. Le simulateur émet le JSON 0183 et les trames N2K depuis **un seul état
+bateau** : les deux sorties sont toujours d'accord. Chaîne simulée et chaînes
+réelles **s'excluent** : démarrer l'une arrête l'autre.
+
+```sh
+sudo n2k-mux-switch sim      # chaîne simulée (arrête la réelle)
+sudo n2k-mux-switch real     # retour au réseau réel (arrête le simulateur)
+n2k-mux-switch status        # sim | real | none
+```
+
+`real` démarre `REAL_UNIT` si elle est posée dans `/etc/default/n2k-mux`, sinon
+celle de `n2k-mux-can` / `n2k-mux` qui est **activée** (enable). La case
+**« Simulateur actif »** de l'interface web fait exactement la même chose, et
+montre quelle chaîne tourne vraiment. **Au démarrage de la machine, c'est toujours
+la chaîne réelle** (`n2k-mux-sim` n'est jamais activée).
+
+La chaîne simulée arbitre avec son propre `/etc/n2k-mux/n2k-sim.ini` (installé
+s'il est absent, jamais écrasé). Le bus réel n'est **pas** lu en mode simulateur.
+
+### 7.2 Onglet Simulateur
+
+Six **entrées**, celles que vit l'équipage : cap vrai (**HDG**), vitesse surface
+(**STW**), direction et vitesse du courant (**set**, **drift**), direction et
+force du vent vrai (**TWD**, **TWS**). Chacune a un curseur, un champ numérique et
+une case **auto** (variation lente autour de la dernière valeur réglée, sans saut).
+
+Tout le reste est **déduit** et affiché dans le tableau *Valeurs déduites* : route
+et vitesse fond (COG, SOG = vecteur surface + courant), **TWA** = TWD − HDG, vent
+apparent (**AWA**, **AWS**), vent vrai référencé à l'eau, giration, position. Les
+angles à l'étrave se lisent de 0 à 180° avec le bord (bâbord/tribord).
+
+- **Vent aléatoire** — le vent change par **séquences** (environ 10 minutes par
+  défaut) : une cible tirée dans l'amplitude totale (force 0 à 20 %, direction en
+  degrés), une transition plus ou moins rapide, puis un palier. TWD/TWS deviennent
+  la base.
+- **Polaire** — choisissez une polaire `.pol` ou `.csv` du dossier de qtVlm
+  (`POLAR_DIR`, défaut `$HOME/.qtVlm/polar` ; à poser, le service tournant en root)
+  et laissez **la STW venir de la polaire** : interpolation bilinéaire sur le TWA et
+  le TWS eau, bornée à la table, jamais extrapolée.
+- **La gîte** suit le vent apparent (sous le vent, jusqu'à 7°) et reste stable
+  quand le vent l'est.
+
+> Le bateau simulé **ne dérive pas**. Si votre logiciel de navigation estime la
+> dérive par la gîte, mettez son coefficient de dérive à **0** pendant la
+> simulation, sinon il calculera un courant qui n'existe pas.
+
+### 7.3 À la main
 
 ```sh
 ./n2k-sim | ./n2k-mux n2k-sim.ini -v          # instruments → phrases 0183
 ./n2k-sim --once | ./n2k-mux n2k-sim.ini      # un de chaque PGN puis fin
 ./n2k-sim | ./n2k-mux --ais-json n2k-sim.ini  # AIS → dédup par MMSI
+./n2k-sim --actisense | ./ydraw-bridge --port 2700   # N2K vers qtVlm : TCP → hôte:2700
 ```
 
-Options : `--once`, `--duration SEC`, `--no-ais`, `--tick MS`, `--actisense`.
+Le fichier de pilotage est un simple `clé = valeur`, relu dès qu'il change —
+l'interface web écrit exactement ceci :
 
-**Chaîne 0183 complète sans matériel** — `./n2k-sim-run` monte
-`n2k-sim → n2k-mux (+ --ais-json → n2kd) → kplex` et expose qtVlm sur **TCP 10110**.
-
-**N2K vers qtVlm sans matériel** — le mode `--actisense` encode les PGN (AIS
-compris) en trames N2K, servies en YDRAW par `ydraw-bridge` :
+```ini
+hdg = 45          ; cap vrai, degrés   (auto = variation lente)
+stw = 6.0         ; vitesse surface, nœuds
+set = 120         ; direction du courant (vers laquelle il porte), degrés
+drift = 1.0       ; vitesse du courant, nœuds
+twd = auto 225    ; direction du vent vrai (d'où il vient), variable autour de 225
+tws = 20          ; force du vent vrai, nœuds
+wind_random = 1   ; tws_var (%), twd_var (°), wind_period (min), seed
+stw_polar = 1     ; STW tirée de la polaire ci-dessous
+polar = /home/vous/.qtVlm/polar/CM50.pol
+```
 
 ```sh
-./n2k-sim --actisense | ./ydraw-bridge --port 2700   # qtVlm : TCP → hôte:2700
+./n2k-sim --control sim.ctl --state sim.state | ./n2k-mux n2k-sim.ini
+./n2k-sim --control sim.ctl --wind-trace 3600    # 1 h de vent simulé, instantanément
 ```
+
+**Chaîne 0183 complète sans matériel ni service** — `./n2k-sim-run` monte
+`n2k-sim → n2k-mux (+ --ais-json → n2kd) → kplex` et expose qtVlm sur **TCP 10110**.
 
 > Le filtre socketcan se teste aussi sur des CAN virtuels (`vcan`) : injecter des
 > trames avec `cansend`, lire la sortie sur un second `vcan`.
@@ -423,10 +507,30 @@ n2k-filter [--in IFACE] [--out IFACE] [--drop FICHIER] [--ydraw-port N] [-v]
 perdants publiée par `n2k-mux --losers`, `--ydraw-port` sert aussi le flux arbitré
 en YDRAW/TCP (qtVlm réseau).
 
-**`n2k-mux-web`** : `[config.ini] [--sources P] [--stats P] [--port N]
-[--bind ADDR] [--reload-cmd CMD] [--auth user:pass]` (défauts : port 8080, bind
-`0.0.0.0`, pas d'auth). `--auth` active l'authentification HTTP Basic sur toutes
-les routes.
+**`n2k-mux-web`** (interface web) :
+
+```
+n2k-mux-web [config.ini] [--sources P] [--stats P] [--busmap P] [--port N] [--bind ADDR]
+            [--reload-cmd CMD] [--auth user:pass] [--allow-anonymous]
+            [--sim-control P] [--sim-state P] [--polar-dir D] [--sim-start CMD] [--sim-stop CMD]
+```
+
+Défauts : port 8080, bind `127.0.0.1`. `--auth` (ou `N2K_MUX_WEB_AUTH` dans
+l'environnement) active l'authentification HTTP Basic ; un `--bind` non local sans
+elle est refusé, sauf `--allow-anonymous`. `--sim-control` (défaut
+`/etc/n2k-mux/sim.ctl`) et `--sim-state` (défaut `/run/n2k-mux/sim.state`) sont les
+fichiers de pilotage et d'état déduit du simulateur, `--polar-dir` le dossier des
+polaires. `--sim-start` / `--sim-stop` sont les commandes de bascule (le service
+passe `n2k-mux-switch sim` / `real` ; poser `SIM_START=` et `SIM_STOP=` vides pour
+que la case ne fasse que rendre le simulateur muet).
+
+**`n2k-sim`** (simulateur) : `--once`, `--duration SEC`, `--no-ais`, `--tick MS`
+(défaut 50), `--actisense` (trames N2K au lieu du JSON), `--control FICHIER`
+(entrées à chaud), `--state FICHIER` (valeurs déduites, deux fois par seconde),
+`--actisense-out FICHIER` (trames N2K **en plus** du JSON, même état bateau),
+`--wind-trace SEC` (imprime `t;twd;tws;stw` en temps simulé, sans attendre).
+
+**`n2k-mux-switch`** : `sim | real | status` (§7.1).
 
 ### 8.2 Données converties (N2K → 0183)
 
@@ -434,16 +538,16 @@ les routes.
 |---|---|---|
 | 129025 | Position | GLL |
 | 129026 | COG/SOG | VTG |
-| 129029 | Position GNSS | GGA |
+| 129029 | Position GNSS | GGA + RMC (RMC prend COG/SOG du 129026, la variation du 127250) |
 | 129539 | DOP / mode de fix | GSA |
 | 129540 | Satellites en vue | GSV (paginé) |
 | 126992 | Heure système | ZDA |
 | 127250 | Cap | HDG + HDM (mag) / HDT (vrai) |
 | 127251 | Taux de giration | ROT |
 | 127257 | Attitude | XDR (pitch/roll) |
-| 130306 | Vent | MWV(R) / MWV(T) + MWD |
+| 130306 | Vent | MWV(R) apparent · MWV(T) vrai (référencé bateau/eau) · MWD (référencé fond, nord) |
 | 127245 | Barre | RSA |
-| 129291 | Courant (set/drift) | VDR |
+| 129291 | Courant (set/drift) | VDR — coupée dans les configs livrées (`no_0183 = 129291`) : qtVlm la rejette |
 | 128259 | Vitesse surface | VHW |
 | 128267 | Profondeur | DPT (min des sondeurs) |
 | 128275 | Distance dans l'eau (loch) | VLW (max des sondeurs) |
@@ -456,10 +560,21 @@ les routes.
 
 ### 8.3 Tests
 
-Chaque module a son testeur autonome (`test_jsonl`, `test_registry`,
+```sh
+make test     # tout, un seul code de sortie
+make debug    # recompile avec les sanitizers (UB + mémoire) et relance la suite
+```
+
+`make test` enchaîne : le testeur de chaque module (`test_jsonl`, `test_registry`,
 `test_nmea0183`, `test_config`, `test_arbiter`, `test_mapper`, `test_aisdedup`,
-`test_sources`, `test_stats`, `test_netout`, `test_ydraw`). `./test_jsonl
---selftest` vérifie le typage des champs du parser sans entrée.
+`test_sources`, `test_stats`, `test_netout`, `test_ydraw`, `test_inimerge`,
+`test_polar`) ; le parser sur **toutes les captures de `samples/*.jsonl`** ; un
+bout-en-bout `n2k-sim | n2k-mux` qui vérifie le **checksum de chaque phrase** ; puis
+le simulateur (valeurs déduites, vent aléatoire, polaire, trames N2K, cadence) et
+l'API web (réglages du simulateur, polaires, bascule, syntaxe du JS). Déposer une
+capture réelle (`analyzer -json -nv`) dans `samples/` l'ajoute à la suite —
+attention, le dépôt est public. `make debug` attrape des fautes invisibles en
+`-O2` ; `make clean && make` pour revenir.
 
 ---
 
