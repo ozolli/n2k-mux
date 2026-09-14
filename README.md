@@ -409,6 +409,8 @@ if absent, never overwritten). The real bus is **not** read in simulator mode.
 
 ### 7.2 Simulator tab
 
+![Simulator tab](docs/Simulateur-en.png)
+
 Six **inputs**, as the crew experiences them: true heading (**HDG**), speed
 through water (**STW**), current direction and speed (**set**, **drift**), true
 wind direction and speed (**TWD**, **TWS**). Each has a slider, a number field and

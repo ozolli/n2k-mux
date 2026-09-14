@@ -412,6 +412,8 @@ s'il est absent, jamais écrasé). Le bus réel n'est **pas** lu en mode simulat
 
 ### 7.2 Onglet Simulateur
 
+![Onglet Simulateur](docs/Simulateur.png)
+
 Six **entrées**, celles que vit l'équipage : cap vrai (**HDG**), vitesse surface
 (**STW**), direction et vitesse du courant (**set**, **drift**), direction et
 force du vent vrai (**TWD**, **TWS**). Chacune a un curseur, un champ numérique et
