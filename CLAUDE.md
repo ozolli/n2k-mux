@@ -109,8 +109,16 @@ vecteur courant ; TWA = TWD − HDG ; vent apparent (AWA, AWS) = vent vrai −
 vecteur bateau sur le fond ; le vent vrai référencé eau (vent vrai − courant,
 ramené à l'étrave) ; la giration = dérivée du CAP, nulle si le cap est imposé ;
 la position, intégrée le long du COG obtenu. Le
-130306 sort en trois exemplaires (Apparent, True water referenced, True ground
-referenced to North) → MWV(R), MWV(T) et MWD.
+130306 sort en trois exemplaires en JSON (Apparent, True water referenced, True
+ground referenced to North) → MWV(R), MWV(T) et MWD ; en trames N2K (port 2700)
+seulement DEUX, apparent + vrai référencé eau. La trame « ground referenced to
+North » porte une DIRECTION dans le champ Wind Angle, là où les autres portent un
+angle à l'étrave : un récepteur qui ne distingue pas la référence voyait le vent
+vrai sauter. De même, l'attitude 127257 publie un lacet NON DISPONIBLE (0x7FFF),
+jamais 0 : un lacet à 0° passait pour un cap, et qtVlm (connecté au 2700) voyait
+le cap osciller et un courant fictif (constaté le 2026-09-14). En 0183, HDG
+annonce une déviation nulle, cohérente avec HDT (une déviation de 1,5° annoncée
+mais non appliquée décalait les deux de 1,5°).
 
 **Vent aléatoire** — clés du même fichier :
 

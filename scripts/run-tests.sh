@@ -99,6 +99,22 @@ print("checksums vérifiés :", n)
     else
       ko "checksums 0183"
     fi
+    # Cohérence du cap : le cap vrai tiré de HDG (magnétique + déviation +
+    # variation) doit égaler HDT. Une déviation annoncée mais non appliquée les
+    # a déjà décalés de 1,5°.
+    if printf '%s\n' "$out0183" | python3 -c '
+import sys
+hdg = hdt = None
+for l in sys.stdin:
+    f = l.split("*")[0].split(",")
+    if f[0].endswith("HDG"):
+        dev = float(f[2] or 0) * (1 if f[3] == "E" else -1)
+        var = float(f[4] or 0) * (1 if f[5] == "E" else -1)
+        hdg = (float(f[1]) + dev + var) % 360
+    elif f[0].endswith("HDT"):
+        hdt = float(f[1])
+sys.exit(0 if hdg is not None and hdt is not None and abs((hdg - hdt + 180) % 360 - 180) < 0.15 else 1)
+'; then ok "cap vrai de HDG = HDT"; else ko "cap vrai de HDG différent de HDT"; fi
     # Quelques phrases clés doivent être là : elles couvrent position, route,
     # temps, satellites, cap, vent, profondeur et météo.
     for want in GLL VTG RMC GGA GSV HDG MWV DPT MDA MTW VLW ROT RSA VHW; do
@@ -222,7 +238,9 @@ PYLIVE
   printf 'enabled = 1\nhdg = 45\nstw = 6\nset = 90\ndrift = 2\ntwd = 105\ntws = 20\n' > "$TD/n.ctl"
   ./n2k-sim --once --control "$TD/n.ctl" --actisense-out "$TD/frames.txt" > /dev/null 2>&1
   run_case "trames N2K : STW identique au JSON" grep -qE ',128259,[0-9]+,255,8,ff,35,01,' "$TD/frames.txt"
-  run_case "trames N2K : trois expressions du vent" sh -c "[ \$(grep -c ',130306,' '$TD/frames.txt') -eq 3 ]"
+  run_case "trames N2K : vent apparent + vrai, sans direction nord" sh -c "[ \$(grep -c ',130306,' '$TD/frames.txt') -eq 2 ]"
+  # Lacet « non disponible » (ff 7f), pas 0 : un lacet à 0° passait pour un cap.
+  run_case "trames N2K : lacet non disponible" grep -qE ',127257,[0-9]+,255,7,ff,ff,7f,' "$TD/frames.txt"
   run_case "trames N2K : courant (129291)" grep -q ',129291,' "$TD/frames.txt"
 
   # Interface : liste du dossier et refus des chemins détournés.

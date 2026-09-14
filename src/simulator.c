@@ -670,10 +670,13 @@ static void e_heading(double t)   /* 127250 → HDG/HDM (mag) + HDT (vrai) */
 {
     (void)t;
     char f[160];
-    /* cap magnétique = cap vrai − variation (variation 2°W = −2) */
+    /* cap magnétique = cap vrai − variation − déviation. Déviation NULLE : le
+     * compas simulé est compensé. Avant, une déviation de 1,5° était annoncée
+     * sans être appliquée, si bien que HDG donnait un cap vrai de 260,5° quand
+     * HDT disait 259° (variation 2°W = −2). */
     double hdg_mag = norm360(boat.hdg + 2.0);
     snprintf(f, sizeof f,
-             "\"Heading\":%.1f,\"Deviation\":1.5,\"Variation\":-2.0,\"Reference\":\"Magnetic\"",
+             "\"Heading\":%.1f,\"Deviation\":0.0,\"Variation\":-2.0,\"Reference\":\"Magnetic\"",
              hdg_mag);
     emit(2, SCX_SRC, 127250, "Vessel Heading", f);
     snprintf(f, sizeof f, "\"Heading\":%.1f,\"Reference\":\"True\"", boat.hdg);
@@ -691,7 +694,8 @@ static void e_rot(double t)   /* 127251 → ROT (deg/s) */
 static void e_attitude(double t)   /* 127257 → XDR (pitch/roll) */
 {
     char f[128];
-    snprintf(f, sizeof f, "\"Yaw\":0.0,\"Pitch\":%.1f,\"Roll\":%.1f",
+    /* pas de champ Yaw : non disponible, comme en trames (cf. a_attitude) */
+    snprintf(f, sizeof f, "\"Pitch\":%.1f,\"Roll\":%.1f",
              3.0 * sin(t / 5.0), 8.0 * sin(t / 7.0));
     emit(2, SCX_SRC, 127257, "Attitude", f);
 }
@@ -983,7 +987,11 @@ static void a_rot(void)            /* 127251 Rate of Turn */
 static void a_attitude(double t)   /* 127257 Attitude (yaw/pitch/roll) */
 {
     uint8_t b[7] = { 0xff, 0, 0, 0, 0, 0, 0 };
-    p16(b, 1, 0);                                           /* yaw */
+    /* Lacet « non disponible » (0x7FFF), et SURTOUT pas 0 : un lacet à 0° est
+     * une vraie valeur, qu'un récepteur peut prendre pour le cap. qtVlm voyait
+     * alors le cap osciller entre 127250 (cap réel) et 0°, et en déduisait un
+     * courant fictif. Le compas simulé ne publie pas de lacet. */
+    p16(b, 1, 0x7FFF);
     p16(b, 3, (int)lround(DEG2RAD(3.0 * sin(t / 5.0)) / 1e-4));
     p16(b, 5, (int)lround(DEG2RAD(8.0 * sin(t / 7.0)) / 1e-4));
     emit_frame(2, SCX_SRC, 127257, b, 7);
@@ -1001,12 +1009,17 @@ static void a_wind1(double speed_ms, double angle_deg, int ref)
     emit_frame(2, MAD_SRC, 130306, b, 8);
 }
 
-static void a_wind(double t)       /* 130306 Wind Data : mêmes 3 expressions qu'en JSON */
+static void a_wind(double t)       /* 130306 Wind Data : apparent + vrai (eau) */
 {
     (void)t;
     a_wind1(boat.aws,   boat.awa,   2);   /* apparent, angle / étrave */
     a_wind1(boat.tws_w, boat.twa_w, 4);   /* vrai référencé eau, angle / étrave */
-    a_wind1(boat.tws,   boat.twd,   0);   /* vrai référencé nord : DIRECTION */
+    /* PAS de trame « True (ground referenced to North) » en N2K : son champ
+     * Wind Angle porte une DIRECTION (43°) là où les deux autres portent un
+     * angle à l'étrave (144°). Un récepteur qui ne distingue pas la référence
+     * voit le vent vrai sauter de l'une à l'autre, quatre fois par seconde.
+     * Un instrument réel publie apparent + vrai relatif ; le récepteur déduit la
+     * direction du cap. Le flux JSON la garde : n2k-mux en tire MWD en 0183. */
 }
 
 static void a_setdrift(void)       /* 129291 Set & Drift, Rapid Update */
