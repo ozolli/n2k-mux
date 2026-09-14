@@ -203,11 +203,26 @@ identités spontanément). EXCLUSIVE des deux chaînes réelles (Conflicts).
 sudo systemctl start n2k-mux-sim     # puis http://<hôte>:8080/ → Simulateur
 ```
 
-La bascule « Simulateur actif » de l'UI ne fait, par défaut, que rendre le
-simulateur muet ou parlant. Pour qu'elle démarre/arrête la CHAÎNE, définir
-SIM_START et SIM_STOP dans /etc/default/n2k-mux ; SIM_STOP doit REMETTRE la
-chaîne réelle, que l'unité simulée a arrêtée, sinon le bord reste sans données.
-C'est pour ça que ce n'est pas câblé par défaut.
+**Bascule simulateur ↔ réseau réel — `n2k-mux-switch sim | real | status`** :
+démarrer une chaîne arrête l'autre (Conflicts, dans les deux sens), donc
+basculer = DÉMARRER celle qu'on veut ; « arrêter le simulateur » tout court
+laisserait le bord sans données. `real` démarre REAL_UNIT si posée, sinon celle
+de n2k-mux-can / n2k-mux qui est ACTIVÉE (enable), socketcan d'abord ; le script
+ne source PAS /etc/default/n2k-mux (EnvironmentFile systemd, pas du shell).
+`systemctl --no-block` : l'UI ne gèle pas pendant le démarrage. Au boot, c'est
+l'unité activée qui démarre (la réelle ; n2k-mux-sim n'est pas activée).
+La case « Simulateur actif » de l'UI s'en sert PAR DÉFAUT (n2k-mux-web.service
+passe `--sim-start "$${SIM_START-$$SWITCH sim}"`… : `$$` OBLIGATOIRE, systemd
+prenant `${SIM_START-…}` pour un nom invalide qu'il remplace par du VIDE — la
+bascule ne faisait alors que rendre le simulateur muet, constaté le 2026-09-14) : cochée → chaîne
+simulée, décochée → réseau réel. Elle montre l'état RÉEL (`running` de GET
+/api/sim : fichier d'état du simulateur récent de moins de 5 s ; systemd efface
+/run/n2k-mux à l'arrêt de l'unité), pas la clé enabled, et ne se remet pas à
+l'ancien état pendant les 15 s d'une bascule. La commande ne part que si l'état
+demandé diffère de l'état réel (chaque coup de curseur repasse par le POST).
+Avec une commande d'arrêt, décocher écrit quand même `enabled = 1` : sinon la
+chaîne simulée redémarrée plus tard repartait MUETTE. SIM_START= et SIM_STOP=
+VIDES dans /etc/default/n2k-mux rendent l'ancien rôle (muet/parlant).
 
 Options : `--once` (couverture : un de chaque PGN puis sort), `--duration SEC`,
 `--no-ais`, `--tick MS`, `--control FICHIER`, `--state FICHIER`,

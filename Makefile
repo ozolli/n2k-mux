@@ -152,6 +152,7 @@ install: n2k-mux n2k-mux-web n2k-filter ydraw-bridge n2k-sim
 	install -m755 n2k-mux-run $(DESTDIR)$(PREFIX)/bin/n2k-mux-run
 	install -m755 n2k-mux-can-run $(DESTDIR)$(PREFIX)/bin/n2k-mux-can-run
 	install -m755 n2k-mux-sim-run $(DESTDIR)$(PREFIX)/bin/n2k-mux-sim-run
+	install -m755 n2k-mux-switch $(DESTDIR)$(PREFIX)/bin/n2k-mux-switch
 	install -m755 n2k-sim $(DESTDIR)$(PREFIX)/bin/n2k-sim
 	install -m755 n2k-mux-web $(DESTDIR)$(PREFIX)/bin/n2k-mux-web
 	install -m755 n2k-filter $(DESTDIR)$(PREFIX)/bin/n2k-filter
@@ -171,11 +172,13 @@ install: n2k-mux n2k-mux-web n2k-filter ydraw-bridge n2k-sim
 	@echo "NGX-1/série : systemctl enable --now n2k-mux n2k-mux-web"
 	@echo "socketcan   : systemctl enable --now n2k-mux-can n2k-mux-web"
 	@echo "sans matériel : systemctl start n2k-mux-sim  (puis onglet Simulateur)"
+	@echo "bascule       : n2k-mux-switch sim | real | status (ou la case de l'onglet Simulateur)"
 
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/n2k-mux $(DESTDIR)$(PREFIX)/bin/n2k-mux-run
 	rm -f $(DESTDIR)$(PREFIX)/bin/n2k-mux-can-run $(DESTDIR)$(PREFIX)/bin/n2k-filter
 	rm -f $(DESTDIR)$(PREFIX)/bin/n2k-mux-sim-run $(DESTDIR)$(PREFIX)/bin/n2k-sim
+	rm -f $(DESTDIR)$(PREFIX)/bin/n2k-mux-switch
 	rm -f $(DESTDIR)$(PREFIX)/bin/n2k-mux-web $(DESTDIR)$(PREFIX)/bin/ydraw-bridge
 	rm -f $(DESTDIR)/etc/systemd/system/n2k-mux.service
 	rm -f $(DESTDIR)/etc/systemd/system/n2k-mux-can.service

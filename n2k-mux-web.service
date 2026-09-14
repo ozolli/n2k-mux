@@ -23,6 +23,7 @@ Type=simple
 
 Environment=CONF=/etc/n2k-mux/n2k-mux.ini
 Environment=WEB=/usr/local/bin/n2k-mux-web
+Environment=SWITCH=/usr/local/bin/n2k-mux-switch
 Environment=PORT=8080 BIND=0.0.0.0
 EnvironmentFile=-/etc/default/n2k-mux
 
@@ -38,17 +39,24 @@ EnvironmentFile=-/etc/default/n2k-mux
 # risque malgré tout, ajouter --allow-anonymous à la ligne ci-dessous.
 #
 # SIMULATEUR (onglet Simulateur) : --sim-control désigne le fichier de pilotage,
-# partagé avec n2k-mux-sim.service. Par défaut la bascule « Simulateur actif »
-# rend seulement le simulateur MUET ou parlant. Pour qu'elle démarre et arrête
-# la chaîne simulée, définir SIM_START et SIM_STOP dans /etc/default/n2k-mux —
-# SIM_STOP doit remettre TA chaîne réelle, que l'unité simulée a arrêtée
-# (Conflicts), sinon le bord reste sans données. Exemples dans n2k-mux.env.example.
+# partagé avec n2k-mux-sim.service. La bascule « Simulateur actif » bascule la
+# CHAÎNE : cochée, n2k-mux-switch démarre n2k-mux-sim (qui arrête la chaîne
+# réelle par Conflicts) ; décochée, il redémarre la chaîne réelle (qui arrête la
+# simulée). Chaîne réelle = REAL_UNIT si posée dans /etc/default/n2k-mux, sinon
+# celle de n2k-mux-can / n2k-mux qui est activée (systemctl enable). SIM_START
+# et SIM_STOP remplacent ces commandes ; les poser VIDES (SIM_START= et
+# SIM_STOP=) revient à l'ancien comportement : la bascule rend seulement le
+# simulateur muet ou parlant.
+# « $$ » dans ExecStart : systemd développe lui-même ${NOM} et prend
+# « ${SIM_START-défaut} » pour un nom de variable invalide, remplacé par une
+# chaîne VIDE (la bascule ne faisait alors que rendre le simulateur muet).
+# « $$ » lui fait passer un « $ » littéral : c'est le shell qui développe.
 #
 # POLAIRES : l'onglet propose les .pol/.csv de POLAR_DIR. Sans cette variable,
 # le défaut est $HOME/.qtVlm/polar, soit /root/.qtVlm/polar pour ce service qui
 # tourne en root : il faut donc la poser pour pointer sur le qtVlm de
 # l'utilisateur. ProtectHome=read-only laisse /home lisible.
-ExecStart=/bin/sh -c 'N2K_MUX_WEB_AUTH="${WEB_AUTH:-}" exec "$WEB" "$CONF" --sources /run/n2k-mux/sources.json --stats /run/n2k-mux/stats.json --busmap /run/n2k-mux/busmap.json --port "$PORT" --bind "$BIND" --reload-cmd "pkill -HUP -x n2k-mux" --sim-control "${SIMCTL:-/etc/n2k-mux/sim.ctl}" --sim-state "${SIMSTATE:-/run/n2k-mux/sim.state}" ${POLAR_DIR:+--polar-dir "$POLAR_DIR"} ${SIM_START:+--sim-start "$SIM_START"} ${SIM_STOP:+--sim-stop "$SIM_STOP"}'
+ExecStart=/bin/sh -c 'N2K_MUX_WEB_AUTH="${WEB_AUTH:-}" exec "$WEB" "$CONF" --sources /run/n2k-mux/sources.json --stats /run/n2k-mux/stats.json --busmap /run/n2k-mux/busmap.json --port "$PORT" --bind "$BIND" --reload-cmd "pkill -HUP -x n2k-mux" --sim-control "${SIMCTL:-/etc/n2k-mux/sim.ctl}" --sim-state "${SIMSTATE:-/run/n2k-mux/sim.state}" ${POLAR_DIR:+--polar-dir "$POLAR_DIR"} --sim-start "$${SIM_START-$$SWITCH sim}" --sim-stop "$${SIM_STOP-$$SWITCH real}"'
 
 Restart=always
 RestartSec=3

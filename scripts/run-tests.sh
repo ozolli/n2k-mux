@@ -323,6 +323,41 @@ tws = 12
     *'"set":null'*) ok "valeur « auto » conservée" ;;
     *) ko "valeur « auto » perdue : $got" ;;
   esac
+  # Bascule de CHAÎNE : la commande ne part que si l'état demandé diffère de
+  # l'état réel (fichier d'état frais = simulateur en marche), et arrêter le
+  # simulateur ne le rend pas muet pour son prochain démarrage.
+  WD=$(mktemp -d); WST="$WD/sim.state"
+  ./n2k-mux-web "$WINI" --port "$PORT" --sim-control "$WD/sim.ctl" --sim-state "$WST" \
+    --sim-start "touch $WD/started" --sim-stop "touch $WD/stopped" >/dev/null 2>&1 &
+  WPID=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    curl -s -o /dev/null "http://127.0.0.1:$PORT/" && break
+  done
+  simpost() { curl -s -X POST --data-binary "enabled = $1
+hdg = 10
+" "http://127.0.0.1:$PORT/api/sim" > /dev/null; }
+  simpost 1
+  if [ -e "$WD/started" ]; then ok "bascule : démarre la chaîne simulée arrêtée"
+  else ko "bascule : --sim-start non lancée"; fi
+  touch "$WST"; rm -f "$WD/started"
+  simpost 1
+  if [ ! -e "$WD/started" ]; then ok "bascule : pas de relance à chaque réglage"
+  else ko "bascule : --sim-start relancée alors que le simulateur tourne"; fi
+  case "$(curl -s "http://127.0.0.1:$PORT/api/sim")" in
+    *'"running":true'*) ok "bascule : état réel « en marche » (état frais)" ;;
+    *) ko "bascule : running faux malgré un état frais" ;;
+  esac
+  simpost 0
+  if [ -e "$WD/stopped" ] && grep -q '^enabled = 1' "$WD/sim.ctl"; then
+    ok "bascule : retour au réseau réel, simulateur non muet"
+  else ko "bascule : --sim-stop non lancée ou enabled = 0 écrit"; fi
+  touch -d '-1 min' "$WST"
+  case "$(curl -s "http://127.0.0.1:$PORT/api/sim")" in
+    *'"running":false'*) ok "bascule : état périmé = simulateur arrêté" ;;
+    *) ko "bascule : running vrai malgré un état périmé" ;;
+  esac
+  kill "$WPID" 2>/dev/null; wait "$WPID" 2>/dev/null
+  rm -rf "$WD"
   # Le JS de la page est écrit à la main dans une chaîne C : une coquille de
   # syntaxe casserait toute l'interface sans que rien ne le signale.
   if command -v node >/dev/null 2>&1; then

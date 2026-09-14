@@ -190,6 +190,9 @@ static const char PAGE[] =
 "sim_derived_t:'Valeurs déduites',\n"
 "sim_derived:'Six entrées et tout en découle : route et vitesse fond = vecteur surface plus vecteur courant ; angle du vent vrai = TWD moins le cap ; vent apparent = vent vrai moins le vecteur bateau. Giration = dérivée du cap, nulle si le cap est imposé.',\n"
 "sim_nostart:'La bascule ne fait que rendre le simulateur muet : aucune commande de démarrage n’est configurée (--sim-start).',\n"
+"sim_run_on:'Chaîne simulée en service.',sim_run_off:'Simulateur arrêté : la chaîne réelle a la main.',\n"
+"sim_go_sim:'Bascule vers la chaîne simulée…',sim_go_real:'Bascule vers le réseau réel…',\n"
+"sim_cmd_err:'La commande de bascule a échoué (voir journalctl -u n2k-mux-web).',\n"
 "sim_dir:'°',sim_kn:'nds',sim_pct:'%',sim_min:'min',\n"
 "sim_random:'Vent aléatoire',sim_tws_var:'Amplitude de la force (totale)',sim_twd_var:'Amplitude de la direction (totale)',\n"
 "sim_wind_period:'Durée typique des séquences',\n"
@@ -238,6 +241,9 @@ static const char PAGE[] =
 "sim_derived_t:'Derived values',\n"
 "sim_derived:'Six inputs, everything else follows: course and speed over ground = water vector plus current vector; true wind angle = TWD minus heading; apparent wind = true wind minus boat vector. Rate of turn = heading derivative, zero when the heading is forced.',\n"
 "sim_nostart:'The toggle only silences the simulator: no start command is configured (--sim-start).',\n"
+"sim_run_on:'Simulated chain in service.',sim_run_off:'Simulator stopped: the real chain is in charge.',\n"
+"sim_go_sim:'Switching to the simulated chain…',sim_go_real:'Switching to the real network…',\n"
+"sim_cmd_err:'The switch command failed (see journalctl -u n2k-mux-web).',\n"
 "sim_dir:'°',sim_kn:'kn',sim_pct:'%',sim_min:'min',\n"
 "sim_random:'Random wind',sim_tws_var:'Speed amplitude (total)',sim_twd_var:'Direction amplitude (total)',\n"
 "sim_wind_period:'Typical sequence length',\n"
@@ -422,16 +428,26 @@ static const char PAGE[] =
 "const SIMUNIT={stw:1,sog:1,drift:1,tws:1,aws:1,tws_w:1,tws_base:1};\n"
 "// Réglages de l'aléa : [min, max, pas, unité].\n"
 "const SIMR={tws_var:[0,20,1,'sim_pct'],twd_var:[0,90,1,'sim_dir'],wind_period:[1,60,1,'sim_min']};\n"
-"let SIM=null,simTimer=null,POLARS=null;\n"
+"let SIM=null,simTimer=null,POLARS=null,simSwitchAt=0;\n"
 "// smsg() appartient à l'onglet Sources : ne pas réutiliser ce nom ici.\n"
 "function simsg(t,cls){const m=$('#sim_msg');m.textContent=t;m.className=t?(cls||'ok'):'';}\n"
+"// Bascule de CHAÎNE (commandes configurées) : la case montre si le simulateur\n"
+"// tourne vraiment. Sinon elle ne fait que le rendre muet : elle montre enabled.\n"
+"function simChain(){return !!(SIM&&SIM.can_start&&SIM.can_stop);}\n"
+"function simOn(){return simChain()?!!SIM.running:!!SIM.enabled;}\n"
+"function simStatus(){if(!simChain())return SIM.can_start?'':T('sim_nostart');\n"
+" return T(SIM.running?'sim_run_on':'sim_run_off');}\n"
+"// Pendant une bascule, l'état réel met quelques secondes à suivre : on ne\n"
+"// remet pas la case à l'ancien état sous la main de l'utilisateur.\n"
+"const SIM_SWITCH_MS=15000;\n"
+"function simSwitching(){return Date.now()-simSwitchAt<SIM_SWITCH_MS;}\n"
 "async function loadSim(){try{SIM=await jget('/api/sim');}catch(e){$('#sim_body').innerHTML='<small>'+T('sim_na')+'</small>';return;}\n"
 " // Les réglages s'affichent TOUT DE SUITE ; la liste des polaires, qui lit\n"
 " // chaque fichier du dossier (lent sur carte SD), complète le menu ensuite.\n"
 " // Une erreur de rendu ne doit pas laisser l'onglet muet sur « … » : on l'affiche.\n"
-" try{$('#sim_on').checked=!!SIM.enabled;drawSim();drawState();}\n"
+" try{$('#sim_on').checked=simOn();drawSim();drawState();}\n"
 " catch(e){simsg(T('err_pfx')+e+(e&&e.stack?' @ '+e.stack.split('\\n')[0]:''),'err');return;}\n"
-" simsg(SIM.can_start?'':T('sim_nostart'),'ok');\n"
+" simsg(simStatus(),'ok');\n"
 " try{POLARS=await jget('/api/polars');}catch(e){POLARS={found:false,dir:'',polars:[]};}\n"
 " fillPolars();}\n"
 "// Options du menu des polaires. Tant que la liste n'est pas arrivée, on montre\n"
@@ -528,11 +544,18 @@ static const char PAGE[] =
 "async function sendSim(){try{const r=await fetch('/api/sim',{method:'POST',body:simBody()});\n"
 "  const d=await r.json();\n"
 "  if(!d.ok){simsg(T('err_pfx')+(d.err||''),'err');return;}\n"
-"  simsg((SIM&&SIM.can_start)?T('sim_saved'):T('sim_nostart'),'ok');\n"
+"  if(d.cmd<0){simsg(T('sim_cmd_err'),'err');simSwitchAt=0;return;}\n"
+"  if(d.cmd>0){simsg(T(d.enabled?'sim_go_sim':'sim_go_real'),'ok');return;}\n"
+"  simsg(simChain()?simStatus():(SIM&&SIM.can_start)?T('sim_saved'):T('sim_nostart'),'ok');\n"
 " }catch(e){simsg(T('err_pfx')+e,'err');}}\n"
-"// Rafraîchit l'état déduit sans toucher aux champs en cours d'édition.\n"
-"async function refreshState(){try{const d=await jget('/api/sim');if(SIM){SIM.state=d.state;drawState();}}catch(e){}}\n"
-"$('#sim_on').onchange=pushSim;$('#sim_reload').onclick=loadSim;\n"
+"// Rafraîchit l'état déduit sans toucher aux champs en cours d'édition ; la case\n"
+"// suit l'état réel de la chaîne, sauf pendant une bascule en cours.\n"
+"async function refreshState(){try{const d=await jget('/api/sim');if(!SIM)return;\n"
+" SIM.state=d.state;drawState();\n"
+" if(simChain()&&!simSwitching()){const was=SIM.running;SIM.running=d.running;\n"
+"  $('#sim_on').checked=simOn();if(was!==d.running)simsg(simStatus(),'ok');}\n"
+" }catch(e){}}\n"
+"$('#sim_on').onchange=()=>{simSwitchAt=Date.now();pushSim();};$('#sim_reload').onclick=loadSim;\n"
 "function tick(){$('#clock').textContent=new Date().toLocaleTimeString();\n"
 " if($('#arbitrage').classList.contains('on'))updateLoad();\n"
 " if($('#sim').classList.contains('on'))refreshState();}\n"
@@ -906,6 +929,21 @@ static void serve_polars(int fd)
     send_text(fd, 200, "OK", "application/json", out);
 }
 
+/* La chaîne simulée tourne-t-elle ? Le simulateur réécrit son fichier d'état
+ * deux fois par seconde, même muet, et systemd efface /run/n2k-mux quand
+ * l'unité s'arrête : un fichier récent vaut simulateur en marche. C'est l'état
+ * RÉEL, que la bascule de l'interface doit montrer — pas la clé enabled du
+ * fichier de pilotage, qui ne dit rien de la chaîne démarrée ou non. */
+#define SIM_ALIVE_S 5
+static int sim_running(void)
+{
+    struct stat st;
+    if (stat(g_sim_state, &st) != 0)
+        return 0;
+    time_t now = time(NULL);
+    return st.st_mtime <= now + 1 && now - st.st_mtime <= SIM_ALIVE_S;
+}
+
 /* GET /api/sim : état courant du pilotage, en JSON (null = automatique). */
 static void serve_sim(int fd)
 {
@@ -924,9 +962,12 @@ static void serve_sim(int fd)
 
     char out[2048];
     size_t n = 0;
-    int w = snprintf(out, sizeof out, "{\"enabled\":%s,\"can_start\":%s",
+    int w = snprintf(out, sizeof out,
+                     "{\"enabled\":%s,\"can_start\":%s,\"can_stop\":%s,\"running\":%s",
                      enabled ? "true" : "false",
-                     (g_sim_start && g_sim_start[0]) ? "true" : "false");
+                     (g_sim_start && g_sim_start[0]) ? "true" : "false",
+                     (g_sim_stop && g_sim_stop[0]) ? "true" : "false",
+                     sim_running() ? "true" : "false");
     if (w < 0 || (size_t)w >= sizeof out) { send_text(fd, 500, "Error", "application/json", "{}"); return; }
     n += (size_t)w;
     for (int i = 0; i < SIM_NKEYS; i++) {
@@ -988,13 +1029,22 @@ static void handle_sim_post(int fd, const char *body)
 {
     double en = 1;
     int enabled = sim_get(body, "enabled", &en) ? (en != 0) : 1;
+    int has_start = g_sim_start && g_sim_start[0];
+    int has_stop  = g_sim_stop && g_sim_stop[0];
+    int running   = sim_running();
+
+    /* Avec une commande d'arrêt, « désactiver » bascule la CHAÎNE (retour au
+     * réseau réel) et le simulateur reste parlant dans le fichier : l'unité
+     * redémarrée plus tard, à la main ou par l'interface, ne doit pas repartir
+     * muette. Sans commande, la bascule ne peut que le rendre muet. */
+    int file_enabled = (enabled || has_stop) ? 1 : 0;
 
     char text[2048];
     size_t n = 0;
     int w = snprintf(text, sizeof text,
                      "# n2k-sim : pilotage écrit par l'interface web\n"
                      "# vitesses en nœuds, caps en degrés, « auto » = sinusoïde\n"
-                     "enabled = %d\n", enabled ? 1 : 0);
+                     "enabled = %d\n", file_enabled);
     if (w < 0) { send_text(fd, 500, "Error", "application/json", "{}"); return; }
     n += (size_t)w;
 
@@ -1068,15 +1118,21 @@ static void handle_sim_post(int fd, const char *body)
         return;
     }
 
-    /* Commandes de chaîne, si l'exploitant les a configurées. */
-    const char *cmd = enabled ? g_sim_start : g_sim_stop;
+    /* Commandes de chaîne, si configurées, et SEULEMENT si l'état demandé
+     * diffère de l'état réel : chaque réglage déplacé repasse par ce POST, et
+     * ne doit pas relancer une bascule à chaque coup de curseur. */
+    const char *cmd = NULL;
+    if (enabled && has_start && !running)
+        cmd = g_sim_start;
+    else if (!enabled && has_stop && running)
+        cmd = g_sim_stop;
     int ran = 0;
-    if (cmd && cmd[0])
+    if (cmd)
         ran = (system(cmd) == 0) ? 1 : -1;
 
     char out[256];
-    snprintf(out, sizeof out, "{\"ok\":true,\"enabled\":%s,\"cmd\":%d}",
-             enabled ? "true" : "false", ran);
+    snprintf(out, sizeof out, "{\"ok\":true,\"enabled\":%s,\"running\":%s,\"cmd\":%d}",
+             enabled ? "true" : "false", running ? "true" : "false", ran);
     send_text(fd, 200, "OK", "application/json", out);
 }
 

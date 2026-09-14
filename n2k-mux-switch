@@ -1,0 +1,62 @@
+#!/bin/sh
+# n2k-mux-switch — bascule entre la chaîne SIMULÉE et la chaîne RÉELLE.
+#
+#   n2k-mux-switch sim      démarre n2k-mux-sim (arrête la chaîne réelle)
+#   n2k-mux-switch real     démarre la chaîne réelle (arrête la simulée)
+#   n2k-mux-switch status   affiche sim | real | none
+#
+# Les unités se déclarent en Conflicts : démarrer l'une ARRÊTE l'autre, dans
+# les deux sens. Il suffit donc de démarrer celle qu'on veut ; « arrêter le
+# simulateur » tout court laisserait le bord sans données.
+#
+# Chaîne réelle : REAL_UNIT (n2k-mux-can ou n2k-mux) si elle est dans
+# l'environnement, sinon celle des deux qui est ACTIVÉE au démarrage
+# (systemctl enable), socketcan d'abord. n2k-mux-web.service transmet REAL_UNIT
+# depuis /etc/default/n2k-mux. Ce fichier n'est PAS sourcé ici : c'est un
+# EnvironmentFile systemd, pas du shell (« SIM_START=systemctl start … » y
+# lancerait une commande). --no-block : l'interface web qui appelle ce script
+# ne reste pas figée pendant le démarrage de la chaîne.
+
+set -u
+
+real_unit() {
+    if [ -n "${REAL_UNIT:-}" ]; then
+        echo "${REAL_UNIT%.service}"
+        return 0
+    fi
+    for u in n2k-mux-can n2k-mux; do
+        if systemctl -q is-enabled "$u.service" 2>/dev/null; then
+            echo "$u"
+            return 0
+        fi
+    done
+    return 1
+}
+
+case "${1:-}" in
+sim)
+    exec systemctl --no-block start n2k-mux-sim.service
+    ;;
+real)
+    if ! u=$(real_unit); then
+        echo "n2k-mux-switch : aucune chaîne réelle activée ; faire" \
+             "« systemctl enable n2k-mux-can » (ou n2k-mux), ou poser REAL_UNIT" \
+             "dans /etc/default/n2k-mux" >&2
+        exit 1
+    fi
+    exec systemctl --no-block start "$u.service"
+    ;;
+status)
+    if systemctl -q is-active n2k-mux-sim.service; then
+        echo sim
+    elif systemctl -q is-active n2k-mux-can.service || systemctl -q is-active n2k-mux.service; then
+        echo real
+    else
+        echo none
+    fi
+    ;;
+*)
+    echo "usage : n2k-mux-switch sim | real | status" >&2
+    exit 2
+    ;;
+esac
