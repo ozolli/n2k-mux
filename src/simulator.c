@@ -176,9 +176,9 @@ typedef struct {
     double c_hdg, c_stw, c_set, c_drift, c_twd, c_tws;
 } simctl_t;
 
-/* Valeurs par défaut de l'aléa : 30 % de force, 20° de direction, séquences
+/* Valeurs par défaut de l'aléa : 10 % de force (plage 0-20 %), 20° de direction, séquences
  * d'environ 10 minutes, comme on l'observe sur l'eau. */
-#define CTL_INIT { 1, NAN, NAN, NAN, NAN, NAN, NAN, 0, 30.0, 20.0, 10.0, 0, 0, "", \
+#define CTL_INIT { 1, NAN, NAN, NAN, NAN, NAN, NAN, 0, 10.0, 20.0, 10.0, 0, 0, "", \
                    NAN, NAN, NAN, NAN, NAN, NAN }
 
 /* Base du vent quand l'aléa est actif et twd/tws laissés à « auto ». */
@@ -248,7 +248,8 @@ static void ctl_load(const char *path)
         else if (strcmp(key, "twd") == 0)   c.twd = v;
         else if (strcmp(key, "tws") == 0)   c.tws = isnan(v) ? v : v * KN_TO_MS;
         else if (strcmp(key, "wind_random") == 0) c.wind_random = !isnan(v) && v != 0;
-        else if (strcmp(key, "tws_var") == 0 && !isnan(v))     c.tws_var = v < 0 ? 0 : v;
+        else if (strcmp(key, "tws_var") == 0 && !isnan(v))     /* 0 à 20 % */
+            c.tws_var = v < 0 ? 0 : (v > 20 ? 20 : v);
         else if (strcmp(key, "twd_var") == 0 && !isnan(v))     c.twd_var = v < 0 ? 0 : v;
         else if (strcmp(key, "wind_period") == 0 && !isnan(v)) c.wind_period = v < 0.5 ? 0.5 : v;
         else if (strcmp(key, "seed") == 0 && !isnan(v))        c.seed = (unsigned long)v;

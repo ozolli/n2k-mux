@@ -116,7 +116,7 @@ referenced to North) → MWV(R), MWV(T) et MWD.
 
 ```
 wind_random = 1     ; l'aléa s'applique autour de twd/tws, devenus la BASE
-tws_var     = 30    ; amplitude TOTALE de la force, en % de la base (30 → ±15 %)
+tws_var     = 10    ; amplitude TOTALE de la force, 0 à 20 % de la base (10 → ±5 %)
 twd_var     = 20    ; amplitude TOTALE de la direction, en degrés (20 → ±10°)
 wind_period = 10    ; durée typique d'une séquence, en MINUTES
 seed        = 7     ; graine (0 ou absente = horloge) : aléa reproductible

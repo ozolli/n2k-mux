@@ -421,7 +421,7 @@ static const char PAGE[] =
 "const SIMST=['hdg','stw','cog','sog','set','drift','twd','tws','twa','awa','aws','twa_w','tws_w','twd_base','tws_base'];\n"
 "const SIMUNIT={stw:1,sog:1,drift:1,tws:1,aws:1,tws_w:1,tws_base:1};\n"
 "// Réglages de l'aléa : [min, max, pas, unité].\n"
-"const SIMR={tws_var:[0,100,5,'sim_pct'],twd_var:[0,90,1,'sim_dir'],wind_period:[1,60,1,'sim_min']};\n"
+"const SIMR={tws_var:[0,20,1,'sim_pct'],twd_var:[0,90,1,'sim_dir'],wind_period:[1,60,1,'sim_min']};\n"
 "let SIM=null,simTimer=null,POLARS=null;\n"
 "// smsg() appartient à l'onglet Sources : ne pas réutiliser ce nom ici.\n"
 "function simsg(t,cls){const m=$('#sim_msg');m.textContent=t;m.className=t?(cls||'ok'):'';}\n"
@@ -949,7 +949,7 @@ static void serve_sim(int fd)
         double v;
         int    wr = sim_get(buf, "wind_random", &v) ? (v != 0) : 0;
         int    sp = sim_get(buf, "stw_polar", &v) ? (v != 0) : 0;
-        double tv = sim_get(buf, "tws_var", &v) ? v : 30.0;
+        double tv = sim_get(buf, "tws_var", &v) ? v : 10.0;
         double dv = sim_get(buf, "twd_var", &v) ? v : 20.0;
         double wp = sim_get(buf, "wind_period", &v) ? v : 10.0;
         char   ppath[600] = "", pname[520];
@@ -1020,11 +1020,11 @@ static void handle_sim_post(int fd, const char *body)
     {
         double v;
         int    wr = sim_get(body, "wind_random", &v) ? (v != 0) : 0;
-        double tv = sim_get(body, "tws_var", &v) ? v : 30.0;
+        double tv = sim_get(body, "tws_var", &v) ? v : 10.0;
         double dv = sim_get(body, "twd_var", &v) ? v : 20.0;
         double wp = sim_get(body, "wind_period", &v) ? v : 10.0;
         if (tv < 0)   tv = 0;
-        if (tv > 100) tv = 100;
+        if (tv > 20)  tv = 20;    /* force : 0 à 20 % d'amplitude totale */
         if (dv < 0)   dv = 0;
         if (dv > 180) dv = 180;
         if (wp < 0.5) wp = 0.5;

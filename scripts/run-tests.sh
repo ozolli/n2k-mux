@@ -148,9 +148,10 @@ if [ ! -x ./n2k-sim ]; then
   ko "n2k-sim absent (make d'abord)"
 else
   TD=$(mktemp -d)
-  # Aléa : base 225° / 15 nds, amplitudes TOTALES 30 % et 20°, graine fixe.
+  # Aléa : base 225° / 15 nds, amplitudes TOTALES 20 % (le maximum) et 20°,
+  # graine fixe.
   # Deux heures de temps simulé, sans attendre (--wind-trace).
-  printf 'enabled = 1\nhdg = 45\ntwd = 225\ntws = 15\nwind_random = 1\ntws_var = 30\ntwd_var = 20\nwind_period = 10\nseed = 7\n' > "$TD/r.ctl"
+  printf 'enabled = 1\nhdg = 45\ntwd = 225\ntws = 15\nwind_random = 1\ntws_var = 20\ntwd_var = 20\nwind_period = 10\nseed = 7\n' > "$TD/r.ctl"
   ./n2k-sim --wind-trace 7200 --control "$TD/r.ctl" > "$TD/a.csv" 2>/dev/null
   ./n2k-sim --wind-trace 7200 --control "$TD/r.ctl" > "$TD/b.csv" 2>/dev/null
   run_case "aléa reproductible avec une graine" cmp -s "$TD/a.csv" "$TD/b.csv"
@@ -160,7 +161,7 @@ rows = list(csv.DictReader(open(sys.argv[1]), delimiter=';'))
 tws = [float(r['tws_kn']) for r in rows]
 dev = [((float(r['twd']) - 225 + 180) % 360) - 180 for r in rows]
 ok = True
-if not (15 * 0.85 - 1e-6 <= min(tws) and max(tws) <= 15 * 1.15 + 1e-6):
+if not (15 * 0.90 - 1e-6 <= min(tws) and max(tws) <= 15 * 1.10 + 1e-6):
     print("force hors amplitude :", min(tws), max(tws)); ok = False
 if not (-10 - 1e-6 <= min(dev) and max(dev) <= 10 + 1e-6):
     print("direction hors amplitude :", min(dev), max(dev)); ok = False
@@ -229,7 +230,7 @@ PYLIVE
     printf 'TWS=5;0;1\n0;100;98\n' > "$TD/vagues.polwave.csv"
     printf 'pas une polaire\n' > "$TD/n_importe.csv"
     printf '[output]\ntalker = II\n' > "$TD/w.ini"
-    ./n2k-mux-web "$TD/w.ini" --port 18124 --sim-control "$TD/w.ctl" --polar-dir "$TD" >/dev/null 2>&1 &
+    ./n2k-mux-web "$TD/w.ini" --port 18124 --sim-control "$TD/w.ctl" --sim-state "$TD/w.state" --polar-dir "$TD" >/dev/null 2>&1 &
     WPID=$!
     for _ in 1 2 3 4 5 6 7 8 9 10; do curl -s -o /dev/null "http://127.0.0.1:18124/" && break; done
     pol=$(curl -s "http://127.0.0.1:18124/api/polars")
@@ -252,6 +253,11 @@ twd = auto 300
     run_case "interface : auto écrit avec son centre" grep -q '^twd = auto 300.00$' "$TD/w.ctl"
     ctr=$(curl -s "http://127.0.0.1:18124/api/sim")
     case "$ctr" in *'"twd":null,"twd_c":300.00'*) ok "interface : centre relu pour le curseur" ;; *) ko "centre non relu : $ctr" ;; esac
+    curl -s -X POST --data-binary 'enabled = 1
+wind_random = 1
+tws_var = 35
+' "http://127.0.0.1:18124/api/sim" > /dev/null
+    run_case "interface : amplitude de force bornée à 20 %" grep -q '^tws_var = 20.0$' "$TD/w.ctl"
     kill "$WPID" 2>/dev/null
   fi
   rm -rf "$TD"
@@ -266,7 +272,7 @@ elif ! command -v curl >/dev/null 2>&1; then
 else
   WCTL=$(mktemp); WINI=$(mktemp); PORT=18123
   printf '[output]\ntalker = II\n' > "$WINI"
-  ./n2k-mux-web "$WINI" --port "$PORT" --sim-control "$WCTL" >/dev/null 2>&1 &
+  ./n2k-mux-web "$WINI" --port "$PORT" --sim-control "$WCTL" --sim-state "$WCTL.state" >/dev/null 2>&1 &
   WPID=$!
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     curl -s -o /dev/null "http://127.0.0.1:$PORT/" && break
@@ -292,7 +298,7 @@ tws = 12
   # Le JS de la page est écrit à la main dans une chaîne C : une coquille de
   # syntaxe casserait toute l'interface sans que rien ne le signale.
   if command -v node >/dev/null 2>&1; then
-    ./n2k-mux-web "$WINI" --port "$PORT" --sim-control "$WCTL" >/dev/null 2>&1 &
+    ./n2k-mux-web "$WINI" --port "$PORT" --sim-control "$WCTL" --sim-state "$WCTL.state" >/dev/null 2>&1 &
     WPID=$!
     for _ in 1 2 3 4 5 6 7 8 9 10; do
       curl -s -o /dev/null "http://127.0.0.1:$PORT/" && break
