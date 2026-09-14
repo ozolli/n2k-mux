@@ -49,6 +49,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <math.h>
 #include <sys/stat.h>
 #include <time.h>
@@ -169,11 +170,16 @@ typedef struct {
     /* polaire */
     int    stw_polar;                   /* 1 = stw calculée par la polaire */
     char   polar[512];                  /* chemin complet du .pol/.csv */
+    /* Centres des entrées en « auto » : « twd = auto 300 » fait varier le vent
+     * AUTOUR de 300°. C'est la dernière valeur réglée, que l'interface écrit à
+     * côté du mot auto pour qu'elle survive à un redémarrage. NAN = aucun. */
+    double c_hdg, c_stw, c_set, c_drift, c_twd, c_tws;
 } simctl_t;
 
 /* Valeurs par défaut de l'aléa : 30 % de force, 20° de direction, séquences
  * d'environ 10 minutes, comme on l'observe sur l'eau. */
-#define CTL_INIT { 1, NAN, NAN, NAN, NAN, NAN, NAN, 0, 30.0, 20.0, 10.0, 0, 0, "" }
+#define CTL_INIT { 1, NAN, NAN, NAN, NAN, NAN, NAN, 0, 30.0, 20.0, 10.0, 0, 0, "", \
+                   NAN, NAN, NAN, NAN, NAN, NAN }
 
 /* Base du vent quand l'aléa est actif et twd/tws laissés à « auto ». */
 #define WIND_BASE_TWD   225.0
@@ -215,7 +221,23 @@ static void ctl_load(const char *path)
             continue;
         for (char *p = key; *p; p++)
             if (*p >= 'A' && *p <= 'Z') *p += 32;
-        double v = (strcmp(val, "auto") == 0) ? NAN : atof(val);
+        /* « auto » ou « auto N » : valeur automatique, centrée sur N si donné */
+        double v, vc = NAN;
+        if (strncasecmp(val, "auto", 4) == 0) {
+            v = NAN;
+            char *end = NULL;
+            double cv = strtod(val + 4, &end);
+            if (end && end != val + 4)
+                vc = cv;
+        } else {
+            v = atof(val);
+        }
+        if (strcmp(key, "hdg") == 0)   c.c_hdg   = vc;
+        if (strcmp(key, "stw") == 0)   c.c_stw   = isnan(vc) ? vc : vc * KN_TO_MS;
+        if (strcmp(key, "set") == 0)   c.c_set   = vc;
+        if (strcmp(key, "drift") == 0) c.c_drift = isnan(vc) ? vc : vc * KN_TO_MS;
+        if (strcmp(key, "twd") == 0)   c.c_twd   = vc;
+        if (strcmp(key, "tws") == 0)   c.c_tws   = isnan(vc) ? vc : vc * KN_TO_MS;
         if      (strcmp(key, "enabled") == 0)
             c.enabled = (strcmp(val, "0") && strcmp(val, "false") &&
                          strcmp(val, "off") && strcmp(val, "no"));
@@ -326,6 +348,52 @@ static double wseq_value(wseq_t *q, double t, double amp, double period_s)
     return v;
 }
 
+/* --- Entrées en « auto » : on repart de la dernière valeur réglée ------------
+ * Avant, « auto » reprenait un centre codé en dur (225° pour le vent, 90° pour
+ * le cap…) : régler le vent au 300 puis recocher « auto » le renvoyait au 225,
+ * et le cap pouvait sauter de 55°. Désormais :
+ *   - tant qu'une entrée est réglée, on retient sa valeur ;
+ *   - au passage en auto, la sinusoïde est CENTRÉE sur cette valeur et CALÉE
+ *     pour valoir exactement ce centre à l'instant de la bascule : pas de saut ;
+ *   - au démarrage, faute de valeur réglée connue, le centre vient du fichier
+ *     (« auto N ») puis, à défaut, de la valeur historique par défaut. */
+static double norm360(double a);   /* défini plus bas */
+
+typedef struct {
+    double last;       /* dernière valeur réglée */
+    int    has_last;
+    double center;     /* centre de la variation automatique */
+    double t0;         /* instant de la bascule en auto (phase nulle) */
+    int    in_auto;
+} autoin_t;
+
+static autoin_t g_ai_hdg, g_ai_stw, g_ai_set, g_ai_drift, g_ai_twd, g_ai_tws;
+
+/* Valeur d'une entrée. `manual` NAN = auto. Amplitude `amp`, période `period`
+ * (s) ; `deriv` reçoit la dérivée (unités/s) si non NULL. */
+static double input_value(autoin_t *a, double manual, double file_center,
+                          double def_center, double t, double amp, double period,
+                          int wrap, double *deriv)
+{
+    if (!isnan(manual)) {
+        a->last = manual;
+        a->has_last = 1;
+        a->in_auto = 0;
+        if (deriv) *deriv = 0.0;
+        return wrap ? norm360(manual) : manual;
+    }
+    if (!a->in_auto) {
+        a->center = a->has_last ? a->last
+                  : (!isnan(file_center) ? file_center : def_center);
+        a->t0 = t;
+        a->in_auto = 1;
+    }
+    double x = (t - a->t0) / period;
+    if (deriv) *deriv = amp / period * cos(x);
+    double v = a->center + amp * sin(x);
+    return wrap ? norm360(v) : v;
+}
+
 /* --- Polaire (rechargée quand le chemin change) --- */
 static polar_t g_polar;
 static char    g_polar_loaded[512];
@@ -374,16 +442,13 @@ static void boat_update(double t)
 
     /* --- ENTRÉES : cap et courant. Chacun vient du fichier de contrôle s'il y
      * est fixé, sinon d'une sinusoïde. --- */
-    if (isnan(g_ctl.hdg)) {
-        boat.hdg = norm360(90.0 + 55.0 * sin(t / 70.0));   /* vire en S */
-        boat.rot = (55.0 / 70.0) * cos(t / 70.0);          /* dérivée du CAP */
-    } else {
-        boat.hdg = norm360(g_ctl.hdg);
-        boat.rot = 0.0;                                    /* cap imposé */
-    }
-    boat.set   = isnan(g_ctl.set)   ? norm360(120.0 + 10.0 * sin(t / 40.0))
-                                    : norm360(g_ctl.set);
-    boat.drift = isnan(g_ctl.drift) ? 0.5 + 0.2 * sin(t / 25.0) : g_ctl.drift;
+    /* cap : vire en S (±55°) ; la giration est la dérivée du cap */
+    boat.hdg = input_value(&g_ai_hdg, g_ctl.hdg, g_ctl.c_hdg, 90.0,
+                           t, 55.0, 70.0, 1, &boat.rot);
+    boat.set = input_value(&g_ai_set, g_ctl.set, g_ctl.c_set, 120.0,
+                           t, 10.0, 40.0, 1, NULL);
+    boat.drift = input_value(&g_ai_drift, g_ctl.drift, g_ctl.c_drift, 0.5,
+                             t, 0.2, 25.0, 0, NULL);
     if (boat.drift < 0) boat.drift = 0;
 
     /* --- VENT VRAI : entrée (direction + vitesse). Avec l'aléa, twd/tws sont
@@ -394,8 +459,12 @@ static void boat_update(double t)
             g_rng = g_ctl.seed ? (uint64_t)g_ctl.seed : (uint64_t)now_ms();
             g_rng_seeded = 1;
         }
-        boat.twd_base = isnan(g_ctl.twd) ? WIND_BASE_TWD : norm360(g_ctl.twd);
-        boat.tws_base = isnan(g_ctl.tws) ? WIND_BASE_TWS_KN * KN_TO_MS : g_ctl.tws;
+        /* base = valeur réglée, ou centre de l'auto (amplitude nulle : l'aléa
+         * remplace la sinusoïde) ; plus de retour au 225 en recochant auto */
+        boat.twd_base = input_value(&g_ai_twd, g_ctl.twd, g_ctl.c_twd, WIND_BASE_TWD,
+                                    t, 0.0, 60.0, 1, NULL);
+        boat.tws_base = input_value(&g_ai_tws, g_ctl.tws, g_ctl.c_tws,
+                                    WIND_BASE_TWS_KN * KN_TO_MS, t, 0.0, 8.0, 0, NULL);
         double period = g_ctl.wind_period * 60.0;
         double pct = wseq_value(&g_seq_tws, t, g_ctl.tws_var, period);
         double deg = wseq_value(&g_seq_twd, t, g_ctl.twd_var, period);
@@ -404,9 +473,10 @@ static void boat_update(double t)
     } else {
         /* aléa coupé : on repartira d'une séquence neuve à la réactivation */
         g_seq_tws.init = g_seq_twd.init = 0;
-        boat.twd = isnan(g_ctl.twd) ? norm360(225.0 + 15.0 * sin(t / 60.0))
-                                    : norm360(g_ctl.twd);
-        boat.tws = isnan(g_ctl.tws) ? 9.0 + 2.0 * sin(t / 8.0) : g_ctl.tws;
+        boat.twd = input_value(&g_ai_twd, g_ctl.twd, g_ctl.c_twd, 225.0,
+                               t, 15.0, 60.0, 1, NULL);
+        boat.tws = input_value(&g_ai_tws, g_ctl.tws, g_ctl.c_tws, 9.0,
+                               t, 2.0, 8.0, 0, NULL);
         boat.twd_base = boat.twd;
         boat.tws_base = boat.tws;
     }
@@ -433,7 +503,8 @@ static void boat_update(double t)
     if (boat.stw_from_polar)
         boat.stw = polar_speed(&g_polar, boat.twa_w, boat.tws_w / KN_TO_MS) * KN_TO_MS;
     else
-        boat.stw = isnan(g_ctl.stw) ? 4.5 + 1.0 * sin(t / 40.0) : g_ctl.stw;
+        boat.stw = input_value(&g_ai_stw, g_ctl.stw, g_ctl.c_stw, 4.5,
+                               t, 1.0, 40.0, 0, NULL);
     if (boat.stw < 0) boat.stw = 0;
 
     /* --- CALCULÉ : route/vitesse FOND = vecteur surface + vecteur courant. --- */

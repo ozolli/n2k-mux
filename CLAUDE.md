@@ -95,6 +95,15 @@ tws     = 20    ; vitesse du vent VRAI, NŒUDS
 TWA, AWA et AWS ne sont PAS des entrées (une clé twa/awa/aws est ignorée) : ce
 sont des valeurs CALCULÉES à partir des six ci-dessus.
 
+**« auto » repart de la dernière valeur réglée** : `twd = auto 300` fait varier
+le vent AUTOUR de 300°. Au passage manuel → auto, la sinusoïde est centrée sur la
+dernière valeur réglée et calée pour valoir exactement ce centre à l'instant de
+la bascule : aucun saut. L'interface écrit ce centre à côté du mot `auto`, pour
+qu'il survive à un redémarrage ; sans centre connu, on reprend les valeurs
+historiques (cap 90, courant 120° / 0,5 m/s, vent 225° / 9 m/s, STW 4,5 m/s). Avec
+le vent aléatoire, ce centre sert de base. Défaut corrigé le 2026-09-14 : recocher
+« auto » renvoyait le vent au 225 et pouvait faire sauter le cap de 55°.
+
 DÉDUIT par le simulateur : route et vitesse fond (COG, SOG) = vecteur surface +
 vecteur courant ; TWA = TWD − HDG ; vent apparent (AWA, AWS) = vent vrai −
 vecteur bateau sur le fond ; le vent vrai référencé eau (vent vrai − courant,

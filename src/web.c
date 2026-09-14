@@ -451,7 +451,10 @@ static const char PAGE[] =
 " return '<tr><td style=\"min-width:13em\">'+T('sim_'+k)+'</td>'\n"
 "  +'<td style=\"width:40%\"><input type=range id=sr_'+k+' min='+f[0]+' max='+f[1]+' step='+f[2]+' value='+cur+' style=\"width:100%\"></td>'\n"
 "  +'<td class=n><input class=ri id=sn_'+k+' type=number min='+f[0]+' max='+f[1]+' step='+f[2]+' value='+cur+'> <small>'+T(f[3])+'</small></td><td></td></tr>';}\n"
-"function simRow(k){const f=SIMF[k],v=SIM[k],auto=(v===null||v===undefined),cur=auto?SIMDEF[k]:v;\n"
+"// En auto, le curseur montre le centre de la variation (dernière valeur réglée),\n"
+"// pas une valeur par défaut : recocher « auto » ne fait plus sauter le réglage.\n"
+"function simRow(k){const f=SIMF[k],v=SIM[k],auto=(v===null||v===undefined),\n"
+" cur=auto?((SIM[k+'_c']!==undefined&&SIM[k+'_c']!==null)?SIM[k+'_c']:SIMDEF[k]):v;\n"
 " return '<tr><td style=\"min-width:13em\">'+T('sim_'+k)+'</td>'\n"
 "  +'<td style=\"width:40%\"><input type=range id=sr_'+k+' min='+f[0]+' max='+f[1]+' step='+f[2]+' value='+cur+(auto?' disabled':'')+' style=\"width:100%\"></td>'\n"
 "  +'<td class=n><input class=ri id=sn_'+k+' type=number min='+f[0]+' max='+f[1]+' step='+f[2]+' value='+cur+(auto?' disabled':'')+'> <small>'+T(f[3])+'</small></td>'\n"
@@ -507,7 +510,7 @@ static const char PAGE[] =
 " h+='</table>';$('#sim_state').innerHTML=h;}\n"
 "function simBody(){let t='enabled = '+($('#sim_on').checked?1:0)+'\\n';\n"
 " for(const k in SIMF)\n"
-"  t+=k+' = '+($('#sa_'+k).checked?'auto':$('#sn_'+k).value)+'\\n';\n"
+"  t+=k+' = '+($('#sa_'+k).checked?'auto '+$('#sn_'+k).value:$('#sn_'+k).value)+'\\n';\n"
 " t+='wind_random = '+($('#sim_wr').checked?1:0)+'\\n';\n"
 " for(const k in SIMR)t+=k+' = '+$('#sn_'+k).value+'\\n';\n"
 " const pol=$('#sim_polar').value;\n"
@@ -768,6 +771,36 @@ static int sim_get(const char *text, const char *key, double *out)
     return 0;
 }
 
+static int sim_get_str(const char *text, const char *key, char *out, size_t sz);
+
+/* « clé = auto N » : retourne 1 et le centre N. « auto » seul ou valeur
+ * numérique : 0. Le centre est la dernière valeur réglée avant de recocher
+ * « auto » ; le simulateur fait varier l'entrée autour de lui. */
+static int sim_get_auto_center(const char *text, const char *key, double *out)
+{
+    char val[64];
+    if (!sim_get_str(text, key, val, sizeof val) || strncasecmp(val, "auto", 4) != 0)
+        return 0;
+    char *end = NULL;
+    double v = strtod(val + 4, &end);
+    if (!end || end == val + 4)
+        return 0;
+    *out = v;
+    return 1;
+}
+
+/* Bornes d'un réglage : un cap tourne sur 0-360, une vitesse reste positive. */
+static double sim_bound(const char *key, double v)
+{
+    if (strcmp(key, "hdg") == 0 || strcmp(key, "set") == 0 || strcmp(key, "twd") == 0) {
+        while (v < 0)    v += 360;
+        while (v >= 360) v -= 360;
+    } else if (v < 0) {
+        v = 0;
+    }
+    return v;
+}
+
 /* Lit la valeur TEXTE d'une clé (jusqu'en fin de ligne, espaces rognés). */
 static int sim_get_str(const char *text, const char *key, char *out, size_t sz)
 {
@@ -894,8 +927,15 @@ static void serve_sim(int fd)
     for (int i = 0; i < SIM_NKEYS; i++) {
         double v = 0;
         int has = sim_get(buf, SIM_KEYS[i], &v);
-        w = has ? snprintf(out + n, sizeof out - n, ",\"%s\":%.2f", SIM_KEYS[i], v)
-                : snprintf(out + n, sizeof out - n, ",\"%s\":null", SIM_KEYS[i]);
+        double c;
+        if (has)
+            w = snprintf(out + n, sizeof out - n, ",\"%s\":%.2f", SIM_KEYS[i], v);
+        else if (sim_get_auto_center(buf, SIM_KEYS[i], &c))
+            /* en auto : null, plus le centre pour replacer le curseur */
+            w = snprintf(out + n, sizeof out - n, ",\"%s\":null,\"%s_c\":%.2f",
+                         SIM_KEYS[i], SIM_KEYS[i], c);
+        else
+            w = snprintf(out + n, sizeof out - n, ",\"%s\":null", SIM_KEYS[i]);
         if (w < 0 || (size_t)w >= sizeof out - n) { send_text(fd, 500, "Error", "application/json", "{}"); return; }
         n += (size_t)w;
     }
@@ -955,21 +995,17 @@ static void handle_sim_post(int fd, const char *body)
 
     for (int i = 0; i < SIM_NKEYS; i++) {
         double v = 0;
-        if (!sim_get(body, SIM_KEYS[i], &v)) {
+        double c;
+        if (sim_get(body, SIM_KEYS[i], &v))
+            w = snprintf(text + n, sizeof text - n, "%s = %.2f\n", SIM_KEYS[i],
+                         sim_bound(SIM_KEYS[i], v));
+        else if (sim_get_auto_center(body, SIM_KEYS[i], &c))
+            /* auto AUTOUR de la dernière valeur réglée : écrite pour survivre à
+             * un redémarrage du simulateur */
+            w = snprintf(text + n, sizeof text - n, "%s = auto %.2f\n", SIM_KEYS[i],
+                         sim_bound(SIM_KEYS[i], c));
+        else
             w = snprintf(text + n, sizeof text - n, "%s = auto\n", SIM_KEYS[i]);
-        } else {
-            /* bornes : un cap tourne, une vitesse ne descend pas sous zéro */
-            int is_dir = (strcmp(SIM_KEYS[i], "hdg") == 0 ||
-                          strcmp(SIM_KEYS[i], "set") == 0 ||
-                          strcmp(SIM_KEYS[i], "twd") == 0);
-            if (is_dir) {
-                while (v < 0)    v += 360;
-                while (v >= 360) v -= 360;
-            } else if (v < 0) {
-                v = 0;
-            }
-            w = snprintf(text + n, sizeof text - n, "%s = %.2f\n", SIM_KEYS[i], v);
-        }
         if (w < 0 || (size_t)w >= sizeof text - n) { send_text(fd, 500, "Error", "application/json", "{}"); return; }
         n += (size_t)w;
     }

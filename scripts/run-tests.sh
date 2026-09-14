@@ -186,6 +186,35 @@ PYCHK
   ./n2k-sim --once --control "$TD/p.ctl" --state "$TD/p.state" > /dev/null 2>&1
   run_case "polaire absente : repli sur la STW réglée" grep -q '^stw = 5.00$' "$TD/p.state"
 
+  # « auto » repart de la dernière valeur réglée : au démarrage, le centre
+  # vient du fichier (« auto 300 ») ; à chaud, recocher auto ne fait pas sauter.
+  printf 'enabled = 1\nhdg = auto 45\ntwd = auto 300\n' > "$TD/au.ctl"
+  ./n2k-sim --once --control "$TD/au.ctl" --state "$TD/au.state" > /dev/null 2>&1
+  run_case "auto centré sur la valeur du fichier (vent)" grep -q '^twd = 300.0$' "$TD/au.state"
+  run_case "auto centré sur la valeur du fichier (cap)"  grep -q '^hdg = 45.0$' "$TD/au.state"
+  if python3 - "$TD" <<'PYLIVE'
+import os, subprocess, sys, time, signal
+td = sys.argv[1]; ctl = td + "/live.ctl"; st = td + "/live.state"
+def write(t):
+    open(ctl + ".tmp", "w").write(t); os.rename(ctl + ".tmp", ctl)
+def twd():
+    for l in open(st):
+        if l.startswith("twd ="): return float(l.split("=")[1])
+write("enabled = 1\ntwd = 300\n")
+p = subprocess.Popen(["./n2k-sim", "--control", ctl, "--state", st],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=os.setsid)
+try:
+    time.sleep(1.2)
+    write("enabled = 1\ntwd = auto\n")          # auto recoché, sans centre
+    time.sleep(1.5)
+    v = twd()
+finally:
+    os.killpg(os.getpgid(p.pid), signal.SIGTERM)
+sys.exit(0 if abs(v - 300) < 5 else 1)
+PYLIVE
+  then ok "auto recoché à chaud : pas de retour au 225"
+  else ko "auto recoché à chaud : le vent a sauté"; fi
+
   # Trames N2K en parallèle du JSON (--actisense-out, port 2700 de la chaîne
   # simulée) : même état que le JSON. 6 nds de surface = 3,09 m/s → 309 = 0x0135,
   # soit les octets 35 01 du PGN 128259 ; le vent sort en trois trames 130306.
@@ -217,6 +246,12 @@ polar = test.pol
 ' "http://127.0.0.1:18124/api/sim")
     case "$acc" in *'"ok":true'*) ok "polaire du dossier acceptée" ;; *) ko "polaire refusée : $acc" ;; esac
     run_case "chemin complet écrit" grep -q "^polar = $TD/test.pol$" "$TD/w.ctl"
+    curl -s -X POST --data-binary 'enabled = 1
+twd = auto 300
+' "http://127.0.0.1:18124/api/sim" > /dev/null
+    run_case "interface : auto écrit avec son centre" grep -q '^twd = auto 300.00$' "$TD/w.ctl"
+    ctr=$(curl -s "http://127.0.0.1:18124/api/sim")
+    case "$ctr" in *'"twd":null,"twd_c":300.00'*) ok "interface : centre relu pour le curseur" ;; *) ko "centre non relu : $ctr" ;; esac
     kill "$WPID" 2>/dev/null
   fi
   rm -rf "$TD"
