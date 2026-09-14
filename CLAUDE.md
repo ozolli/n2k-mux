@@ -218,7 +218,12 @@ résolu d'emblée, toute la table de conversion sort. Sert de test bout-en-bout
 
 L'**état bateau** est cohérent (position intégrée VERS L'AVANT le long du COG, cap
 ≈ COG, ROT = dérivée du COG) : qtVlm affiche le bateau cap en avant qui infléchit
-sa route, pas une cible figée ou « à reculons ». L'AIS est émis en forme canboat
+sa route, pas une cible figée ou « à reculons ». La GÎTE (roulis du 127257 /
+XDR ROLL) est tirée du vent apparent (sous le vent, 0,0078°/nd² × composante de
+travers, bornée à 7°, gîte maximale de sécurité du catamaran CM50), et stable
+si le vent l'est : l'ancienne sinusoïde ±8°
+faisait osciller la direction surface de qtVlm (dérive estimée par la gîte),
+cap et vent pourtant figés. L'AIS est émis en forme canboat
 `-nv` COMPLÈTE (tous les champs) pour que n2kd l'encode réellement en VDM.
 
 **Chaîne 0183 complète sans matériel — `./n2k-sim-run`** (calqué sur `n2k-mux-run`,

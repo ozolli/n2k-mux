@@ -691,12 +691,30 @@ static void e_rot(double t)   /* 127251 → ROT (deg/s) */
     emit(2, SCX_SRC, 127251, "Rate of Turn", f);
 }
 
+/* Gîte (roulis, deg ; positif = tribord enfoncé) tirée du vent APPARENT :
+ * sous le vent, croissante avec le carré de la vitesse et la composante de
+ * travers. Calée sur un CATAMARAN (CM50) : 3° par 20 nds de travers, bornée à
+ * 7°, sa gîte maximale de sécurité. SURTOUT pas une sinusoïde : un logiciel qui
+ * estime la dérive par la gîte (dérive ≈ K × gîte / STW²) faisait osciller la
+ * direction surface de qtVlm d'un bord à l'autre, cap et vent pourtant figés. */
+#define HEEL_K   0.0078  /* deg / nd² : ≈ 3° par 20 nds, 7° par 30 nds de travers */
+#define HEEL_MAX 7.0     /* gîte maximale de sécurité d'un CM50 */
+static double boat_roll(void)
+{
+    double s = sin(boat.awa * M_PI / 180.0);   /* > 0 : vent venant de tribord */
+    double kn = boat.aws * 1.943844;
+    double heel = HEEL_K * kn * kn * fabs(s);
+    if (!(heel == heel)) return 0.0;
+    if (heel > HEEL_MAX) heel = HEEL_MAX;
+    return s > 0 ? -heel : heel;
+}
+
 static void e_attitude(double t)   /* 127257 → XDR (pitch/roll) */
 {
     char f[128];
     /* pas de champ Yaw : non disponible, comme en trames (cf. a_attitude) */
     snprintf(f, sizeof f, "\"Pitch\":%.1f,\"Roll\":%.1f",
-             3.0 * sin(t / 5.0), 8.0 * sin(t / 7.0));
+             3.0 * sin(t / 5.0), boat_roll());
     emit(2, SCX_SRC, 127257, "Attitude", f);
 }
 
@@ -993,7 +1011,7 @@ static void a_attitude(double t)   /* 127257 Attitude (yaw/pitch/roll) */
      * courant fictif. Le compas simulé ne publie pas de lacet. */
     p16(b, 1, 0x7FFF);
     p16(b, 3, (int)lround(DEG2RAD(3.0 * sin(t / 5.0)) / 1e-4));
-    p16(b, 5, (int)lround(DEG2RAD(8.0 * sin(t / 7.0)) / 1e-4));
+    p16(b, 5, (int)lround(DEG2RAD(boat_roll()) / 1e-4));   /* cf. boat_roll */
     emit_frame(2, SCX_SRC, 127257, b, 7);
 }
 
