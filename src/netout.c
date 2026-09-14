@@ -14,6 +14,7 @@
 #include <fcntl.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 
 #ifndef MSG_NOSIGNAL
 #define MSG_NOSIGNAL 0
@@ -79,6 +80,16 @@ int netout_accept(netout_t *s)
             continue;
         }
         set_nonblock(c);
+        /* TCP_NODELAY : chaque trame part tout de suite. Avec Nagle (défaut),
+         * les petites écritures sont regroupées en attendant l'accusé de
+         * réception, et l'accusé RETARDÉ du client amplifie l'effet : les
+         * trames arrivent par rafales entrecoupées de pauses. Un récepteur
+         * distant qui déduit la vitesse des positions successives (qtVlm)
+         * voyait alors sa vitesse, et le TWA qui en découle, osciller. */
+        {
+            int one = 1;
+            setsockopt(c, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+        }
         s->clients[s->n_clients++] = c;
         added++;
     }

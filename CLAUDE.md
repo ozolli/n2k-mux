@@ -151,6 +151,12 @@ replié sur 0-180, valeurs BORNÉES aux extrêmes de la table, jamais extrapolé
 Validé sur les 27 polaires d'un dossier qtVlm réel, et contre le calcul à la main
 sur CM50.
 
+**Cadence** : la boucle attend des échéances ABSOLUES (multiples du pas, 50 ms
+par défaut) et chaque PGN avance son échéance d'une période, sans dérive. Avant,
+un sommeil fixe de 100 ms après traitement faisait partir les PGN à 250 ms toutes
+les 300 ms (3,3 Hz). Position 129025 et COG/SOG 129026 sortent maintenant à 4 Hz
+(129026 était à 1 Hz), la cadence nominale des « Rapid Update ».
+
 **`--wind-trace SECONDES`** : déroule du temps SIMULÉ sans attendre et imprime
 `t;twd;tws;stw` toutes les 10 s. Sert à régler l'aléa (des séquences de dix
 minutes ne s'observent pas en temps réel) et à le tester.
@@ -380,7 +386,11 @@ Modules prévus (ordre d'implémentation) :
                 sait lire le N2K natif sur CAN ou réseau).
                 Module netout (src/netout.{h,c}, testeur ./test_netout) : serveur
                 TCP de diffusion (fan-out vers N clients), zéro alloc, sockets non
-                bloquants. Un message COMMENCÉ est terminé (send_all : jusqu'à 5
+                bloquants. TCP_NODELAY sur chaque client : avec Nagle, les petites
+                trames partaient par rafales (aggravées par l'accusé retardé du
+                client), et qtVlm distant, qui déduit la vitesse des positions
+                successives, voyait sa vitesse et son TWA osciller (2026-09-14 ;
+                confirmé par le test « bateau arrêté → TWA figé »). Un message COMMENCÉ est terminé (send_all : jusqu'à 5
                 attentes de 20 ms) ; un client qui reste bouché en cours de message
                 est FERMÉ plutôt que de recevoir une trame tronquée — l'envoi
                 partiel était auparavant compté comme réussi et le reste jeté. Testé et PRÊT mais PAS encore lié au daemon — réservé au

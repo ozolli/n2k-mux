@@ -1301,7 +1301,7 @@ static void a_ais(double t)
 /* Ordonnancement des trames binaires, partagé par le mode --actisense et par
  * --actisense-out (JSON + trames en parallèle). id → émetteur, iv = période ms. */
 static struct { int id; double iv, next; } ACT_SCHED[] = {
-    {0,250,0},{1,1000,0},{2,200,0},{3,500,0},{4,200,0},
+    {0,250,0},{1,250,0},{2,200,0},{3,500,0},{4,200,0},
     {5,250,0},{6,500,0},{7,500,0},{8,2000,0},{9,2000,0},{10,1000,0},
     {11,2000,0},{12,200,0},{13,1000,0},{14,5000,0},{15,2000,0},
     {16,2000,0},{17,3000,0},{18,1000,0},
@@ -1334,9 +1334,26 @@ static void act_tick(double el, double t, int once, int no_ais)
             case 17: if (!no_ais) a_ais(t); break;
             case 18: a_setdrift(); break;
         }
-        ACT_SCHED[i].next = el + ACT_SCHED[i].iv;
+        /* sans dérive : on avance l'échéance d'une période, pas « maintenant +
+         * période » ; très en retard (reprise après désactivation), on recale */
+        ACT_SCHED[i].next += ACT_SCHED[i].iv;
+        if (ACT_SCHED[i].next < el)
+            ACT_SCHED[i].next = el + ACT_SCHED[i].iv;
     }
     fflush(g_act_fp ? g_act_fp : stdout);
+}
+
+/* Attend la prochaine échéance ABSOLUE de la boucle (multiple de tick depuis
+ * le départ), au lieu de dormir « tick » après le traitement. Dormir un pas
+ * fixe laissait dériver la boucle (pas réel 100 ms + traitement), et les PGN à
+ * 250 ms partaient en fait toutes les 300 ms : 3,3 Hz au lieu de 4 Hz. */
+static void sleep_until_next_tick(uint64_t start, long tick_ms)
+{
+    uint64_t now = now_ms();
+    uint64_t k = (now - start) / (uint64_t)tick_ms + 1;
+    uint64_t due = start + k * (uint64_t)tick_ms;
+    if (due > now)
+        usleep((useconds_t)((due - now) * 1000));
 }
 
 static int run_actisense(double duration, long tick, int once, int no_ais)
@@ -1352,12 +1369,12 @@ static int run_actisense(double duration, long tick, int once, int no_ais)
         boat_update(t);
         if (el - last_state_ms >= 500.0) { state_write(); last_state_ms = el; }
         if (!g_ctl.enabled) {          /* désactivé : aucune trame émise */
-            usleep((useconds_t)(tick * 1000));
+            sleep_until_next_tick(start, tick);
             continue;
         }
         act_tick(el, t, once, no_ais);
         if (once) return 0;
-        usleep((useconds_t)(tick * 1000));
+        sleep_until_next_tick(start, tick);
     } while (!g_stop);
     return 0;
 }
@@ -1369,7 +1386,7 @@ typedef struct { emit_fn fn; double iv_ms; double next_ms; int is_ais; const cha
 static sched_t SCHED[] = {
     { e_identity,    10000, 0, 0, "identité (60928/126996)" },
     { e_pos,           250, 0, 0, "129025 → GLL" },
-    { e_cogsog,       1000, 0, 0, "129026 → VTG" },
+    { e_cogsog,        250, 0, 0, "129026 → VTG" },   /* Rapid Update : 4 Hz */
     { e_systime,      1000, 0, 0, "126992 → ZDA" },
     { e_gnss,         1000, 0, 0, "129029 → GGA" },
     { e_dops,         2000, 0, 0, "129539 → GSA" },
@@ -1399,7 +1416,7 @@ static void usage(const char *p)
         "  --actisense     émet des TRAMES N2K binaires (format actisense, single-frame\n"
         "                  + fast-packet GNSS/loch/AIS) à piper dans ./ydraw-bridge\n"
         "                  → YDRAW/TCP → qtVlm en N2K\n"
-        "  --tick MS       période de la boucle d'émission (défaut 100 ms)\n"
+        "  --tick MS       période de la boucle d'émission (défaut 50 ms)\n"
         "  --control FIC   pilotage à chaud, SIX entrées : enabled, hdg, stw, set,\n"
         "                  drift, twd, tws. Relu à chaque changement du fichier ;\n"
         "                  c'est ce que l'interface web écrit. Vitesses en nœuds,\n"
@@ -1423,7 +1440,7 @@ int main(int argc, char **argv)
     double wind_trace = 0;     /* --wind-trace : secondes de temps simulé */
     const char *act_out = NULL; /* --actisense-out : trames N2K en parallèle */
     double duration = 0;       /* secondes ; 0 = sans fin */
-    long tick_ms = 100;
+    long tick_ms = 50;   /* 200, 250 et 500 ms en sont des multiples exacts */
 
     for (int i = 1; i < argc; i++) {
         if      (strcmp(argv[i], "--once") == 0)      once = 1;
@@ -1523,7 +1540,7 @@ int main(int argc, char **argv)
          * n2kd a besoin s'il a démarré entre-temps. */
         if (!g_ctl.enabled) {
             was_enabled = 0;
-            usleep((useconds_t)(tick_ms * 1000));
+            sleep_until_next_tick(start, tick_ms);
             continue;
         }
         if (!was_enabled) {
@@ -1535,13 +1552,15 @@ int main(int argc, char **argv)
             if (SCHED[i].is_ais && no_ais) continue;
             if (el >= SCHED[i].next_ms) {
                 SCHED[i].fn(t);
-                SCHED[i].next_ms = el + SCHED[i].iv_ms;
+                SCHED[i].next_ms += SCHED[i].iv_ms;      /* sans dérive */
+                if (SCHED[i].next_ms < el)
+                    SCHED[i].next_ms = el + SCHED[i].iv_ms;
             }
         }
         fflush(stdout);
         if (g_act_fp)
             act_tick(el, t, 0, no_ais);  /* même pas de temps, même état */
-        usleep((useconds_t)(tick_ms * 1000));
+        sleep_until_next_tick(start, tick_ms);
     }
     return 0;
 }

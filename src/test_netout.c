@@ -14,6 +14,7 @@
 #include <signal.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 
 static int failures = 0;
@@ -51,6 +52,15 @@ int main(void)
     ok("client connecté", c1 >= 0);
     ok("accept = 1", netout_accept(&s) == 1);
     ok("1 client", netout_clients(&s) == 1);
+
+    /* Nagle désactivé côté serveur : sans TCP_NODELAY, les petites trames
+     * partent par rafales et un récepteur distant voit sa vitesse osciller. */
+    {
+        int nd = 0;
+        socklen_t l = sizeof nd;
+        ok("TCP_NODELAY posé sur le client accepté",
+           getsockopt(s.clients[0], IPPROTO_TCP, TCP_NODELAY, &nd, &l) == 0 && nd != 0);
+    }
 
     /* diffusion → le client reçoit exactement les octets */
     const char *msg = "$IIVDR,95.0,T,,M,1.4,N*2E\r\n";

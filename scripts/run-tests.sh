@@ -241,6 +241,16 @@ PYLIVE
   run_case "trames N2K : vent apparent + vrai, sans direction nord" sh -c "[ \$(grep -c ',130306,' '$TD/frames.txt') -eq 2 ]"
   # Lacet « non disponible » (ff 7f), pas 0 : un lacet à 0° passait pour un cap.
   run_case "trames N2K : lacet non disponible" grep -qE ',127257,[0-9]+,255,7,ff,ff,7f,' "$TD/frames.txt"
+  # Cadence nominale des « Rapid Update » : 4 Hz. Le pas de boucle faisait
+  # partir la position toutes les 300 ms (3,3 Hz) et le COG/SOG à 1 Hz.
+  printf 'enabled = 1\nhdg = 0\nstw = 5\nset = 0\ndrift = 0\ntwd = 43\ntws = 4\n' > "$TD/c.ctl"
+  ./n2k-sim --duration 3 --no-ais --control "$TD/c.ctl" --actisense-out "$TD/cad.txt" > /dev/null 2>&1
+  np=$(grep -c ',129025,' "$TD/cad.txt"); nc=$(grep -c ',129026,' "$TD/cad.txt")
+  if [ "$np" -ge 11 ] && [ "$np" -le 13 ] && [ "$nc" -ge 11 ] && [ "$nc" -le 13 ]; then
+    ok "position et COG/SOG à 4 Hz ($np et $nc trames en 3 s)"
+  else
+    ko "cadence : $np positions et $nc COG/SOG en 3 s (attendu ~12)"
+  fi
   run_case "trames N2K : courant (129291)" grep -q ',129291,' "$TD/frames.txt"
 
   # Interface : liste du dossier et refus des chemins détournés.
