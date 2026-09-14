@@ -478,7 +478,10 @@ Modules prévus (ordre d'implémentation) :
                 séquences en minutes) et « Polaire » (menu + « vitesse surface
                 calculée par la polaire », qui grise la STW). Le tableau des
                 valeurs déduites ajoute TWA/TWS eau et la base du vent, avec les
-                étiquettes « polaire » et « aléatoire ». GET /api/polars liste
+                étiquettes « polaire » et « aléatoire ». Les angles à l'étrave
+                (TWA, AWA, TWA eau) s'y lisent en 0-180° + bord (« 100° bâbord »),
+                à la marine ; l'état publié et les sorties NMEA/N2K restent en
+                0-360°, imposé par les normes (MWV, 130306). GET /api/polars liste
                 les .pol/.csv de --polar-dir (défaut $HOME/.qtVlm/polar, V
                 MAJUSCULE ; le service tourne en root, poser POLAR_DIR), chacun
                 avec son état de lecture. Le POST n'accepte qu'un NOM de fichier
