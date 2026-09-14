@@ -10,6 +10,7 @@
 
 [output]
 talker = II          ; qtVlm ignore le talker ; II = Integrated Instruments
+no_0183 = 129291     ; VDR (courant) : qtVlm ne la reconnaît pas et logue une erreur
 
 [sources]
 # nom logique = Model Serial Code (cascade Unique Number si pas de serial)

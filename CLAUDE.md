@@ -730,9 +730,13 @@ la dérive *surface* lui-même ; à ne pas confondre avec VDR, le courant set/dr
 129291 que l'on émet bien), 127252 Heave (pas d'usage), yaw du 127257, 129283/284
 route (qtVlm gère ses propres routes).
 
-Note : VDR (courant, 129291) n'est PAS dans la liste qtVlm vérifiée ci-dessous —
-on l'émet quand même car d'autres logiciels du réseau (ou une version future de
-qtVlm) peuvent l'exploiter ; il est inoffensif pour les consommateurs qui l'ignorent.
+Note : VDR (courant, 129291) n'est PAS dans la liste qtVlm vérifiée ci-dessous.
+Le mapper sait la produire, mais elle n'est PAS inoffensive : qtVlm logue
+« Unrecognized or wrong message » à chaque réception (constaté le 2026-09-14,
+phrase et checksum pourtant corrects). Les configs livrées (`n2k-sim.ini`,
+`n2k-mux.ini.example`) la coupent donc par `[output] no_0183 = 129291` ; retirer
+cette ligne pour un consommateur 0183 qui l'exploite. Le 129291 continue de
+sortir en N2K (port 2700).
 
 ### Cible : qtVlm
 qtVlm accepte (vérifié) : GGA GSA GSV RMC VTG GLL HDG HDT HDM RSA VHW VLW VWR VWT
