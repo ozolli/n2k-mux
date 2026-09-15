@@ -70,6 +70,25 @@ int main(void)
     expect_eq("HDT 123.4", nmea_hdt(&s, "II", 123.4), "$IIHDT,123.4,T*26\r\n");
     expect_eq("MTW 21.5",  nmea_mtw(&s, "II", 21.5),  "$IIMTW,21.5,C*15\r\n");
 
+    /* Bornes d'arrondi : jamais 60 minutes ni 60 secondes (valeurs invalides). */
+    {
+        const char *g = nmea_gll(&s, "II", 47.99999999, -3.999999995, 12, 34, 59.9990);
+        if (!g || !strstr(g, ",4800.0000,N,00400.0000,W,123459.99,")) {
+            fprintf(stderr, "FAIL arrondi GLL (60 min / 60 s)\n  obtenu : %s", g ? g : "(NULL)\n");
+            failures++;
+        }
+        g = nmea_gll(&s, "II", -0.5, 179.99999999, 0, 0, 0.0);
+        if (!g || !strstr(g, ",0030.0000,S,18000.0000,E,000000.00,")) {
+            fprintf(stderr, "FAIL arrondi GLL (sud, 180°E, minuit)\n  obtenu : %s", g ? g : "(NULL)\n");
+            failures++;
+        }
+        g = nmea_gll(&s, "II", 47.5, -3.21, 14, 30, 12.5);
+        if (!g || !strstr(g, ",4730.0000,N,00312.6000,W,143012.50,")) {
+            fprintf(stderr, "FAIL GLL valeurs courantes\n  obtenu : %s", g ? g : "(NULL)\n");
+            failures++;
+        }
+    }
+
     /* ---- auto-cohérence + échantillon de toute la table ---- */
     printf("=== Échantillon de phrases générées ===\n");
 

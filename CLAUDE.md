@@ -209,7 +209,12 @@ basculer = DÉMARRER celle qu'on veut ; « arrêter le simulateur » tout court
 laisserait le bord sans données. `real` démarre REAL_UNIT si posée, sinon celle
 de n2k-mux-can / n2k-mux qui est ACTIVÉE (enable), socketcan d'abord ; le script
 ne source PAS /etc/default/n2k-mux (EnvironmentFile systemd, pas du shell).
-`systemctl --no-block` : l'UI ne gèle pas pendant le démarrage. Au boot, c'est
+`systemctl --no-block` : l'UI ne gèle pas pendant le démarrage. `Conflicts=` n'ordonne
+RIEN : les unités portent aussi `After=` (sim après can et n2k-mux, can après n2k-mux),
+ce qui fait passer l'ARRÊT de l'ancienne chaîne avant le DÉMARRAGE de la nouvelle
+dans les deux sens (vérifié). Sans ordre, les deux se chevauchaient ~3 s : port 2700
+pris, et l'arrêt supprimait /run/n2k-mux (partagé) sous la nouvelle chaîne. Et
+n2k-filter SORT si le port YDRAW est pris, au lieu de tourner sans le servir. Au boot, c'est
 l'unité activée qui démarre (la réelle ; n2k-mux-sim n'est pas activée).
 La case « Simulateur actif » de l'UI s'en sert PAR DÉFAUT (n2k-mux-web.service
 passe `--sim-start "$${SIM_START-$$SWITCH sim}"`… : `$$` OBLIGATOIRE, systemd
@@ -337,6 +342,12 @@ Modules prévus (ordre d'implémentation) :
                 [priority] "pgn[/discriminant] = [mode:] liste", [ignore] src/pgn,
                 [rate] "type_phrase = intervalle_min_ms" (throttle sortie 0183).
                 modes : priority (défaut) | min (profondeur) | max (loch) | fusion (AIS).
+                config_mode_effective(pgn, mode) : min ne vaut que pour 128267, max
+                que pour 128275, fusion que pour l'AIS (config_pgn_is_ais, liste
+                partagée avec aisdedup) ; ailleurs le mode vaut priority. Sans ce
+                repli, « 129025 = max: SCX, VER » acceptait toutes les sources (GLL
+                entremêlées, aucun filtrage vcan0/2700). L'UI ne propose que les
+                modes utiles (modesOf) et marque un mode existant « (= priority) ».
                 config_rule(pgn,disc) préfère la règle au discriminant le plus
                 spécifique (préfixe) puis la générique. config_rate_ms(type) → ms.
                 zéro alloc, tolérant.
@@ -444,9 +455,18 @@ Modules prévus (ordre d'implémentation) :
                 no_0183), GET /api/config (INI brut), POST /api/validate
                 (config_parse_string → {ok,line,err}), POST /api/config (valide
                 PUIS écrit l'INI PUIS lance --reload-cmd).
+                Tout POST exige l'en-tête `X-N2K-Mux` (403 sinon), que la page
+                ajoute à ses fetch : protection anti-CSRF, un formulaire d'un
+                autre site ne peut pas le poser (identifiant HTTP Basic déjà
+                mémorisé par le navigateur). Et un corps COMPLET selon
+                Content-Length (411 sans, 413 trop gros, 400 incomplet) : un corps
+                coupé par un lien lent était validé puis ÉCRIT tel quel.
                 ÉDITION 100% STRUCTURÉE (plus d'édition INI à la main) : 2 onglets.
                 « Sources » : nom logique éditable par appareil + case Ignorer
-                ([ignore] src). « Arbitrage » : un tableau, une ligne par PGN —
+                ([ignore] src). « Enregistrer les noms » ne touche QUE les
+                appareils affichés (mergeSrcNames) : une source configurée mais
+                absente du tableau (éteinte, ou chaîne simulée) est gardée, avec
+                ses règles. Avant, un clic l'effaçait partout. « Arbitrage » : un tableau, une ligne par PGN —
                 colonnes PGN(+case « ignorer » → [ignore] pgn) | Mode | N2K |
                 Talker | Phrases 0183 (une case par phrase possible : tout coché =
                 défaut, sous-ensemble = [sentence], rien = no_0183) | ms (intervalle
@@ -533,6 +553,8 @@ Modules prévus (ordre d'implémentation) :
                 l'ordre d'arrivée, et une connexion ouverte à vide — ce que font
                 les navigateurs par anticipation — gelait toutes les requêtes
                 suivantes près de 2 s (mesuré). Connexion muette fermée à 10 s.
+                esc() échappe aussi " et ' (utilisé dans des attributs HTML : un guillemet
+                dans un nom de polaire ou d'appareil injectait du HTML).
                 Bascules en-tête : langue FR/EN (dictionnaire L{fr,en} + T(clé),
                 textes statiques via data-i18n) et thème sombre/clair (couleurs en
                 variables CSS, palette .light) ; choix mémorisés en localStorage.
@@ -622,7 +644,11 @@ n2k-mux) résout les identités (ISO Request émises en `--tx-can`, écrites en
 `can_frame`) et publie les **perdants** `(pgn src)` dans `--losers losers.txt` ;
 `n2k-filter` lit ce fichier (rechargé à chaud) et **ne réémet que les trames
 retenues** sur vcan0 + YDRAW/TCP, SANS ré-encodage (recopie de la struct can_frame).
-Perdant = rejet PRIORITÉ ou HORS-RÈGLE ; tout le reste passe (fail-open). Le DLC et
+Perdant = rejet PRIORITÉ ou HORS-RÈGLE ; tout le reste passe (fail-open). Le verdict
+est tenu par (pgn, src, discriminant) mais publié par (pgn, src), seul visible dans
+l'ID CAN : un (pgn, src) n'est perdant que si TOUS ses discriminants récents le sont.
+Avant, une source gagnante pour « Apparent » et perdante pour « True » basculait à
+chaque message et n2k-filter jetait par intermittence ses trames gagnantes. Le DLC et
 le PGN/src se lisent dans l'ID CAN 29 bits → filtrage trame par trame, fast-packet
 transparent. **Charge bus MESURÉE** : le daemon draine son socket --tx-can (qui
 reçoit tout le bus) → trames+DLC exacts → stats `"measured":true` (sinon estimée).
@@ -730,6 +756,10 @@ AIS = em-trak B953 · VER = Veratron GO · DH = DataHub PredictWind · M510 = IC
 - **MTW** = température eau, depuis 130316 (Temperature Extended Range, champ "Temperature") dont Temperature Source = "Sea Temperature". 130312 (déprécié, champ "Actual Temperature") reste accepté en entrée.
 - **XDR** type pression/température/attitude. Pour 127257 : pitch + roll (pas le yaw).
 - **DPT** : profondeur = valeur minimale des deux DST810 (sécurité haut-fond), pas de moyenne.
+- **Position et heure** : l'angle est arrondi en dix-millièmes de minute AVANT d'être
+  séparé en degrés et minutes, et les secondes sont TRONQUÉES au centième. Arrondir
+  les minutes ou les secondes seules sortait `4760.0000` (47,99999999°) et
+  `123460.00` (12:34:59.999), valeurs invalides (constaté et corrigé le 2026-09-15).
 
 ### Unités de la sortie `analyzer -json` (sans `-si`)
 canboat applique `fixupUnit()` par défaut → unités « lisibles », PAS strictement SI :

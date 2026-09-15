@@ -130,47 +130,54 @@ static void field_ew(nmea_t *s, double v, int decimals)
     nmea_field_char(s, v >= 0 ? 'E' : 'W');
 }
 
-/* Latitude → "ddmm.mmmm,N|S" (ou ",," si absente). */
-static void field_lat(nmea_t *s, double lat)
+/* Angle → "d…dmm.mmmm,H" : `dw` chiffres de degrés, hémisphère `pos`/`neg`.
+ * L'arrondi se fait sur l'angle ENTIER, en dix-millièmes de minute, AVANT de
+ * séparer degrés et minutes. Arrondir les minutes seules sortait « 60.0000 »
+ * (47,99999999° → 4760.0000 au lieu de 4800.0000), valeur invalide en 0183. */
+static void field_angle(nmea_t *s, double v, int dw, char pos, char neg)
 {
-    if (isnan(lat)) {
+    if (isnan(v)) {
         nmea_field_empty(s);
         nmea_field_empty(s);
         return;
     }
-    double a = lat < 0 ? -lat : lat;
-    int    d = (int)a;
-    double m = (a - d) * 60.0;
-    char   t[24];
-    snprintf(t, sizeof t, ",%02d%07.4f,%c", d, m, lat >= 0 ? 'N' : 'S');
+    long long u   = llround((v < 0 ? -v : v) * 600000.0);   /* 1e-4 minute */
+    long long deg = u / 600000;
+    long long min = (u % 600000) / 10000;
+    long long frac = (u % 600000) % 10000;
+    char t[32];
+    snprintf(t, sizeof t, ",%0*lld%02lld.%04lld,%c", dw, deg % 1000, min, frac,
+             v >= 0 ? pos : neg);
     put_s(s, t);
+}
+
+/* Latitude → "ddmm.mmmm,N|S" (ou ",," si absente). */
+static void field_lat(nmea_t *s, double lat)
+{
+    field_angle(s, lat, 2, 'N', 'S');
 }
 
 /* Longitude → "dddmm.mmmm,E|W" (ou ",," si absente). */
 static void field_lon(nmea_t *s, double lon)
 {
-    if (isnan(lon)) {
-        nmea_field_empty(s);
-        nmea_field_empty(s);
-        return;
-    }
-    double a = lon < 0 ? -lon : lon;
-    int    d = (int)a;
-    double m = (a - d) * 60.0;
-    char   t[24];
-    snprintf(t, sizeof t, ",%03d%07.4f,%c", d, m, lon >= 0 ? 'E' : 'W');
-    put_s(s, t);
+    field_angle(s, lon, 3, 'E', 'W');
 }
 
-/* Heure UTC → "hhmmss.ss" (ou champ vide si hh < 0). */
+/* Heure UTC → "hhmmss.ss" (ou champ vide si hh < 0). Les secondes sont
+ * TRONQUÉES au centième, pas arrondies : 59,996 s donnait « 60.00 », invalide,
+ * et reporter la retenue sur la minute ferait déborder l'heure et la date à
+ * minuit. Un centième de moins est sans conséquence. */
 static void field_time(nmea_t *s, int hh, int mm, double ss)
 {
     if (hh < 0) {
         nmea_field_empty(s);
         return;
     }
-    char t[20];
-    snprintf(t, sizeof t, ",%02d%02d%05.2f", hh, mm, ss);
+    long long cs = (long long)floor(ss * 100.0 + 1e-6);
+    if (cs < 0)    cs = 0;
+    if (cs > 5999) cs = 5999;
+    char t[24];
+    snprintf(t, sizeof t, ",%02d%02d%02lld.%02lld", hh % 100, mm % 100, cs / 100, cs % 100);
     put_s(s, t);
 }
 

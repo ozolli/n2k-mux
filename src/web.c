@@ -258,7 +258,10 @@ static const char PAGE[] =
 "function applyI18n(){document.querySelectorAll('[data-i18n]').forEach(e=>{e.textContent=T(e.dataset.i18n);});document.documentElement.lang=lang;}\n"
 "const $=s=>document.querySelector(s),H=(t,n)=>{n=n??0;return Number(n).toFixed(t)};\n"
 "const ms=h=>(h>0.0001)?Math.round(1000/h)+' ms':'— ms';\n"
-"function esc(s){return (''+s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}\n"
+"// Échappe AUSSI les guillemets : esc() sert dans des attributs (value=\"…\",\n"
+"// data-ident=\"…\"). Sans cela, un nom de polaire ou une chaîne publiée par un\n"
+"// appareil contenant un guillemet sortait de l'attribut et injectait du HTML.\n"
+"function esc(s){return (''+s).replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c]))}\n"
 "document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{\n"
 " document.querySelectorAll('nav button').forEach(x=>x.classList.remove('on'));b.classList.add('on');\n"
 " document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));$('#'+b.dataset.t).classList.add('on');\n"
@@ -290,14 +293,25 @@ static const char PAGE[] =
 "  +'<td>'+(s.pgns||[]).slice().sort((p,q)=>p.pgn-q.pgn).map(p=>'<span class=pill>'+p.pgn+'</span>').join('')+'</td></tr>';}\n"
 " h+='</table>';$('#src_body').innerHTML='<div class=card>'+(a.length?h:'<p><small>'+T('no_src')+'</small></p>')+'</div>';\n"
 "}catch(e){$('#src_body').innerHTML='<p><small>'+T('na_src')+'</small></p>';}}\n"
+"// Fusion des noms saisis dans la config. `shown` : identité → nom saisi, pour\n"
+"// les SEULS appareils affichés (vus depuis le démarrage du daemon). Une source\n"
+"// configurée mais absente du tableau (appareil éteint, ou chaîne simulée qui\n"
+"// n'affiche que ses appareils) est GARDÉE telle quelle, et ses règles aussi.\n"
+"// Avant, [sources] était reconstruite à partir du seul tableau : un clic\n"
+"// effaçait ces sources et leur nom dans toutes les règles.\n"
+"function mergeSrcNames(ru,shown){const rn=new Map(),sources=[],done=new Set();\n"
+" for(const s of (ru.sources||[])){\n"
+"  if(shown.has(s.ident)){const v=shown.get(s.ident);rn.set(s.name,v);done.add(s.ident);if(v)sources.push({ident:s.ident,name:v});}\n"
+"  else{rn.set(s.name,s.name);sources.push({ident:s.ident,name:s.name});}}\n"
+" for(const [id,v] of shown)if(!done.has(id)&&v)sources.push({ident:id,name:v});\n"
+" const rules=(ru.rules||[]).map(r=>({pgn:r.pgn,disc:r.disc,mode:r.mode,sources:r.sources.map(n=>rn.has(n)?rn.get(n):n).filter(Boolean)}));\n"
+" return {sources:sources,rules:rules};}\n"
 "async function saveSrc(){try{const ru=await jget('/api/rules');\n"
-" const identByName={};for(const s of (ru.sources||[]))identByName[s.name]=s.ident;\n"
-" const newName={};document.querySelectorAll('#src_body input[data-ident]').forEach(i=>{const v=i.value.trim();if(v)newName[i.dataset.ident]=v;});\n"
-" const sources=Object.keys(newName).map(id=>({ident:id,name:newName[id]}));\n"
-" const rules=(ru.rules||[]).map(r=>({pgn:r.pgn,disc:r.disc,mode:r.mode,sources:r.sources.map(n=>{const id=identByName[n];return id===undefined?n:newName[id];}).filter(Boolean)}));\n"
+" const shown=new Map();document.querySelectorAll('#src_body input[data-ident]').forEach(i=>{shown.set(i.dataset.ident,i.value.trim());});\n"
+" const mg=mergeSrcNames(ru,shown),sources=mg.sources,rules=mg.rules;\n"
 " const igs=[];document.querySelectorAll('#src_body input.ig:checked').forEach(i=>igs.push(+i.dataset.src));\n"
 " const ignore={src:igs,pgn:(ru.ignore&&ru.ignore.pgn)||[]};\n"
-" const res=await fetch('/api/config',{method:'POST',body:genIni(ru.talker,sources,rules,ignore,ru.rates,ru.no_n2k,ru.no_0183,ru.talkers,ru.sentences)});const d=await res.json();\n"
+" const res=await fetch('/api/config',{method:'POST',headers:{'X-N2K-Mux':'1'},body:genIni(ru.talker,sources,rules,ignore,ru.rates,ru.no_n2k,ru.no_0183,ru.talkers,ru.sentences)});const d=await res.json();\n"
 " d.ok?smsg(T('names_saved'),'ok'):smsg(T('rej_line')+(d.line||'?')+' : '+(d.err||''),'err');\n"
 " if(d.ok)setTimeout(renderSources,2500);\n"
 "}catch(e){smsg(T('err_pfx')+e,'err');}}\n"
@@ -319,6 +333,10 @@ static const char PAGE[] =
 "const ST={accept:['émis','sent','bok'],reject_priority:['supplanté','superseded','blo'],not_in_rule:['hors-règle','not in rule','bnu'],no_rule:['non réglé','no rule','bnu'],unconfigured:['non configuré','unconfigured','bnu'],unknown_src:['identité ?','identity?','bnu'],ignored:['ignoré','ignored','bnu']};\n"
 "const PGN2SENT={129025:['GLL'],129026:['VTG'],129029:['GGA','RMC'],129539:['GSA'],129540:['GSV'],126992:['ZDA'],127250:['HDG','HDM','HDT'],127251:['ROT'],127257:['XDR'],130306:['MWV','MWD'],127245:['RSA'],129291:['VDR'],128259:['VHW'],128267:['DPT'],128275:['VLW'],130316:['MTW','MDA'],130314:['MDA']};\n"
 "const AISPGN=[129038,129039,129040,129041,129793,129794,129795,129796,129797,129798,129801,129802,129809,129810];\n"
+"// Modes qui ont un EFFET pour ce PGN (cf. config_mode_effective côté C) :\n"
+"// min = profondeur, max = loch, fusion = AIS. Un mode déjà présent dans la\n"
+"// config mais sans effet reste affiché, marqué « (= priority) ».\n"
+"function modesOf(p){const m=['priority'];if(p===128267)m.push('min');if(p===128275)m.push('max');if(AISPGN.indexOf(p)>=0)m.push('fusion');return m}\n"
 "function has0183(p){return PGN2SENT[p]!==undefined||AISPGN.indexOf(p)>=0}\n"
 "function typesOf(p){return PGN2SENT[p]||(AISPGN.indexOf(p)>=0?['VDM']:[])}\n"
 "let ARB=null;\n"
@@ -365,7 +383,8 @@ static const char PAGE[] =
 "  u.sel.forEach(add);u.obs.forEach(o=>{const nm=o.name||nameOf(o.ident);if(nm)add(nm)});u.cand=cand;\n"
 "  h+='<tr'+(u.ign?' class=ign':'')+'><td>'+u.pgn+(u.disc?' /'+esc(u.disc):'')+'<br><small>'+pgnName(u.pgn)+'</small>'\n"
 "    +'<br><label class=sl title=\"'+esc(T('t_ign'))+'\"><input type=checkbox data-act=ign data-u='+ui+(u.ign?' checked':'')+'>'+T('ignore_lbl')+'</label></td>';\n"
-"  h+='<td><select data-act=mode data-u='+ui+'>'+['priority','min','max','fusion'].map(m=>'<option value='+m+(u.mode===m?' selected':'')+'>'+m+'</option>').join('')+'</select></td>';\n"
+"  const ml=modesOf(u.pgn);if(ml.indexOf(u.mode)<0)ml.push(u.mode);\n"
+"  h+='<td><select data-act=mode data-u='+ui+'>'+ml.map(m=>'<option value='+m+(u.mode===m?' selected':'')+'>'+m+(modesOf(u.pgn).indexOf(m)<0?' (= priority)':'')+'</option>').join('')+'</select></td>';\n"
 "  h+='<td class=c><input type=checkbox data-act=n2k data-u='+ui+(u.n2k?' checked':'')+'></td>';\n"
 "  h+='<td class=c>'+(u.hasRate?('<input class=ri style=\"width:3.2em;text-align:center\" maxlength=2 data-act=tk data-u='+ui+' value=\"'+esc(u.tk||'')+'\" placeholder=\"'+esc(dtk)+'\">'):'<small>—</small>')+'</td>';\n"
 "  h+='<td class=c>'+(u.types.length?u.types.map(t=>'<label class=sl><input type=checkbox data-act=o183 data-u='+ui+' data-ty='+t+(u.on[t]?' checked':'')+'>'+t+'</label>').join(''):'<small>—</small>')+'</td>';\n"
@@ -408,7 +427,7 @@ static const char PAGE[] =
 " const tks=ARB.units.filter(u=>u.tk&&u.tk!==(ARB.talker||'II')).map(u=>({pgn:u.pgn,tk:u.tk}));\n"
 " const ip=[];for(const u of ARB.units)if(u.ign&&ip.indexOf(u.pgn)<0)ip.push(u.pgn);\n"
 " const ign={src:(ARB.ignore&&ARB.ignore.src)||[],pgn:ip};\n"
-" const r=await fetch('/api/config',{method:'POST',body:genIni(ARB.talker,ARB.sources,rules,ign,ARB.rates,noN,noO,tks,sents)});const d=await r.json();\n"
+" const r=await fetch('/api/config',{method:'POST',headers:{'X-N2K-Mux':'1'},body:genIni(ARB.talker,ARB.sources,rules,ign,ARB.rates,noN,noO,tks,sents)});const d=await r.json();\n"
 " d.ok?amsg(T('arb_saved'),'ok'):amsg(T('rej_line')+(d.line||'?')+' : '+(d.err||''),'err');if(d.ok)setTimeout(loadArb,2500);};\n"
 "$('#arb_reload').onclick=loadArb;\n"
 "$('#arb_unseen').checked=localStorage.getItem('arb_unseen')==='1';\n"
@@ -541,7 +560,7 @@ static const char PAGE[] =
 "// Un geste de curseur produit beaucoup d'événements : on n'écrit qu'une fois\n"
 "// la main relâchée (250 ms sans changement).\n"
 "function pushSim(){clearTimeout(simTimer);simTimer=setTimeout(sendSim,250);}\n"
-"async function sendSim(){try{const r=await fetch('/api/sim',{method:'POST',body:simBody()});\n"
+"async function sendSim(){try{const r=await fetch('/api/sim',{method:'POST',headers:{'X-N2K-Mux':'1'},body:simBody()});\n"
 "  const d=await r.json();\n"
 "  if(!d.ok){simsg(T('err_pfx')+(d.err||''),'err');return;}\n"
 "  if(d.cmd<0){simsg(T('sim_cmd_err'),'err');simSwitchAt=0;return;}\n"
@@ -1295,21 +1314,47 @@ static void handle_client(int fd)
 
     char *hdr_end = strstr(req, "\r\n\r\n");
     char *body = hdr_end ? hdr_end + 4 : NULL;
-    /* Corps complet ? (Content-Length) */
-    if (body) {
-        const char *cl = strcasestr(req, "Content-Length:");
-        if (cl) {
-            size_t want = (size_t)strtoul(cl + 15, NULL, 10);
-            size_t have = n - (size_t)(body - req);
-            while (have < want && n < sizeof req - 1) {
-                r = recv(fd, req + n, sizeof req - 1 - n, 0);
-                if (r <= 0) break;
-                n += (size_t)r; have += (size_t)r;
-            }
-            req[n] = '\0';
-            body = strstr(req, "\r\n\r\n") + 4;
-            body[want < have ? want : have] = '\0';
+
+    if (strcmp(method, "POST") == 0) {
+        if (!body) { send_text(fd, 400, "Bad Request", "text/plain", "400\n"); return; }
+        /* Anti-CSRF : un POST doit porter l'en-tête X-N2K-Mux, que la page
+         * ajoute à ses fetch. Un formulaire ou une requête « simple » envoyés
+         * depuis un AUTRE site ne peuvent pas le poser (le navigateur exigerait
+         * une pré-requête OPTIONS, que ce serveur ne valide pas). Sans lui, une
+         * page ouverte sur une tablette du bord pouvait réécrire la config ou
+         * basculer la chaîne sur le simulateur, l'identifiant HTTP Basic étant
+         * déjà mémorisé par le navigateur. */
+        const char *xh = strcasestr(req, "\r\nX-N2K-Mux:");
+        if (!xh || xh > hdr_end) {
+            send_text(fd, 403, "Forbidden", "text/plain", "403 : en-tête X-N2K-Mux requis\n");
+            return;
         }
+        /* Corps COMPLET exigé. Avant, un corps coupé (lien lent, coupure au-delà
+         * du délai de lecture) était validé puis ÉCRIT tel quel : une règle
+         * pouvait perdre des sources sans le moindre message. */
+        const char *cl = strcasestr(req, "\r\nContent-Length:");
+        if (!cl || cl > hdr_end) {
+            send_text(fd, 411, "Length Required", "text/plain", "411\n");
+            return;
+        }
+        size_t want = (size_t)strtoul(cl + 17, NULL, 10);
+        size_t room = sizeof req - 1 - (size_t)(body - req);
+        if (want > room) {
+            send_text(fd, 413, "Payload Too Large", "text/plain", "413\n");
+            return;
+        }
+        size_t have = n - (size_t)(body - req);
+        while (have < want) {
+            r = recv(fd, req + n, sizeof req - 1 - n, 0);
+            if (r <= 0) break;
+            n += (size_t)r; have += (size_t)r;
+        }
+        req[n] = '\0';
+        if (have < want) {
+            send_text(fd, 400, "Bad Request", "text/plain", "400 : corps incomplet\n");
+            return;
+        }
+        body[want] = '\0';
     }
 
     if (strcmp(method, "GET") == 0) {

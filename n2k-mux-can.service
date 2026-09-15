@@ -16,6 +16,8 @@ Description=n2k-mux — multiplexeur NMEA 2000 (entrée socketcan)
 Documentation=https://github.com/ozolli/n2k-mux
 After=local-fs.target
 Conflicts=kplex.service n2k-mux.service
+# Ordre = l'arrêt de l'autre chaîne passe AVANT ce démarrage (cf. n2k-mux-sim).
+After=n2k-mux.service
 # Chaîne de navigation : on veut qu'elle REVIENNE, pas qu'elle abandonne.
 # 5 échecs en 60 s laissaient l'unité morte jusqu'à une intervention
 # manuelle, alors qu'une cause transitoire (périphérique pas encore là,

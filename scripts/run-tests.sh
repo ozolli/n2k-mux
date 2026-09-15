@@ -127,6 +127,34 @@ sys.exit(0 if hdg is not None and hdt is not None and abs((hdg - hdt + 180) % 36
   fi
 fi
 
+# ---- 3 bis. perdants publiés pour n2k-filter --------------------------------
+say "== perdants (--losers) =="
+if [ ! -x ./n2k-mux ]; then
+  ko "n2k-mux absent (make d'abord)"
+else
+  LD=$(mktemp -d)
+  # A gagne « Apparent » mais perd « True », B l'inverse : aucun des deux ne
+  # doit être jeté, n2k-filter ne voyant que (pgn, src). En position, B perd
+  # partout : lui seul est publié.
+  printf '[sources]\nA = SER_A\nB = SER_B\n\n[priority]\n130306/Apparent = A, B\n130306/True = B, A\n129025 = A, B\n' > "$LD/l.ini"
+  {
+    for s in 10:SER_A 11:SER_B; do
+      printf '{"src":%s,"pgn":126996,"fields":{"Model Serial Code":"%s"}}\n' "${s%%:*}" "${s#*:}"
+    done
+    for i in 1 2 3; do
+      for src in 10 11; do
+        printf '{"src":%d,"pgn":130306,"fields":{"Reference":"Apparent","Wind Angle":30}}\n' "$src"
+        printf '{"src":%d,"pgn":130306,"fields":{"Reference":"True (water referenced)","Wind Angle":40}}\n' "$src"
+        printf '{"src":%d,"pgn":129025,"fields":{"Latitude":47.5,"Longitude":-3.0}}\n' "$src"
+      done
+    done
+  } | ./n2k-mux "$LD/l.ini" --losers "$LD/losers.txt" >/dev/null 2>&1
+  got=$(grep -v '^#' "$LD/losers.txt" 2>/dev/null | sort | tr '\n' ' ')
+  if [ "$got" = "129025 11 " ]; then ok "perdants : discriminants gagnants non jetés"
+  else ko "perdants attendus « 129025 11 », obtenu « $got »"; fi
+  rm -rf "$LD"
+fi
+
 # ---- 4. simulateur piloté (fichier de contrôle) ---------------------------
 say "== simulateur piloté (--control) =="
 if [ ! -x ./n2k-sim ]; then
@@ -265,23 +293,23 @@ PYLIVE
     case "$pol" in *'"name":"test.pol","ok":true'*) ok "polaire proposée" ;; *) ko "polaire absente de la liste : $pol" ;; esac
     case "$pol" in *polwave*) ko "table de vagues proposée : $pol" ;; *) ok "table de vagues écartée" ;; esac
     case "$pol" in *'"name":"n_importe.csv","ok":false'*) ok "fichier illisible signalé" ;; *) ko "fichier illisible mal signalé : $pol" ;; esac
-    rej=$(curl -s -X POST --data-binary 'enabled = 1
+    rej=$(curl -s -X POST -H 'X-N2K-Mux: 1' --data-binary 'enabled = 1
 polar = ../../../etc/passwd
 ' "http://127.0.0.1:18124/api/sim")
     case "$rej" in *'"ok":false'*) ok "chemin détourné refusé" ;; *) ko "chemin détourné accepté : $rej" ;; esac
-    acc=$(curl -s -X POST --data-binary 'enabled = 1
+    acc=$(curl -s -X POST -H 'X-N2K-Mux: 1' --data-binary 'enabled = 1
 stw_polar = 1
 polar = test.pol
 ' "http://127.0.0.1:18124/api/sim")
     case "$acc" in *'"ok":true'*) ok "polaire du dossier acceptée" ;; *) ko "polaire refusée : $acc" ;; esac
     run_case "chemin complet écrit" grep -q "^polar = $TD/test.pol$" "$TD/w.ctl"
-    curl -s -X POST --data-binary 'enabled = 1
+    curl -s -X POST -H 'X-N2K-Mux: 1' --data-binary 'enabled = 1
 twd = auto 300
 ' "http://127.0.0.1:18124/api/sim" > /dev/null
     run_case "interface : auto écrit avec son centre" grep -q '^twd = auto 300.00$' "$TD/w.ctl"
     ctr=$(curl -s "http://127.0.0.1:18124/api/sim")
     case "$ctr" in *'"twd":null,"twd_c":300.00'*) ok "interface : centre relu pour le curseur" ;; *) ko "centre non relu : $ctr" ;; esac
-    curl -s -X POST --data-binary 'enabled = 1
+    curl -s -X POST -H 'X-N2K-Mux: 1' --data-binary 'enabled = 1
 wind_random = 1
 tws_var = 35
 ' "http://127.0.0.1:18124/api/sim" > /dev/null
@@ -305,7 +333,7 @@ else
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     curl -s -o /dev/null "http://127.0.0.1:$PORT/" && break
   done
-  curl -s -X POST --data-binary 'enabled = 1
+  curl -s -X POST -H 'X-N2K-Mux: 1' --data-binary 'enabled = 1
 hdg = 200
 stw = 7
 set = auto
@@ -333,7 +361,7 @@ tws = 12
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     curl -s -o /dev/null "http://127.0.0.1:$PORT/" && break
   done
-  simpost() { curl -s -X POST --data-binary "enabled = $1
+  simpost() { curl -s -X POST -H 'X-N2K-Mux: 1' --data-binary "enabled = $1
 hdg = 10
 " "http://127.0.0.1:$PORT/api/sim" > /dev/null; }
   simpost 1
@@ -358,6 +386,37 @@ hdg = 10
   esac
   kill "$WPID" 2>/dev/null; wait "$WPID" 2>/dev/null
   rm -rf "$WD"
+  # POST : en-tête anti-CSRF obligatoire, et un corps incomplet n'écrit RIEN.
+  WD=$(mktemp -d)
+  printf '[output]\ntalker = II\n\n[sources]\nSCX = 123\nVER = 456\n\n[priority]\n129026 = SCX, VER\n' > "$WD/c.ini"
+  cp "$WD/c.ini" "$WD/ref.ini"
+  ./n2k-mux-web "$WD/c.ini" --port "$PORT" --sim-control "$WD/sim.ctl" --sim-state "$WD/st" >/dev/null 2>&1 &
+  WPID=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    curl -s -o /dev/null "http://127.0.0.1:$PORT/" && break
+  done
+  code=$(curl -s -o /dev/null -w '%{http_code}' -X POST --data-binary 'enabled = 0
+' "http://127.0.0.1:$PORT/api/sim")
+  if [ "$code" = "403" ] && [ ! -e "$WD/sim.ctl" ]; then ok "POST sans en-tête X-N2K-Mux refusé (403)"
+  else ko "POST sans en-tête : code $code"; fi
+  if python3 - "$PORT" <<'PYTRUNC'
+import socket, sys, time
+body = b"[output]\ntalker = II\n\n[sources]\nSCX = 123\nVER = 456\n\n[priority]\n129026 = SCX, VER\n"
+part = body[:-6]                       # "129026 = SCX" : coupé avant ", VER"
+s = socket.create_connection(("127.0.0.1", int(sys.argv[1])))
+s.sendall(b"POST /api/config HTTP/1.1\r\nHost: x\r\nX-N2K-Mux: 1\r\nContent-Length: %d\r\n\r\n" % len(body) + part)
+time.sleep(2.5)                        # le reste n'arrive pas : délai de lecture dépassé
+resp = s.recv(4096).decode(errors="replace")
+sys.exit(0 if resp.startswith("HTTP/1.1 400") else 1)
+PYTRUNC
+  then
+    if cmp -s "$WD/c.ini" "$WD/ref.ini"; then ok "corps POST incomplet : 400, config intacte"
+    else ko "corps POST incomplet : config modifiée"; fi
+  else
+    ko "corps POST incomplet : pas de 400"
+  fi
+  kill "$WPID" 2>/dev/null; wait "$WPID" 2>/dev/null
+  rm -rf "$WD"
   # Le JS de la page est écrit à la main dans une chaîne C : une coquille de
   # syntaxe casserait toute l'interface sans que rien ne le signale.
   if command -v node >/dev/null 2>&1; then
@@ -371,7 +430,32 @@ hdg = 10
       | sed -n '/<script>/,/<\/script>/p' | sed '1d;$d' > "$JS"
     kill "$WPID" 2>/dev/null
     run_case "syntaxe du JS de la page" node --check "$JS"
-    rm -f "$JS"
+    # Enregistrer les noms ne doit PAS effacer une source configurée absente du
+    # tableau (appareil éteint, ou chaîne simulée) ni son nom dans les règles.
+    MJS=$(mktemp --suffix=.js)
+    { sed -n '/^function mergeSrcNames/,/^ return {sources:sources,rules:rules};}/p' "$JS"
+      cat <<'NODECHK'
+const ru={sources:[{name:'SCX',ident:'111'},{name:'DST_TB',ident:'222'}],
+          rules:[{pgn:128267,disc:'',mode:'min',sources:['DST_BB','DST_TB']},
+                 {pgn:129025,disc:'',mode:'priority',sources:['SCX','VER']}]};
+// affichés : SCX renommé GPS ; un appareil neuf nommé DST_BB ; DST_TB (222) absent
+const shown=new Map([['111','GPS'],['333','DST_BB'],['444','']]);
+const r=mergeSrcNames(ru,shown);
+const src=JSON.stringify(r.sources), rl=JSON.stringify(r.rules.map(x=>x.sources));
+const want_src=JSON.stringify([{ident:'111',name:'GPS'},{ident:'222',name:'DST_TB'},{ident:'333',name:'DST_BB'}]);
+const want_rl=JSON.stringify([['DST_BB','DST_TB'],['GPS','VER']]);
+if(src!==want_src||rl!==want_rl){console.log('sources',src,'\nrègles',rl);process.exit(1);}
+NODECHK
+    } > "$MJS"
+    run_case "noms : source absente du tableau conservée" node "$MJS"
+    # esc() sert dans des attributs HTML : les guillemets doivent être échappés.
+    { sed -n '/^function esc(/p' "$JS"
+      echo "if(esc('a\"b<c>&d'+\"'\"+'e')!=='a&quot;b&lt;c&gt;&amp;d&#39;e')process.exit(1);"
+      sed -n '/^const AISPGN=/p;/^function modesOf(/p' "$JS"
+      echo "if(modesOf(129025).join()!=='priority'||modesOf(128267).join()!=='priority,min'||modesOf(129039).join()!=='priority,fusion')process.exit(1);"
+    } > "$MJS"
+    run_case "échappement HTML et modes proposés" node "$MJS"
+    rm -f "$JS" "$MJS"
   else
     say "  (node absent : syntaxe JS non vérifiée)"
   fi

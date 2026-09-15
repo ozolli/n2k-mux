@@ -17,6 +17,13 @@ Description=n2k-mux — chaîne simulée (sans matériel)
 Documentation=https://github.com/ozolli/n2k-mux
 After=local-fs.target
 Conflicts=n2k-mux.service n2k-mux-can.service kplex.service
+# Conflicts= n'ORDONNE rien : sans ceci, systemd démarrait la nouvelle chaîne
+# PENDANT l'arrêt de l'autre (~3 s). Constaté le 2026-09-14 : port 2700 encore
+# pris (ydraw-bridge en échec, relance), et l'arrêt de l'ancienne unité
+# supprimait /run/n2k-mux, partagé, sous la nouvelle (FIFO effacés). Avec un
+# ordre, quel qu'il soit, systemd fait passer l'ARRÊT avant le DÉMARRAGE, dans
+# les deux sens de la bascule.
+After=n2k-mux.service n2k-mux-can.service
 # Même politique que les chaînes réelles : on insiste avant de renoncer.
 StartLimitIntervalSec=600
 StartLimitBurst=20

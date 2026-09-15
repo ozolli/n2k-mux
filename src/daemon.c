@@ -206,27 +206,52 @@ static uint64_t *thr_last(throttle_t *t, const char *type)
  * la règle de ce PGN). Le daemon publie cette liste ; n2k-filter jette ces trames
  * de can0 → vcan0 (fail-open : tout le reste passe). Les autres rejets
  * (NO_RULE, UNKNOWN_SRC, UNCONFIGURED) laissent passer (prudence). */
-#define DROP_MAX         64
+/* Le verdict est tenu par (pgn, src, DISCRIMINANT), mais n2k-filter ne voit
+ * que (pgn, src) dans l'ID CAN : il ne sait pas lire la référence d'un 130306.
+ * Un (pgn, src) n'est donc publié perdant que si TOUS ses discriminants récents
+ * le sont. Avant, la clé ignorait le discriminant : une source gagnante pour
+ * « Apparent » mais perdante pour « True » faisait basculer l'entrée à chaque
+ * message, et n2k-filter jetait par intermittence ses trames GAGNANTES. */
+#define DROP_MAX         256
 #define DROP_TIMEOUT_MS  8000u   /* entrée oubliée si non rafraîchie (> failover) */
-typedef struct { int pgn; int src; uint64_t last; } drop_entry_t;
+typedef struct {
+    int      pgn, src;
+    char     disc[CFG_DISC_LEN];
+    bool     loser;              /* dernier verdict pour ce discriminant */
+    uint64_t last;
+} drop_entry_t;
 typedef struct { drop_entry_t e[DROP_MAX]; int n; } dropset_t;
 
-static void dropset_update(dropset_t *ds, int pgn, int src,
+static void dropset_update(dropset_t *ds, int pgn, int src, const char *disc,
                            arb_result_t r, uint64_t now)
 {
-    int loser = (r == ARB_REJECT_PRIORITY || r == ARB_REJECT_NOT_IN_RULE);
-    int found = -1;
-    for (int i = 0; i < ds->n; i++)
-        if (ds->e[i].pgn == pgn && ds->e[i].src == src) { found = i; break; }
-    if (loser) {
-        if (found >= 0) ds->e[found].last = now;
-        else if (ds->n < DROP_MAX) {
-            ds->e[ds->n].pgn = pgn; ds->e[ds->n].src = src;
-            ds->e[ds->n].last = now; ds->n++;
-        }
-    } else if (r == ARB_ACCEPT && found >= 0) {
-        ds->e[found] = ds->e[--ds->n];   /* devenu gagnant (failover) → retiré */
+    bool loser = (r == ARB_REJECT_PRIORITY || r == ARB_REJECT_NOT_IN_RULE);
+    drop_entry_t *e = NULL, *oldest = NULL;
+    for (int i = 0; i < ds->n; i++) {
+        drop_entry_t *x = &ds->e[i];
+        if (x->pgn == pgn && x->src == src && strcmp(x->disc, disc) == 0) { e = x; break; }
+        if (!oldest || x->last < oldest->last) oldest = x;
     }
+    if (!e) {
+        if (!loser) {
+            /* Verdict « passe » : utile seulement si ce (pgn, src) a déjà un
+             * discriminant perdant, sinon rien à mémoriser. */
+            bool any = false;
+            for (int i = 0; i < ds->n && !any; i++)
+                any = ds->e[i].pgn == pgn && ds->e[i].src == src;
+            if (!any)
+                return;
+        }
+        /* Table pleine : on évince la plus ancienne. Perdre un verdict
+         * « passe » pourrait faire jeter une source gagnante ; perdre un
+         * verdict ancien est sans conséquence (il aurait expiré). */
+        e = (ds->n < DROP_MAX) ? &ds->e[ds->n++] : oldest;
+        e->pgn = pgn;
+        e->src = src;
+        snprintf(e->disc, sizeof e->disc, "%s", disc);
+    }
+    e->loser = loser;
+    e->last  = now;
 }
 
 /* Purge les entrées périmées puis écrit la liste (atomique tmp+rename). */
@@ -244,8 +269,17 @@ static int dropset_write(dropset_t *ds, const char *path, uint64_t now,
     if (!f) return -1;
     fputs("# n2k-mux : trames à jeter par n2k-filter — perdants (pgn src) et\n"
           "# PGN coupés en N2K (pgn -1 = toutes sources)\n", f);
-    for (int i = 0; i < ds->n; i++)
-        fprintf(f, "%d %d\n", ds->e[i].pgn, ds->e[i].src);
+    for (int i = 0; i < ds->n; i++) {
+        bool first = true, all_lose = true;
+        for (int j = 0; j < ds->n; j++) {
+            if (ds->e[j].pgn != ds->e[i].pgn || ds->e[j].src != ds->e[i].src)
+                continue;
+            if (j < i) { first = false; break; }   /* (pgn, src) déjà traité */
+            if (!ds->e[j].loser) all_lose = false;
+        }
+        if (first && all_lose)
+            fprintf(f, "%d %d\n", ds->e[i].pgn, ds->e[i].src);
+    }
     /* PGN désactivés en sortie N2K ([output] no_n2k) : src -1 = wildcard. */
     if (cfg)
         for (int i = 0; i < cfg->n_no_n2k; i++)
@@ -576,7 +610,7 @@ int main(int argc, char **argv)
             arb_decision_t d = arbiter_decide(&arb, &m, now);
             if (d.result == ARB_ACCEPT) n_accept++;
             if (losers_path && m.has_pgn && m.has_src)
-                dropset_update(&drop, m.pgn, m.src, d.result, now);
+                dropset_update(&drop, m.pgn, m.src, d.discriminant, d.result, now);
             if (busmap_path)
                 busmap_observe(&bm, &m, &d, now);
 

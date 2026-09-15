@@ -117,7 +117,7 @@ arb_decision_t arbiter_decide(arbiter_t *a, const jsonl_msg_t *m, uint64_t now_m
     const cfg_rule_t *r = config_rule(a->cfg, pgn, disc);
     if (!r) { d.result = ARB_REJECT_NO_RULE; return d; }
     d.rule = r;
-    d.mode = r->mode;
+    d.mode = config_mode_effective(pgn, r->mode);   /* min/max/fusion hors propos → priority */
 
     /* arbitrage proprement dit : identité puis nom requis */
     if (!d.identity)    { d.result = ARB_REJECT_UNKNOWN_SRC; return d; }
@@ -135,7 +135,7 @@ arb_decision_t arbiter_decide(arbiter_t *a, const jsonl_msg_t *m, uint64_t now_m
     a->seen[ri][slot]      = true;
     a->last_seen[ri][slot] = now_ms;
 
-    if (r->mode == CFG_PICK_PRIORITY) {
+    if (d.mode == CFG_PICK_PRIORITY) {
         int win = live_winner(a, r, ri, now_ms);
         d.result = (win == slot) ? ARB_ACCEPT : ARB_REJECT_PRIORITY;
     } else {
@@ -149,7 +149,7 @@ const char *arbiter_current_source(const arbiter_t *a, int pgn, const char *disc
                                    uint64_t now_ms)
 {
     const cfg_rule_t *r = config_rule(a->cfg, pgn, disc);
-    if (!r || r->mode != CFG_PICK_PRIORITY)
+    if (!r || config_mode_effective(pgn, r->mode) != CFG_PICK_PRIORITY)
         return NULL;
     int ri = (int)(r - a->cfg->rules);
     int win = live_winner(a, r, ri, now_ms);

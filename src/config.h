@@ -181,4 +181,14 @@ const char *config_talker(const config_t *c, int pgn);
  * Casse du type ignorée. */
 bool config_sentence_ok(const config_t *c, int pgn, const char *type);
 
+/* PGN AIS (ceux que la fusion par MMSI sait dédoublonner). */
+bool config_pgn_is_ais(int pgn);
+
+/* Mode EFFECTIF d'une règle. min n'a de sens que pour la profondeur (128267),
+ * max que pour le loch (128275), fusion que pour l'AIS : ce sont les seuls que
+ * le mapper et la dédup savent combiner. Ailleurs, le mode vaut priority. Sans
+ * ce repli, « 129025 = max: SCX, VER » faisait accepter TOUTES les sources :
+ * GLL de chaque GPS entremêlées, et plus aucun filtrage sur vcan0 ni 2700. */
+cfg_mode_t config_mode_effective(int pgn, cfg_mode_t mode);
+
 #endif /* N2KMUX_CONFIG_H */

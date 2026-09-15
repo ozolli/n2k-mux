@@ -59,6 +59,7 @@ static const char *INI =
     "129025          = SCX, VER, MAD\n"
     "130306/Apparent = MAD\n"
     "128267          = min: DST_BB, DST_TB\n"
+    "129026          = max: SCX, VER\n"      /* max hors propos : vaut priority */
     "[ignore]\n"
     "pgn = 130311\n";
 
@@ -108,6 +109,17 @@ int main(void)
     /* --- mode min : les deux DST participent --- */
     expect("128267 DST_BB", decide(&arb, "{\"src\":12,\"pgn\":128267,\"fields\":{\"Depth\":3.2}}", 8000).result, ARB_ACCEPT);
     expect("128267 DST_TB", decide(&arb, "{\"src\":13,\"pgn\":128267,\"fields\":{\"Depth\":3.4}}", 8000).result, ARB_ACCEPT);
+
+    /* --- mode sans effet pour ce PGN : traité comme priority --- */
+    expect("129026 max → SCX", decide(&arb, "{\"src\":5,\"pgn\":129026,\"fields\":{}}", 8000).result, ARB_ACCEPT);
+    expect("129026 max → VER supplanté", decide(&arb, "{\"src\":6,\"pgn\":129026,\"fields\":{}}", 8000).result, ARB_REJECT_PRIORITY);
+    if (config_mode_effective(129025, CFG_PICK_FUSION) != CFG_PICK_PRIORITY ||
+        config_mode_effective(129039, CFG_PICK_FUSION) != CFG_PICK_FUSION ||
+        config_mode_effective(128275, CFG_PICK_MAX) != CFG_PICK_MAX ||
+        config_mode_effective(128275, CFG_PICK_MIN) != CFG_PICK_PRIORITY) {
+        fprintf(stderr, "FAIL config_mode_effective\n");
+        failures++;
+    }
 
     /* --- discriminant --- */
     expect("130306 Apparent (MAD)", decide(&arb, "{\"src\":7,\"pgn\":130306,\"fields\":{\"Reference\":\"Apparent\",\"Wind Speed\":4.2}}", 9000).result, ARB_ACCEPT);

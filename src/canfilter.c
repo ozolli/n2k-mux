@@ -156,8 +156,19 @@ int main(int argc, char **argv)
     netout_t no;
     int have_net = 0;
     if (ydraw_port > 0) {
-        if (netout_open(&no, ydraw_port) == 0) have_net = 1;
-        else fprintf(stderr, "canfilter : YDRAW/TCP port %d indisponible\n", ydraw_port);
+        if (netout_open(&no, ydraw_port) == 0) {
+            have_net = 1;
+        } else {
+            /* FATAL, pas un simple avertissement : on continuait sans servir le
+             * port, et qtVlm restait sans N2K réseau jusqu'au redémarrage
+             * suivant. En sortant, la chaîne est relancée par systemd et
+             * reprend le port une fois libéré. */
+            fprintf(stderr, "canfilter : YDRAW/TCP port %d indisponible : %s\n",
+                    ydraw_port, strerror(errno));
+            close(rx);
+            close(tx);
+            return 1;
+        }
     }
 
     fprintf(stderr, "canfilter : %s → %s%s%s, Ctrl-C pour arrêter.\n",
