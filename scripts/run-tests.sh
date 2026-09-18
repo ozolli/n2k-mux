@@ -38,7 +38,7 @@ run_case() {                      # run_case <nom> <commande...>
 say "== testeurs unitaires =="
 UNITS="test_registry test_nmea0183 test_config test_arbiter test_mapper
        test_aisdedup test_sources test_stats test_netout test_ydraw
-       test_inimerge test_polar"
+       test_inimerge test_polar test_sha256"
 for t in $UNITS; do
   if [ -x "./$t" ]; then
     run_case "$t" "./$t"
@@ -416,6 +416,61 @@ PYTRUNC
     ko "corps POST incomplet : pas de 400"
   fi
   kill "$WPID" 2>/dev/null; wait "$WPID" 2>/dev/null
+  rm -rf "$WD"
+  # Connexion : page de login (plus de popup), cookie de session, curl -u.
+  WD=$(mktemp -d)
+  printf '[output]\ntalker = II\n' > "$WD/c.ini"
+  webup() {   # webup <user:pass>
+    ./n2k-mux-web "$WD/c.ini" --port "$PORT" --auth "$1" --secret "$WD/st/web_secret" \
+      --sim-control "$WD/sim.ctl" --sim-state "$WD/st.state" >/dev/null 2>&1 &
+    WPID=$!
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      curl -s -o /dev/null "http://127.0.0.1:$PORT/" && break
+    done
+  }
+  webdown() { kill "$WPID" 2>/dev/null; wait "$WPID" 2>/dev/null; }
+  U="http://127.0.0.1:$PORT"
+  webup admin:pw1
+  case "$(curl -s "$U/")" in *"action='/login'"*) ok "connexion : page de login sans cookie" ;;
+    *) ko "connexion : pas de page de login" ;; esac
+  hdr=$(curl -s -D - -o /dev/null "$U/api/sim")
+  case "$hdr" in *" 401 "*) case "$hdr" in *WWW-Authenticate*) ko "connexion : 401 avec WWW-Authenticate (popup)" ;;
+    *) ok "connexion : API 401 sans popup" ;; esac ;; *) ko "connexion : API sans 401" ;; esac
+  code=$(curl -s -o /dev/null -w '%{http_code}' -u admin:pw1 "$U/api/sim")
+  [ "$code" = 200 ] && ok "connexion : curl -u accepté" || ko "connexion : curl -u → $code"
+  loc=$(curl -s -D - -o /dev/null -d 'user=admin&pass=faux' "$U/login" | tr -d '\r' | sed -n 's/^Location: //p')
+  [ "$loc" = "/?e=1" ] && ok "connexion : mauvais mot de passe refusé" || ko "connexion : mauvais mot de passe → « $loc »"
+  ck=$(curl -s -D - -o /dev/null -d 'user=admin&pass=pw1' "$U/login" | tr -d '\r' | sed -n 's/^Set-Cookie: //p')
+  case "$ck" in n2k_auth=*HttpOnly*SameSite=Strict*) ok "connexion : cookie HttpOnly SameSite=Strict" ;;
+    *) ko "connexion : cookie « $ck »" ;; esac
+  C="${ck%%;*}"
+  code=$(curl -s -o /dev/null -w '%{http_code}' -b "$C" "$U/api/sim")
+  [ "$code" = 200 ] && ok "connexion : cookie accepté" || ko "connexion : cookie refusé ($code)"
+  case "$(curl -s -b "$C" "$U/")" in *"id='logout'"*) ok "connexion : page principale avec le cookie" ;;
+    *) ko "connexion : page principale absente" ;; esac
+  code=$(curl -s -o /dev/null -w '%{http_code}' -b "$C" -X POST --data-binary 'enabled = 1
+' "$U/api/sim")
+  [ "$code" = 403 ] && ok "connexion : cookie seul ne suffit pas à un POST (X-N2K-Mux)" || ko "connexion : POST sans en-tête → $code"
+  perm=$(stat -c %a "$WD/st/web_secret" 2>/dev/null)
+  [ "$perm" = 600 ] && ok "connexion : secret en 0600" || ko "connexion : secret en « $perm »"
+  case "$(curl -s -D - -o /dev/null "$U/logout" | tr -d '\r')" in *"n2k_auth=; "*Max-Age=0*) ok "connexion : /logout efface le cookie" ;;
+    *) ko "connexion : /logout" ;; esac
+  for _ in 1 2 3 4 5; do curl -s -o /dev/null -d 'user=admin&pass=x' "$U/login"; done
+  loc=$(curl -s -D - -o /dev/null -d 'user=admin&pass=pw1' "$U/login" | tr -d '\r' | sed -n 's/^Location: //p')
+  [ "$loc" = "/?e=2" ] && ok "connexion : verrou après 5 échecs" || ko "connexion : pas de verrou (« $loc »)"
+  if command -v node >/dev/null 2>&1; then
+    curl -s "$U/" | sed -n '/<script>/,/<\/script>/p' | sed '1d;$d' > "$WD/login.js"
+    run_case "syntaxe du JS de la page de connexion" node --check "$WD/login.js"
+  fi
+  webdown
+  webup admin:pw1
+  code=$(curl -s -o /dev/null -w '%{http_code}' -b "$C" "$U/api/sim")
+  [ "$code" = 200 ] && ok "connexion : cookie valide après redémarrage" || ko "connexion : cookie perdu au redémarrage ($code)"
+  webdown
+  webup admin:pw2
+  code=$(curl -s -o /dev/null -w '%{http_code}' -b "$C" "$U/api/sim")
+  [ "$code" = 401 ] && ok "connexion : cookie invalidé par un nouveau mot de passe" || ko "connexion : ancien cookie encore valide ($code)"
+  webdown
   rm -rf "$WD"
   # Le JS de la page est écrit à la main dans une chaîne C : une coquille de
   # syntaxe casserait toute l'interface sans que rien ne le signale.

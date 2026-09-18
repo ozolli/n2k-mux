@@ -352,8 +352,17 @@ tête du tableau d'arbitrage.
 > `BIND=0.0.0.0` (LAN). **Écouter ailleurs qu'en local sans authentification est
 > refusé** : posez `WEB_AUTH=user:pass` dans `/etc/default/n2k-mux` (transmis par
 > l'environnement, jamais sur la ligne de commande, lisible par tout utilisateur
-> local). `--allow-anonymous` lève ce refus, à vos risques. HTTP Basic n'étant **pas
-> chiffré**, gardez-le sur le LAN ou derrière un tunnel SSH / un terminateur TLS.
+> local). `--allow-anonymous` lève ce refus, à vos risques.
+>
+> **Connexion** : une page de connexion (plus de popup du navigateur) pose un
+> cookie de session mémorisé **un an par appareil** (`HttpOnly`,
+> `SameSite=Strict`) : on se connecte une fois sur le téléphone, une fois à la
+> table à cartes. Le bouton ⏻ déconnecte. Après 5 essais faux, la connexion est
+> refusée 30 s. Le cookie est signé par un secret serveur conservé dans
+> `/var/lib/n2k-mux/web_secret` (0600) : changer le mot de passe déconnecte tous les
+> appareils, supprimer ce fichier aussi. Les scripts gardent HTTP Basic
+> (`curl -u user:pass`). Le HTTP n'étant **pas chiffré**, gardez l'interface sur le
+> LAN ou derrière un tunnel SSH / un terminateur TLS.
 
 ---
 
@@ -513,13 +522,16 @@ en YDRAW/TCP (qtVlm réseau).
 
 ```
 n2k-mux-web [config.ini] [--sources P] [--stats P] [--busmap P] [--port N] [--bind ADDR]
-            [--reload-cmd CMD] [--auth user:pass] [--allow-anonymous]
+            [--reload-cmd CMD] [--auth user:pass] [--allow-anonymous] [--secret F]
             [--sim-control P] [--sim-state P] [--polar-dir D] [--sim-start CMD] [--sim-stop CMD]
 ```
 
 Défauts : port 8080, bind `127.0.0.1`. `--auth` (ou `N2K_MUX_WEB_AUTH` dans
-l'environnement) active l'authentification HTTP Basic ; un `--bind` non local sans
-elle est refusé, sauf `--allow-anonymous`. `--sim-control` (défaut
+l'environnement) active l'authentification (page de connexion + cookie de session,
+HTTP Basic toujours accepté pour les scripts) ; un `--bind` non local sans elle est
+refusé, sauf `--allow-anonymous`. `--secret` : secret de signature du cookie (0600,
+créé s'il manque ; défaut `$STATE_DIRECTORY/web_secret`, sinon
+`/var/lib/n2k-mux/web_secret`). `--sim-control` (défaut
 `/etc/n2k-mux/sim.ctl`) et `--sim-state` (défaut `/run/n2k-mux/sim.state`) sont les
 fichiers de pilotage et d'état déduit du simulateur, `--polar-dir` le dossier des
 polaires. `--sim-start` / `--sim-stop` sont les commandes de bascule (le service

@@ -37,6 +37,8 @@ NETOUT_OBJ   := $(BUILD)/netout.o
 # ydraw : formateur YDRAW (Yacht Devices RAW text) pour le N2K réseau vers qtVlm ;
 # testé, pas encore lié au daemon (cf. test_ydraw).
 YDRAW_OBJ    := $(BUILD)/ydraw.o
+# sha256 : SHA-256 + HMAC, pour le cookie de session de l'interface web.
+SHA256_OBJ   := $(BUILD)/sha256.o
 
 DAEMON_OBJ   := $(BUILD)/daemon.o
 
@@ -44,7 +46,7 @@ DAEMON_OBJ   := $(BUILD)/daemon.o
 CORE_OBJ := $(JSONL_OBJ) $(REGISTRY_OBJ) $(CONFIG_OBJ) $(ARBITER_OBJ) $(NMEA_OBJ) $(MAPPER_OBJ) $(AISDEDUP_OBJ) $(SOURCES_OBJ) $(STATS_OBJ)
 
 .PHONY: all clean install uninstall test debug
-all: n2k-mux n2k-mux-web n2k-sim n2k-filter ydraw-bridge test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout test_ydraw test_inimerge test_polar
+all: n2k-mux n2k-mux-web n2k-sim n2k-filter ydraw-bridge test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout test_ydraw test_inimerge test_polar test_sha256
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -104,12 +106,16 @@ test_polar: $(POLAR_OBJ) $(BUILD)/test_polar.o
 test_inimerge: $(INIMERGE_OBJ) $(CONFIG_OBJ) $(BUILD)/test_inimerge.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
+# --- SHA-256 / HMAC (cookie de session web) + son testeur ---
+test_sha256: $(SHA256_OBJ) $(BUILD)/test_sha256.o
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
 # --- Module (f) : daemon (binaire final) ---
 n2k-mux: $(CORE_OBJ) $(BUILD)/cansock.o $(BUILD)/busmap.o $(DAEMON_OBJ)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lm
 
 # --- Interface web de gestion (zéro dépendance) ---
-n2k-mux-web: $(CONFIG_OBJ) $(INIMERGE_OBJ) $(POLAR_OBJ) $(BUILD)/web.o
+n2k-mux-web: $(CONFIG_OBJ) $(INIMERGE_OBJ) $(POLAR_OBJ) $(SHA256_OBJ) $(BUILD)/web.o
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lm
 
 # --- Outil de test : pont canboat/actisense → YDRAW → TCP (pour qtVlm N2K) ---
@@ -188,7 +194,7 @@ uninstall:
 	rm -f $(DESTDIR)/etc/n2k-mux/n2k-mux.ini.example
 
 clean:
-	rm -rf $(BUILD) n2k-mux n2k-mux-web n2k-sim n2k-filter ydraw-bridge test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout test_ydraw test_inimerge test_polar
+	rm -rf $(BUILD) n2k-mux n2k-mux-web n2k-sim n2k-filter ydraw-bridge test_jsonl test_registry test_nmea0183 test_config test_arbiter test_mapper test_aisdedup test_sources test_stats test_netout test_ydraw test_inimerge test_polar test_sha256
 
 # Dépendances d'en-têtes générées par -MMD (recompile si un .h change).
 -include $(wildcard $(BUILD)/*.d)

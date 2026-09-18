@@ -500,9 +500,22 @@ Modules prévus (ordre d'implémentation) :
                 ne se relit pas, on écrit le contenu régénéré tel quel (l'édition
                 n'est jamais perdue). Puis copie en `<config>.bak` et écriture
                 atomique (temporaire + rename).
-                --auth : authentification HTTP Basic (toutes routes) ; le mot de
-                passe attendu est encodé en base64 au démarrage et comparé à temps
-                constant ; 401 + WWW-Authenticate sinon. HTTP Basic n'est PAS
+                --auth : authentification (toutes routes). PAGE DE CONNEXION au
+                lieu du popup HTTP Basic (2026-09-18, comme polar_doctor) : POST
+                /login pose le cookie n2k_auth = HMAC-SHA256(secret, "user:pass")
+                (module src/sha256.{h,c}, testeur ./test_sha256 sur les vecteurs
+                FIPS 180-2 / RFC 4231 : aucune dépendance ajoutée), HttpOnly,
+                SameSite=Strict, Max-Age un an. Secret de 32 octets aléatoires en
+                0600 dans --secret (défaut $STATE_DIRECTORY/web_secret, l'unité
+                pose StateDirectory=n2k-mux) : cookies valides après redémarrage,
+                invalidés par un changement de mot de passe. /logout efface le
+                cookie (bouton ⏻, affiché si GET /api/auth dit auth). 5 échecs →
+                refus 30 s, SANS sleep (la boucle poll servirait plus personne).
+                401 désormais SANS WWW-Authenticate (c'est lui qui ouvre le popup) ;
+                la page renvoie vers la connexion sur tout 401. HTTP Basic reste
+                accepté (curl -u), comparé à temps constant. Nom de cookie
+                distinct de polar_doctor (pd_auth) : même hôte, les cookies ne
+                sont pas isolés par port. POST /login est dispensé de X-N2K-Mux. HTTP Basic n'est PAS
                 chiffré (LAN/tunnel/terminateur TLS). Service : variable WEB_AUTH,
                 transmise par l'ENVIRONNEMENT (N2K_MUX_WEB_AUTH) et non sur la ligne
                 de commande (argv est lisible via /proc par tout utilisateur local).

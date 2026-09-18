@@ -58,6 +58,12 @@ EnvironmentFile=-/etc/default/n2k-mux
 # l'utilisateur. ProtectHome=read-only laisse /home lisible.
 ExecStart=/bin/sh -c 'N2K_MUX_WEB_AUTH="${WEB_AUTH:-}" exec "$WEB" "$CONF" --sources /run/n2k-mux/sources.json --stats /run/n2k-mux/stats.json --busmap /run/n2k-mux/busmap.json --port "$PORT" --bind "$BIND" --reload-cmd "pkill -HUP -x n2k-mux" --sim-control "${SIMCTL:-/etc/n2k-mux/sim.ctl}" --sim-state "${SIMSTATE:-/run/n2k-mux/sim.state}" ${POLAR_DIR:+--polar-dir "$POLAR_DIR"} --sim-start "$${SIM_START-$$SWITCH sim}" --sim-stop "$${SIM_STOP-$$SWITCH real}"'
 
+# Secret du cookie de session (page de connexion) : /var/lib/n2k-mux/web_secret,
+# 0600, créé au premier démarrage. Il survit aux redémarrages ; le supprimer
+# déconnecte tous les appareils. n2k-mux-web le trouve par $STATE_DIRECTORY.
+StateDirectory=n2k-mux
+StateDirectoryMode=0700
+
 Restart=always
 RestartSec=3
 

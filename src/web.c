@@ -27,6 +27,7 @@
 #include "config.h"
 #include "inimerge.h"
 #include "polar.h"
+#include "sha256.h"
 
 #include <dirent.h>
 #include <poll.h>
@@ -69,6 +70,14 @@ static const char *g_sim_stop    = NULL;
 #define AUTH_RAW_MAX 256                   /* longueur max acceptée de "user:pass" */
 static const char *g_auth        = NULL;   /* "user:pass" attendu (NULL = pas d'auth) */
 static char        g_auth_b64[352];        /* base64 du credential (>= 4*ceil(256/3)+1) */
+/* Session : cookie n2k_auth = HMAC-SHA256(secret serveur, "user:pass"), en
+ * hexadécimal. Le secret vit dans un fichier 0600 (--secret, défaut
+ * $STATE_DIRECTORY/web_secret) : les cookies survivent aux redémarrages et
+ * deviennent invalides dès que le mot de passe change. Supprimer ce fichier
+ * déconnecte tous les appareils. */
+static const char *g_secret_path = NULL;
+static char        g_token[2 * SHA256_LEN + 1] = "";
+#define SESSION_MAX_AGE 31536000           /* un an, en secondes */
 
 /* --- Page unique embarquée (single quotes en JS pour éviter d'échapper les "). --- */
 static const char PAGE[] =
@@ -118,6 +127,7 @@ static const char PAGE[] =
 "<button data-t='arbitrage' data-i18n='tab_arb'>Arbitrage</button>"
 "<button data-t='sim' data-i18n='tab_sim'>Simulateur</button></nav>\n"
 "<span style='margin-left:auto;display:flex;gap:.5em;align-items:center'>"
+"<button id='logout' class='hbtn' title='Déconnexion / Sign out' hidden>⏻</button>"
 "<button id='lang' class='hbtn' title='Langue / Language'></button>"
 "<button id='theme' class='hbtn' title='Thème / Theme'></button>"
 "<small id='clock'></small></span></header>\n"
@@ -149,6 +159,8 @@ static const char PAGE[] =
 "</section>\n"
 "</main>\n"
 "<script>\n"
+"// Session expirée ou révoquée : toute réponse 401 renvoie vers la connexion.\n"
+"{const f0=window.fetch;window.fetch=async(...a)=>{const r=await f0(...a);if(r.status===401)location.href='/';return r;};}\n"
 "let lang=localStorage.getItem('lang')||((navigator.language||'fr').toLowerCase().startsWith('fr')?'fr':'en');\n"
 "let theme=localStorage.getItem('theme')||((window.matchMedia&&matchMedia('(prefers-color-scheme: light)').matches)?'light':'dark');\n"
 "const L={fr:{\n"
@@ -591,7 +603,45 @@ static const char PAGE[] =
 "// Onglet demandé par l'ancre (#sim…), sinon Sources.\n"
 "{const want=(location.hash||'').slice(1),nb=document.querySelector('nav button[data-t=\"'+want+'\"]');\n"
 " if(nb&&want!=='sources')nb.click();else renderSources();}\n"
+"fetch('/api/auth').then(r=>r.json()).then(a=>{$('#logout').hidden=!a.auth;}).catch(()=>{});\n"
+"$('#logout').onclick=()=>{location.href='/logout';};\n"
 "tick();setInterval(tick,3000);\n"
+"</script></body></html>\n";
+
+/* Page de connexion : remplace le popup HTTP Basic du navigateur. Langue et
+ * thème repris du localStorage de la page principale (même origine). Erreur
+ * signalée par ?e=1 (identifiants) ou ?e=2 (trop de tentatives). Champs nommés
+ * pour les gestionnaires de mots de passe. */
+static const char LOGIN[] =
+"<!DOCTYPE html><html lang='fr'><head><meta charset='utf-8'>\n"
+"<meta name='viewport' content='width=device-width,initial-scale=1'>\n"
+"<title>n2k-mux</title>\n"
+"<style>\n"
+":root{--bg:#0f1216;--fg:#d8dee5;--panel:#161b22;--border:#2a313a;--muted:#8b949e;--accent:#58a6ff;--inbg:#0b0e12;--active:#1f6feb;--errfg:#ff7b72}\n"
+"body.light{--bg:#fff;--fg:#1b2430;--panel:#f3f5f8;--border:#cfd8e3;--muted:#5b6675;--accent:#0b62d6;--inbg:#fff;--errfg:#b42318}\n"
+"*{box-sizing:border-box}body{margin:0;font:16px/1.45 system-ui,sans-serif;background:var(--bg);color:var(--fg);display:flex;min-height:100vh;align-items:center;justify-content:center;padding:0 16px}\n"
+"form{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:1.6em 1.8em;width:min(100%,340px)}\n"
+"h1{margin:0 0 .8em;font-size:1.25em;color:var(--accent)}\n"
+"label{display:block;font-size:.85em;color:var(--muted);margin:.7em 0 .25em}\n"
+"input{width:100%;padding:.5em .6em;background:var(--inbg);color:var(--fg);border:1px solid var(--border);border-radius:6px;font-size:1em}\n"
+"button{margin-top:1.2em;width:100%;padding:.6em;background:var(--active);color:#fff;border:0;border-radius:6px;font-size:1em;cursor:pointer}\n"
+"#err{color:var(--errfg);font-size:.85em;margin-top:.8em;min-height:1.2em}\n"
+"</style></head><body>\n"
+"<form method='post' action='/login'>\n"
+"<h1>n2k-mux</h1>\n"
+"<label for='u' id='lu'>Utilisateur</label><input id='u' name='user' autocomplete='username' autocapitalize='none' autofocus required>\n"
+"<label for='p' id='lp'>Mot de passe</label><input id='p' name='pass' type='password' autocomplete='current-password' required>\n"
+"<button id='bt'>Se connecter</button><div id='err'></div></form>\n"
+"<script>\n"
+"const g=id=>document.getElementById(id);let lang='fr',theme='dark';\n"
+"try{lang=localStorage.getItem('lang')||'';theme=localStorage.getItem('theme')||'';}catch(e){}\n"
+"if(!lang)lang=(navigator.language||'fr').toLowerCase().startsWith('fr')?'fr':'en';\n"
+"if(!theme)theme=(window.matchMedia&&matchMedia('(prefers-color-scheme: light)').matches)?'light':'dark';\n"
+"document.body.classList.toggle('light',theme==='light');document.documentElement.lang=lang;\n"
+"const E={fr:{u:'Utilisateur',p:'Mot de passe',b:'Se connecter',e1:'Identifiants incorrects.',e2:'Trop de tentatives : réessayez dans 30 s.'},\n"
+"en:{u:'User',p:'Password',b:'Sign in',e1:'Wrong credentials.',e2:'Too many attempts: retry in 30 s.'}}[lang]||{};\n"
+"if(E.u){g('lu').textContent=E.u;g('lp').textContent=E.p;g('bt').textContent=E.b;}\n"
+"const q=new URLSearchParams(location.search).get('e');if(q&&E.e1)g('err').textContent=q==='2'?E.e2:E.e1;\n"
 "</script></body></html>\n";
 
 /* --- E/S fichier (sans alloc) --- */
@@ -719,22 +769,38 @@ static int ct_eq(const char *a, const char *b)
     return d == 0;
 }
 
-/* 401 avec en-tête WWW-Authenticate (déclenche le prompt du navigateur). */
+/* 401 SANS en-tête WWW-Authenticate : c'est lui qui fait ouvrir le popup
+ * d'identification du navigateur. La page renvoie alors vers la connexion. */
 static void send_401(int fd)
 {
-    static const char *r =
-        "HTTP/1.1 401 Unauthorized\r\n"
-        "WWW-Authenticate: Basic realm=\"n2k-mux\", charset=\"UTF-8\"\r\n"
-        "Content-Type: text/plain\r\nContent-Length: 16\r\n"
-        "Cache-Control: no-store\r\nConnection: close\r\n\r\n"
-        "401 Unauthorized";
-    ssize_t w = write(fd, r, strlen(r)); (void)w;
+    send_text(fd, 401, "Unauthorized", "application/json", "{\"ok\":false,\"err\":\"auth\"}");
 }
 
 /* Requête authentifiée ? (Authorization: Basic <base64> == g_auth_b64). */
 static int authed(const char *req)
 {
     if (!g_auth) return 1;                 /* auth désactivée */
+    /* Cookie de session posé par la page de connexion (dans l'en-tête Cookie). */
+    const char *end = strstr(req, "\r\n\r\n");
+    const char *c = strcasestr(req, "\r\nCookie:");
+    if (c && g_token[0] && (!end || c < end)) {
+        const char *eol = strstr(c + 2, "\r\n");
+        for (const char *t = c + 9; t && (!eol || t < eol); ) {
+            while (*t == ' ' || *t == ';') t++;
+            if (strncmp(t, "n2k_auth=", 9) == 0) {
+                char tok[80]; size_t i = 0;
+                t += 9;
+                while (t[i] && t[i] != ';' && t[i] != '\r' && t[i] != ' ' && i < sizeof tok - 1) {
+                    tok[i] = t[i]; i++;
+                }
+                tok[i] = '\0';
+                if (ct_eq(tok, g_token)) return 1;
+                break;
+            }
+            t = strchr(t, ';');
+        }
+    }
+    /* Sinon HTTP Basic : curl -u et les scripts. */
     const char *h = strcasestr(req, "Authorization:");
     if (!h) return 0;
     const char *b = strcasestr(h, "Basic ");
@@ -1291,6 +1357,101 @@ static void handle_config_post(int fd, char *body, int write_it)
               "application/json", out);
 }
 
+/* 303 vers `loc`, avec éventuellement un Set-Cookie. */
+static void send_redirect(int fd, const char *loc, const char *cookie)
+{
+    char h[512];
+    int n = snprintf(h, sizeof h,
+        "HTTP/1.1 303 See Other\r\nLocation: %s\r\n%s%s%s"
+        "Content-Length: 0\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+        loc, cookie ? "Set-Cookie: " : "", cookie ? cookie : "", cookie ? "\r\n" : "");
+    if (n > 0) { ssize_t w = write(fd, h, (size_t)n); (void)w; }
+}
+
+/* Valeur d'un champ de formulaire urlencodé (jusqu'au '&'), décodée. */
+static void form_get(const char *body, const char *key, char *out, size_t sz)
+{
+    size_t kl = strlen(key), o = 0;
+    out[0] = '\0';
+    for (const char *p = body; p && *p; ) {
+        if (strncmp(p, key, kl) == 0 && p[kl] == '=') {
+            for (p += kl + 1; *p && *p != '&' && o + 1 < sz; p++) {
+                if (*p == '+') out[o++] = ' ';
+                else if (*p == '%' && p[1] && p[2]) {
+                    char hx[3] = { p[1], p[2], 0 };
+                    out[o++] = (char)strtol(hx, NULL, 16);
+                    p += 2;
+                } else out[o++] = *p;
+            }
+            out[o] = '\0';
+            return;
+        }
+        p = strchr(p, '&');
+        if (p) p++;
+    }
+}
+
+/* POST /login (formulaire user/pass). Anti-force-brute NON bloquant : après 5
+ * échecs, refus pendant 30 s. Un sleep gèlerait la boucle poll() et l'interface
+ * pour tout le monde. */
+static void handle_login(int fd, const char *body)
+{
+    static int fails = 0;
+    static time_t lock_until = 0;
+    time_t now = time(NULL);
+    if (now < lock_until) { send_redirect(fd, "/?e=2", NULL); return; }
+
+    char u[128], p[AUTH_RAW_MAX + 1], cred[AUTH_RAW_MAX + 130];
+    form_get(body, "user", u, sizeof u);
+    form_get(body, "pass", p, sizeof p);
+    snprintf(cred, sizeof cred, "%s:%s", u, p);
+
+    if (g_auth && g_token[0] && ct_eq(cred, g_auth)) {
+        fails = 0;
+        char ck[200];
+        snprintf(ck, sizeof ck, "n2k_auth=%s; Path=/; Max-Age=%d; HttpOnly; SameSite=Strict",
+                 g_token, SESSION_MAX_AGE);
+        send_redirect(fd, "/", ck);
+    } else {
+        if (++fails >= 5) { lock_until = now + 30; fails = 0; }
+        send_redirect(fd, "/?e=1", NULL);
+    }
+}
+
+/* Jeton de session = HMAC-SHA256(secret, "user:pass"). Secret de 32 octets
+ * aléatoires, conservé en hexadécimal dans g_secret_path (0600) ; tiré et
+ * enregistré au premier démarrage. Faute de pouvoir l'enregistrer, un secret en
+ * mémoire sert quand même (reconnexion à chaque redémarrage). */
+static int init_session_token(void)
+{
+    char secret[2 * 32 + 2] = "";
+    FILE *f = fopen(g_secret_path, "r");
+    if (f) {
+        if (!fgets(secret, sizeof secret, f)) secret[0] = '\0';
+        fclose(f);
+        secret[strcspn(secret, "\r\n")] = '\0';
+    }
+    if (strlen(secret) < 64) {
+        unsigned char rnd[32];
+        int ok = 0, ufd = open("/dev/urandom", O_RDONLY);
+        if (ufd >= 0) { ok = (read(ufd, rnd, sizeof rnd) == (ssize_t)sizeof rnd); close(ufd); }
+        if (!ok) { fprintf(stderr, "n2k-mux-web : /dev/urandom illisible\n"); return 0; }
+        for (int i = 0; i < 32; i++) snprintf(secret + 2 * i, 3, "%02x", rnd[i]);
+        char dir[512];
+        snprintf(dir, sizeof dir, "%s", g_secret_path);
+        char *sl = strrchr(dir, '/');
+        if (sl && sl != dir) { *sl = '\0'; mkdir(dir, 0700); }
+        int wfd = open(g_secret_path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+        if (wfd >= 0) { ssize_t w = write(wfd, secret, 64); (void)w; close(wfd); }
+        else fprintf(stderr, "n2k-mux-web : secret non enregistré (%s : %s) — "
+                     "reconnexion à chaque redémarrage\n", g_secret_path, strerror(errno));
+    }
+    uint8_t mac[SHA256_LEN];
+    hmac_sha256(secret, strlen(secret), g_auth, strlen(g_auth), mac);
+    sha256_hex(mac, g_token);
+    return 1;
+}
+
 static void handle_client(int fd)
 {
     static char req[REQ_MAX];
@@ -1310,7 +1471,22 @@ static void handle_client(int fd)
     char method[8] = "", path[256] = "";
     sscanf(req, "%7s %255s", method, path);
 
-    if (!authed(req)) { send_401(fd); return; }
+    /* Accès : cookie de session posé par la page de connexion, ou HTTP Basic
+     * (curl -u, scripts). Sans l'un ni l'autre, la page principale est
+     * remplacée par la page de connexion et l'API répond 401. */
+    int is_page  = strcmp(path, "/") == 0 || strncmp(path, "/?", 2) == 0;
+    int is_login = strcmp(method, "POST") == 0 && strcmp(path, "/login") == 0;
+    if (strcmp(path, "/logout") == 0) {
+        send_redirect(fd, "/", "n2k_auth=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict");
+        return;
+    }
+    if (!is_login && !authed(req)) {
+        if (strcmp(method, "GET") == 0 && is_page)
+            send_resp(fd, 200, "OK", "text/html; charset=utf-8", LOGIN, sizeof LOGIN - 1);
+        else
+            send_401(fd);
+        return;
+    }
 
     char *hdr_end = strstr(req, "\r\n\r\n");
     char *body = hdr_end ? hdr_end + 4 : NULL;
@@ -1324,8 +1500,10 @@ static void handle_client(int fd)
          * page ouverte sur une tablette du bord pouvait réécrire la config ou
          * basculer la chaîne sur le simulateur, l'identifiant HTTP Basic étant
          * déjà mémorisé par le navigateur. */
+        /* Le formulaire de connexion en est dispensé : c'est un envoi de
+         * formulaire classique, et il ne fait rien sans le bon mot de passe. */
         const char *xh = strcasestr(req, "\r\nX-N2K-Mux:");
-        if (!xh || xh > hdr_end) {
+        if (!is_login && (!xh || xh > hdr_end)) {
             send_text(fd, 403, "Forbidden", "text/plain", "403 : en-tête X-N2K-Mux requis\n");
             return;
         }
@@ -1355,11 +1533,14 @@ static void handle_client(int fd)
             return;
         }
         body[want] = '\0';
+        if (is_login) { handle_login(fd, body); return; }
     }
 
     if (strcmp(method, "GET") == 0) {
-        if (strcmp(path, "/") == 0)
+        if (is_page)
             send_resp(fd, 200, "OK", "text/html; charset=utf-8", PAGE, sizeof PAGE - 1);
+        else if (strcmp(path, "/api/auth") == 0)
+            send_text(fd, 200, "OK", "application/json", g_auth ? "{\"auth\":true}" : "{\"auth\":false}");
         else if (strcmp(path, "/api/sources") == 0)
             serve_json_file(fd, g_sources_path);
         else if (strcmp(path, "/api/stats") == 0)
@@ -1409,6 +1590,7 @@ int main(int argc, char **argv)
         else if (strcmp(argv[i], "--reload-cmd") == 0 && i + 1 < argc) g_reload_cmd = argv[++i];
         else if (strcmp(argv[i], "--auth") == 0 && i + 1 < argc) g_auth = argv[++i];
         else if (strcmp(argv[i], "--allow-anonymous") == 0) allow_anon = 1;
+        else if (strcmp(argv[i], "--secret") == 0 && i + 1 < argc) g_secret_path = argv[++i];
         else if (strcmp(argv[i], "--sim-control") == 0 && i + 1 < argc) g_sim_path = argv[++i];
         else if (strcmp(argv[i], "--sim-state") == 0 && i + 1 < argc) g_sim_state = argv[++i];
         else if (strcmp(argv[i], "--polar-dir") == 0 && i + 1 < argc)
@@ -1427,6 +1609,8 @@ int main(int argc, char **argv)
                 "  --auth        exige une authentification HTTP Basic (user:pass)\n"
                 "                (ou variable d'environnement N2K_MUX_WEB_AUTH)\n"
                 "  --allow-anonymous  autorise l'écoute réseau SANS authentification\n"
+                "  --secret F         secret du cookie de session (0600, créé au besoin ;\n"
+                "                défaut $STATE_DIRECTORY/web_secret, sinon /var/lib/n2k-mux)\n"
                 "  --sim-control P    fichier de pilotage du simulateur\n"
                 "                (défaut /etc/n2k-mux/sim.ctl ; cf. n2k-sim --control)\n"
                 "  --polar-dir D      dossier des polaires proposées (.pol/.csv)\n"
@@ -1462,6 +1646,16 @@ int main(int argc, char **argv)
                     AUTH_RAW_MAX); return 2;
         }
         b64encode(g_auth, g_auth_b64, sizeof g_auth_b64);
+        /* Secret du cookie de session : --secret, sinon le StateDirectory
+         * fourni par systemd, sinon /var/lib/n2k-mux. */
+        static char secret_path[576];
+        if (!g_secret_path) {
+            const char *sd = getenv("STATE_DIRECTORY");
+            snprintf(secret_path, sizeof secret_path, "%s/web_secret",
+                     (sd && sd[0]) ? sd : "/var/lib/n2k-mux");
+            g_secret_path = secret_path;
+        }
+        if (!init_session_token()) return 1;
     }
 
     /* L'interface ÉCRIT la config et lance la commande de reload : l'exposer

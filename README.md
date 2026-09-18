@@ -349,9 +349,16 @@ at the top of the Arbitration table.
 > `BIND=0.0.0.0` (LAN). **Listening on anything but localhost without
 > authentication is refused**: set `WEB_AUTH=user:pass` in `/etc/default/n2k-mux`
 > (passed through the environment, never on the command line, which any local user
-> can read). `--allow-anonymous` overrides this refusal, at your own risk. Since
-> HTTP Basic is **not encrypted**, keep it on the LAN or behind an SSH tunnel / a
-> TLS terminator.
+> can read). `--allow-anonymous` overrides this refusal, at your own risk.
+>
+> **Sign-in**: a sign-in page (no browser popup) sets a session cookie remembered
+> for **one year per device** (`HttpOnly`, `SameSite=Strict`): sign in once on the
+> phone, once at the chart table. The ⏻ button signs out. After 5 wrong attempts,
+> sign-in is refused for 30 s. The cookie is signed with a server secret kept in
+> `/var/lib/n2k-mux/web_secret` (0600): changing the password signs every device
+> out, and so does deleting that file. Scripts keep using HTTP Basic
+> (`curl -u user:pass`). Plain HTTP is **not encrypted**: keep it on the LAN or
+> behind an SSH tunnel / a TLS terminator.
 
 ---
 
@@ -509,13 +516,15 @@ arbitrated stream as YDRAW/TCP (network qtVlm).
 
 ```
 n2k-mux-web [config.ini] [--sources P] [--stats P] [--busmap P] [--port N] [--bind ADDR]
-            [--reload-cmd CMD] [--auth user:pass] [--allow-anonymous]
+            [--reload-cmd CMD] [--auth user:pass] [--allow-anonymous] [--secret F]
             [--sim-control P] [--sim-state P] [--polar-dir D] [--sim-start CMD] [--sim-stop CMD]
 ```
 
 Defaults: port 8080, bind `127.0.0.1`. `--auth` (or `N2K_MUX_WEB_AUTH` in the
-environment) enables HTTP Basic authentication; a non-local `--bind` without it is
-refused unless `--allow-anonymous`. `--sim-control` (default `/etc/n2k-mux/sim.ctl`)
+environment) enables authentication (sign-in page + session cookie, HTTP Basic
+still accepted for scripts); a non-local `--bind` without it is refused unless
+`--allow-anonymous`. `--secret` is the cookie signing secret (0600, created if
+absent; default `$STATE_DIRECTORY/web_secret`, else `/var/lib/n2k-mux/web_secret`). `--sim-control` (default `/etc/n2k-mux/sim.ctl`)
 and `--sim-state` (default `/run/n2k-mux/sim.state`) are the simulator's control and
 derived-state files, `--polar-dir` the polar folder. `--sim-start` / `--sim-stop` are
 the switch commands (the service passes `n2k-mux-switch sim` / `real`; set

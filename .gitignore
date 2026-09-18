@@ -21,6 +21,7 @@ build/
 /test_ydraw
 /test_inimerge
 /test_polar
+/test_sha256
 
 # Réglages locaux Claude Code (spécifiques à la machine)
 .claude/
