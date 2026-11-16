@@ -412,6 +412,25 @@ const char *nmea_xdr_attitude(nmea_t *s, const char *talker,
     return nmea_end(s);
 }
 
+const char *nmea_xdr_rates(nmea_t *s, const char *talker,
+                           double roll_rate, double pitch_rate, double yaw_rate)
+{
+    if (isnan(roll_rate) && isnan(pitch_rate) && isnan(yaw_rate))
+        return NULL;
+    nmea_begin(s, talker, "XDR");
+    static const char *ID[3] = { "RRATE", "PRATE", "YRATE" };
+    const double v[3] = { roll_rate, pitch_rate, yaw_rate };
+    for (int i = 0; i < 3; i++) {
+        if (isnan(v[i]))
+            continue;
+        nmea_field_char(s, 'G');     /* transducteur générique */
+        nmea_field_f(s, v[i], 2);
+        nmea_field_char(s, 0);       /* unité : aucune ne convient en 0183 */
+        nmea_field_str(s, ID[i]);
+    }
+    return nmea_end(s);
+}
+
 const char *nmea_mda(nmea_t *s, const char *talker,
                      double pressure_bar, double air_temp_c)
 {

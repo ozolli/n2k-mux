@@ -551,6 +551,7 @@ inputs), `--state FILE` (derived values, twice a second), `--actisense-out FILE`
 | 127250 | Heading | HDG + HDM (mag) / HDT (true) |
 | 127251 | Rate of turn | ROT |
 | 127257 | Attitude | XDR (pitch/roll) |
+| 130842 | Furuno 6DOF (undocumented): gyro rates | ROT (yaw) + XDR (RRATE/PRATE/YRATE) — off by default |
 | 130306 | Wind | MWV(R) apparent · MWV(T) true (boat/water referenced) · MWD (ground referenced to North) |
 | 127245 | Rudder | RSA |
 | 129291 | Current (set/drift) | VDR — off in the shipped configs (`no_0183 = 129291`): qtVlm rejects it |

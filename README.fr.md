@@ -559,6 +559,7 @@ que la case ne fasse que rendre le simulateur muet).
 | 127250 | Cap | HDG + HDM (mag) / HDT (vrai) |
 | 127251 | Taux de giration | ROT |
 | 127257 | Attitude | XDR (pitch/roll) |
+| 130842 | Furuno 6DOF (non documenté) : vitesses du gyromètre | ROT (lacet) + XDR (RRATE/PRATE/YRATE) — désactivé par défaut |
 | 130306 | Vent | MWV(R) apparent · MWV(T) vrai (référencé bateau/eau) · MWD (référencé fond, nord) |
 | 127245 | Barre | RSA |
 | 129291 | Courant (set/drift) | VDR — coupée dans les configs livrées (`no_0183 = 129291`) : qtVlm la rejette |

@@ -213,6 +213,44 @@ static const char *map_mda(mapper_t *mp, uint64_t now, nmea_t *s,
     return nmea_mda(s, mp->talker, p, t);
 }
 
+/* --- PGN 130842 Furuno « Six Degrees Of Freedom Movement » ------------------
+ * NON DOCUMENTÉ par Furuno. canboat ne nomme pas les champs : A, B, C (4 o
+ * signés), D (1 o), E, F, G (les trois VITESSES angulaires, 4 o signés,
+ * 0,001 °/s par unité) et I (2 o). A, B, C, D et I restent inconnus : on ne les
+ * convertit pas plutôt que de leur inventer un sens.
+ *
+ * L'échelle de 0,001 °/s vient de canboat (issue #756) : l'intégration du champ
+ * G contre le cap du SCX-20 lui-même donne r = 0,9996, recoupé avec un compas
+ * indépendant. Le SIGNE et l'orientation des axes ne sont PAS établis — à
+ * vérifier sur un vrai SCX-20 avant de se fier au sens de rotation.
+ *
+ * Intérêt : le 127251 du SCX-20 est AMORTI, ces vitesses sont la mesure brute
+ * du gyromètre.
+ *
+ * Deux canboat à gérer : avant la correction #756, le lacet sortait coupé en
+ * deux champs de 16 bits (G = poids faibles, H = poids forts signés) ; depuis,
+ * G porte les 32 bits et H n'existe plus. Vérifié sur canboat 6.2.2 : lacet
+ * −774 → G −774 / H −1 ; 100000 → G −31072 / H 1. */
+#define SIXDOF_LSB_DEG_S 0.001
+
+static double sixdof_yaw_counts(const jsonl_msg_t *m)
+{
+    double g, h;
+    if (!jsonl_get_num(m, "G", &g))
+        return NAN;
+    if (!jsonl_get_num(m, "H", &h))
+        return g;                       /* canboat récent : G est déjà 32 bits */
+    return (double)((long)g & 0xFFFF) + h * 65536.0;
+}
+
+/* Les trois vitesses en °/s, ou NaN. `yaw` sert aussi à la ROT (deg/min). */
+static void sixdof_rates(const jsonl_msg_t *m, double *roll, double *pitch, double *yaw)
+{
+    *roll  = getf(m, "E") * SIXDOF_LSB_DEG_S;
+    *pitch = getf(m, "F") * SIXDOF_LSB_DEG_S;
+    *yaw   = sixdof_yaw_counts(m) * SIXDOF_LSB_DEG_S;
+}
+
 int mapper_map(mapper_t *mp, const jsonl_msg_t *m, const arb_decision_t *d,
                uint64_t now_ms, map_out_t *out)
 {
@@ -352,6 +390,20 @@ int mapper_map(mapper_t *mp, const jsonl_msg_t *m, const arb_decision_t *d,
     {
         double r = getf(m, "Rate");
         emit(out, nmea_rot(&s, tk, isnan(r) ? NAN : r * 60.0));
+        break;
+    }
+
+    case 130842: { /* Furuno 6DOF → ROT (lacet brut) + XDR (trois vitesses) */
+        /* Le PGN 130842 est PARTAGÉ : Maretron y met l'état d'un guindeau et
+         * Simnet des données statiques AIS, avec d'autres champs. Sans ce
+         * garde-fou, un guindeau sur le bus sortirait une ROT fantaisiste. */
+        if (!has_word(gets(m, "Manufacturer Code"), "Furuno"))
+            break;
+        double roll, pitch, yaw;
+        sixdof_rates(m, &roll, &pitch, &yaw);
+        emit(out, nmea_rot(&s, tk, isnan(yaw) ? NAN : yaw * 60.0));   /* deg/min */
+        nmea_t sx;
+        emit(out, nmea_xdr_rates(&sx, tk, roll, pitch, yaw));
         break;
     }
 

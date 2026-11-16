@@ -158,9 +158,17 @@ static bool lr_line(linereader_t *lr, char *out, size_t outsz)
     return true;
 }
 
-/* --- Throttle de la sortie 0183 (limite de débit par type de phrase) --- */
+/* --- Throttle de la sortie 0183 (limite de débit par type de phrase) ---
+ * Clé = (PGN, type) et NON le type seul. Deux PGN différents peuvent produire
+ * le même type (127257 attitude et 130842 vitesses → XDR ; 130306 Apparent et
+ * True → MWV) : avec une clé par type, le producteur programmé en premier
+ * rafraîchissait le compteur à chaque tour et l'autre n'était pas « ralenti »
+ * mais AFFAMÉ — zéro phrase émise. Constaté le 2026-11-16 avec XDR = 1000 :
+ * 6 attitudes et 0 vitesse en six secondes. Chaque producteur a donc son
+ * intervalle ; le débit total d'un type est celui de [rate] × nb de producteurs. */
 #define THR_MAX 32
 typedef struct {
+    int      pgn;       /* PGN producteur */
     char     type[4];   /* type de phrase, ex. "GSV" */
     uint64_t last;      /* dernière émission (ms) */
 } thr_entry_t;
@@ -186,15 +194,16 @@ static void sentence_type(const char *s, char out[4])
     out[0] = t[0]; out[1] = t[1]; out[2] = t[2]; out[3] = '\0';
 }
 
-/* Pointeur vers l'horodatage de dernière émission d'un type (créé au besoin). */
-static uint64_t *thr_last(throttle_t *t, const char *type)
+/* Horodatage de dernière émission d'un (PGN, type), créé au besoin. */
+static uint64_t *thr_last(throttle_t *t, int pgn, const char *type)
 {
     for (int i = 0; i < t->n; i++)
-        if (strcmp(t->e[i].type, type) == 0)
+        if (t->e[i].pgn == pgn && strcmp(t->e[i].type, type) == 0)
             return &t->e[i].last;
     if (t->n >= THR_MAX)
         return NULL;
     thr_entry_t *e = &t->e[t->n++];
+    e->pgn = pgn;
     snprintf(e->type, sizeof e->type, "%s", type);
     e->last = 0;
     return &e->last;
@@ -650,7 +659,7 @@ int main(int argc, char **argv)
                         for (int j = 0; j < n_opened; j++)
                             if (strcmp(opened[j], ty) == 0) { already = true; break; }
                         if (!already) {
-                            uint64_t *last = thr_last(&thr, ty);
+                            uint64_t *last = thr_last(&thr, m.pgn, ty);
                             if (last && now - *last < (uint64_t)iv) {
                                 pass = false;          /* gate fermé : on jette */
                             } else {

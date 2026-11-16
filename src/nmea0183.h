@@ -145,6 +145,14 @@ const char *nmea_xdr(nmea_t *s, const char *talker,
 const char *nmea_xdr_attitude(nmea_t *s, const char *talker,
                               double pitch, double roll);
 
+/* XDR vitesses angulaires (roulis, tangage, lacet) en DEGRÉS PAR SECONDE,
+ * une phrase, trois quadruplets. Type « G » (générique) et unité VIDE : la
+ * norme 0183 n'a pas de code d'unité pour une vitesse angulaire, et annoncer
+ * « D » (degrés) serait faux. Identifiants RRATE / PRATE / YRATE. Chaque champ
+ * NMEA_NA est omis ; aucune phrase si les trois manquent. */
+const char *nmea_xdr_rates(nmea_t *s, const char *talker,
+                           double roll_rate, double pitch_rate, double yaw_rate);
+
 /* Composite météo : pression (bar, inHg calculé) + température air (°C). */
 const char *nmea_mda(nmea_t *s, const char *talker,
                      double pressure_bar, double air_temp_c);

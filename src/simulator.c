@@ -718,6 +718,46 @@ static void e_attitude(double t)   /* 127257 → XDR (pitch/roll) */
     emit(2, SCX_SRC, 127257, "Attitude", f);
 }
 
+/* --- Vitesses angulaires du gyromètre (PGN 130842) --------------------------
+ * Lacet = giration du bateau ; tangage = dérivée de la sinusoïde de tangage ;
+ * roulis = dérivée de la gîte, calculée par différence finie (la gîte dépend du
+ * vent apparent, pas d'expression analytique simple). En °/s. */
+static void boat_rates(double t, double *roll_s, double *pitch_s, double *yaw_s)
+{
+    static double last_roll, last_t;
+    static int    have;
+    double roll = boat_roll();
+    *pitch_s = 3.0 / 5.0 * cos(t / 5.0);        /* d/dt de 3·sin(t/5) */
+    *yaw_s   = boat.rot;
+    *roll_s  = (have && t > last_t) ? (roll - last_roll) / (t - last_t) : 0.0;
+    last_roll = roll;
+    last_t = t;
+    have = 1;
+}
+
+/* Comptes bruts du 130842 : 0,001 °/s par unité (cf. mapper.c). */
+static long rate_counts(double deg_s) { return lround(deg_s * 1000.0); }
+
+static void e_sixdof(double t)   /* 130842 Furuno « Six Degrees Of Freedom » */
+{
+    double rr, pr, yr;
+    boat_rates(t, &rr, &pr, &yr);
+    long yaw = rate_counts(yr);
+    char f[320];
+    /* Forme de canboat 6.2.2 : le lacet sort coupé en G (16 bits faibles) et H
+     * (16 bits forts signés). canboat récent (issue #756) n'émet que G, sur 32
+     * bits ; le mapper lit les deux formes. A, B, C, D et I sont INCONNUS :
+     * laissés à zéro plutôt que de leur inventer un contenu. */
+    snprintf(f, sizeof f,
+             "\"Manufacturer Code\":{\"value\":1855,\"name\":\"Furuno\"},"
+             "\"Industry Code\":{\"value\":4,\"name\":\"Marine Industry\"},"
+             "\"A\":0,\"B\":0,\"C\":0,\"D\":0,"
+             "\"E\":%ld,\"F\":%ld,\"G\":%d,\"H\":%d,\"I\":0",
+             rate_counts(rr), rate_counts(pr),
+             (int)(int16_t)(yaw & 0xFFFF), (int)(yaw >> 16));
+    emit(2, SCX_SRC, 130842, "Furuno: Six Degrees Of Freedom Movement", f);
+}
+
 static void e_wind(double t)   /* 130306 → MWV(R), MWV(T), MWD */
 {
     (void)t;
@@ -1095,6 +1135,21 @@ static void a_press(double t)      /* 130314 Actual Pressure (atmosphérique) */
     emit_frame(5, SCX_SRC, 130314, b, 8);
 }
 
+static void a_sixdof(double t)     /* 130842 Furuno 6DOF (fast-packet, 29 o.) */
+{
+    uint8_t b[29];
+    memset(b, 0, sizeof b);
+    /* en-tête propriétaire : fabricant(11) | réservé(2 = 0b11) | industrie(3) */
+    p16(b, 0, (int)(1855 | (3 << 11) | (4 << 13)));
+    double rr, pr, yr;
+    boat_rates(t, &rr, &pr, &yr);
+    /* A, B, C (offsets 2, 6, 10) et D (14) inconnus : laissés à zéro. */
+    p32(b, 15, rate_counts(rr));       /* E : vitesse de roulis */
+    p32(b, 19, rate_counts(pr));       /* F : vitesse de tangage */
+    p32(b, 23, rate_counts(yr));       /* G : vitesse de lacet, 32 bits */
+    emit_frame(2, SCX_SRC, 130842, b, 29);
+}
+
 static void a_rudder(double t)     /* 127245 Rudder */
 {
     uint8_t b[8] = { 0, 0xff, 0xff, 0x7f, 0, 0, 0xff, 0xff };  /* instance 0 ; ordre n/a */
@@ -1322,7 +1377,7 @@ static struct { int id; double iv, next; } ACT_SCHED[] = {
     {0,250,0},{1,250,0},{2,200,0},{3,500,0},{4,200,0},
     {5,250,0},{6,500,0},{7,500,0},{8,2000,0},{9,2000,0},{10,1000,0},
     {11,2000,0},{12,200,0},{13,1000,0},{14,5000,0},{15,2000,0},
-    {16,2000,0},{17,3000,0},{18,1000,0},
+    {16,2000,0},{17,3000,0},{18,1000,0},{19,200,0},
 };
 
 /* Émet les trames dues à l'instant el (ms depuis le départ). */
@@ -1351,6 +1406,7 @@ static void act_tick(double el, double t, int once, int no_ais)
             case 16: a_log(t); break;
             case 17: if (!no_ais) a_ais(t); break;
             case 18: a_setdrift(); break;
+            case 19: a_sixdof(t); break;
         }
         /* sans dérive : on avance l'échéance d'une période, pas « maintenant +
          * période » ; très en retard (reprise après désactivation), on recale */
@@ -1412,6 +1468,7 @@ static sched_t SCHED[] = {
     { e_heading,       200, 0, 0, "127250 → HDG/HDM/HDT" },
     { e_rot,           500, 0, 0, "127251 → ROT" },
     { e_attitude,      200, 0, 0, "127257 → XDR" },
+    { e_sixdof,        200, 0, 0, "130842 → ROT/XDR (gyromètre)" },
     { e_wind,          250, 0, 0, "130306 → MWV/MWD" },
     { e_setdrift,     1000, 0, 0, "129291 → VDR" },
     { e_rudder,        200, 0, 0, "127245 → RSA" },

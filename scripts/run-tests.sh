@@ -155,6 +155,40 @@ else
   rm -rf "$LD"
 fi
 
+# ---- 3 ter. Furuno 6DOF (130842) et famine du limiteur de débit ------------
+say "== Furuno 6DOF (130842) =="
+if [ ! -x ./n2k-sim ] || [ ! -x ./n2k-mux ]; then
+  ko "n2k-sim ou n2k-mux absent (make d'abord)"
+else
+  GD=$(mktemp -d)
+  printf 'enabled = 1\nhdg = auto 90\nstw = 6\nset = 0\ndrift = 0\ntwd = 60\ntws = 18\n' > "$GD/g.ctl"
+  ./n2k-sim --no-ais --duration 4 --control "$GD/g.ctl" 2>/dev/null \
+    | ./n2k-mux n2k-sim.ini 2>/dev/null > "$GD/out"
+  # Le 130842 sort en XDR (RRATE/PRATE/YRATE) ; le 127251 garde la ROT.
+  if grep -q 'XDR,G,.*,,RRATE,G,.*,,PRATE,G,.*,,YRATE' "$GD/out"; then
+    ok "130842 → XDR vitesses angulaires"
+  else ko "130842 : pas de XDR de vitesses"; fi
+  # FAMINE : deux PGN produisent le type XDR (127257 attitude, 130842 vitesses)
+  # et [rate] XDR les limite. Avec un compteur par TYPE, le second n'était pas
+  # ralenti mais jamais émis. Le compteur est par (PGN, type) : les deux sortent.
+  na=$(grep XDR "$GD/out" | grep -c ROLL)
+  nr=$(grep XDR "$GD/out" | grep -c RRATE)
+  if [ "$na" -gt 0 ] && [ "$nr" -gt 0 ]; then
+    ok "limiteur : deux producteurs du même type émettent ($na attitude, $nr vitesses)"
+  else ko "limiteur : un producteur XDR affamé ($na attitude, $nr vitesses)"; fi
+  # Aller-retour de la trame N2K par l'analyzer canboat, s'il est installé.
+  AZ="${ANALYZER:-$HOME/canboat/rel/linux-x86_64/analyzer}"
+  if [ -x "$AZ" ]; then
+    got=$(./n2k-sim --once --no-ais --actisense --control "$GD/g.ctl" </dev/null \
+          | grep ',130842,' | "$AZ" -json -nv 2>/dev/null | grep -c '"pgn":130842')
+    if [ "${got:-0}" -ge 1 ]; then ok "trame N2K 130842 relue par l'analyzer"
+    else ko "trame N2K 130842 non décodée par l'analyzer"; fi
+  else
+    say "  (analyzer canboat absent : aller-retour N2K non vérifié)"
+  fi
+  rm -rf "$GD"
+fi
+
 # ---- 4. simulateur piloté (fichier de contrôle) ---------------------------
 say "== simulateur piloté (--control) =="
 if [ ! -x ./n2k-sim ]; then

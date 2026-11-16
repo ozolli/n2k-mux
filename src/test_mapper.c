@@ -75,7 +75,7 @@ static const char *INI =
     "RUD=SRUD\nLOG=SLOG\nTMP=STMP\nBAR=SBAR\n"
     "[priority]\n"
     "129025=GPS\n129026=GPS\n126992=GPS\n129029=GPS\n"
-    "127250=CMP\n127251=CMP\n127257=CMP\n"
+    "127250=CMP\n127251=CMP\n127257=CMP\n130842=CMP\n"
     "130306/Apparent=WND\n130306/True=WND\n130306/Magnetic=WND\n"
     "127245=RUD\n128259=LOG\n129291=WND\n"
     "130316/Sea=TMP\n130316/Outside=TMP\n"
@@ -122,6 +122,30 @@ int main(void)
     /* ROT : 0.5 deg/s → 30 deg/min */
     o = run("{\"src\":7,\"pgn\":127251,\"fields\":{\"Rate\":0.5}}", 1000);
     chk("ROT", &o, 0, "$IIROT,30.0,A*");
+
+    /* Furuno 6DOF (130842, non documenté) : E/F/G = vitesses angulaires en
+     * 0,001 °/s. Lacet 774 → 0,774 °/s → ROT 46,4 deg/min. Deux formes de
+     * canboat : G coupé en G/H (6.2.2) ou G sur 32 bits (après l'issue #756). */
+    o = run("{\"src\":7,\"pgn\":130842,\"fields\":{\"Manufacturer Code\":{\"value\":1855,\"name\":\"Furuno\"},"
+            "\"E\":-2184,\"F\":1467,\"G\":774,\"H\":0,\"I\":-5}}", 1000);
+    chk("6DOF → ROT", &o, 0, "$IIROT,46.4,A*");
+    chk("6DOF → XDR", &o, 1, "$IIXDR,G,-2.18,,RRATE,G,1.47,,PRATE,G,0.77,,YRATE*");
+    /* lacet négatif coupé en deux : G −774, H −1 → −774 counts → −46,4 deg/min */
+    o = run("{\"src\":7,\"pgn\":130842,\"fields\":{\"Manufacturer Code\":{\"value\":1855,\"name\":\"Furuno\"},"
+            "\"E\":0,\"F\":0,\"G\":-774,\"H\":-1}}", 1000);
+    chk("6DOF lacet négatif (G/H)", &o, 0, "$IIROT,-46.4,A*");
+    /* au-delà de 16 bits : G −31072, H 1 → 100000 counts → 100 °/s → 6000 deg/min */
+    o = run("{\"src\":7,\"pgn\":130842,\"fields\":{\"Manufacturer Code\":{\"value\":1855,\"name\":\"Furuno\"},"
+            "\"E\":0,\"F\":0,\"G\":-31072,\"H\":1}}", 1000);
+    chk("6DOF lacet > 16 bits (G/H)", &o, 0, "$IIROT,6000.0,A*");
+    /* canboat récent : pas de champ H, G porte les 32 bits */
+    o = run("{\"src\":7,\"pgn\":130842,\"fields\":{\"Manufacturer Code\":{\"value\":1855,\"name\":\"Furuno\"},"
+            "\"E\":0,\"F\":0,\"G\":100000}}", 1000);
+    chk("6DOF lacet 32 bits (sans H)", &o, 0, "$IIROT,6000.0,A*");
+    /* même PGN chez Maretron (guindeau) : AUCUNE phrase, les champs sont autres */
+    o = run("{\"src\":7,\"pgn\":130842,\"fields\":{\"Manufacturer Code\":{\"value\":137,\"name\":\"Maretron\"},"
+            "\"Windlass Instance\":0,\"Speed Control\":50}}", 1000);
+    if (o.n != 0) { fprintf(stderr, "FAIL 6DOF : %d phrase(s) pour un 130842 Maretron\n", o.n); failures++; }
 
     /* Attitude → XDR pitch/roll */
     o = run("{\"src\":7,\"pgn\":127257,\"fields\":{\"Pitch\":2.0,\"Roll\":-3.0}}", 1000);

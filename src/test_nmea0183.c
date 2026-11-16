@@ -107,6 +107,14 @@ int main(void)
     check_frame("RSA", nmea_rsa(&s, "II", -3.5, NMEA_NA));    sample(s.buf);
     check_frame("VHW", nmea_vhw(&s, "II", NMEA_NA, NMEA_NA, 6.2)); sample(s.buf);
     check_frame("XDR", nmea_xdr_attitude(&s, "II", 2.1, -3.4)); sample(s.buf);
+    check_frame("XDR (vitesses angulaires)", nmea_xdr_rates(&s, "II", -2.18, 1.47, 0.77));
+    sample(s.buf);
+    expect_eq("XDR vitesses", nmea_xdr_rates(&s, "II", -2.18, 1.47, 0.77),
+              "$IIXDR,G,-2.18,,RRATE,G,1.47,,PRATE,G,0.77,,YRATE*6A\r\n");
+    if (nmea_xdr_rates(&s, "II", NMEA_NA, NMEA_NA, NMEA_NA) != NULL) {
+        fprintf(stderr, "FAIL XDR vitesses : phrase émise sans aucune valeur\n");
+        failures++;
+    }
     check_frame("MDA", nmea_mda(&s, "II", 1.013, 19.8));      sample(s.buf);
     check_frame("ZDA", nmea_zda(&s, "II", 14, 30, 12.5, 15, 6, 2026)); sample(s.buf);
 

@@ -36,6 +36,14 @@ DH     = 000A520AF6A0        ; DataHub PredictWind    (résolu sur banc)
 127250/True     = SCX, MAD             ; HDT
 127251          = SCX, MAD             ; ROT
 127257          = SCX, MAD             ; XDR (pitch/roll)
+; PGN 130842 « Six Degrees Of Freedom » du SCX-20 : NON documenté par Furuno.
+; Seules les trois VITESSES angulaires y sont décodées (0,001 °/s par unité) ;
+; les autres champs restent inconnus. Il produit ROT (lacet) et XDR (les trois
+; vitesses, identifiants RRATE/PRATE/YRATE). Intérêt : le 127251 du SCX-20 est
+; AMORTI, ces vitesses sont la mesure brute du gyromètre. Décommenter pour
+; l'activer ; penser alors à arbitrer la ROT entre 127251 et 130842, par
+; exemple avec [sentence] ou no_0183, sinon deux ROT sortent par cycle.
+;130842         = SCX                  ; ROT + XDR (gyromètre brut)
 130306/Apparent = MAD                  ; MWV(R), angle relatif à l'étrave
 130306/True     = MAD                  ; MWV(T) si référence bateau/eau, MWD si référence nord
 130306/Magnetic = MAD                  ; MWD (direction magnétique, référence sol)

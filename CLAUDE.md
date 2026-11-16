@@ -388,7 +388,15 @@ Modules prévus (ordre d'implémentation) :
                 étant incompatible avec poll. Effet de bord : SIGHUP est
                 désormais immédiat (poll n'est pas redémarré). throttle : table type→dernière émission ; section [rate]
                 de l'INI ; une rafale multi-phrases (pages GSV) passe en entier
-                dès l'ouverture du gate (sinon pagination cassée).
+                dès l'ouverture du gate (sinon pagination cassée). Clé du throttle =
+                (PGN, type) et NON le type seul : deux PGN peuvent produire le
+                même type (127257 attitude et 130842 vitesses → XDR ; 130306
+                Apparent et True → MWV) et, avec une clé par type, celui
+                programmé en premier rafraîchissait le compteur à chaque tour —
+                l'autre n'était pas ralenti mais AFFAMÉ, zéro phrase (constaté
+                le 2026-11-16 : XDR = 1000 → 6 attitudes, 0 vitesse en 6 s).
+                Chaque producteur a donc son intervalle ; le débit total d'un
+                type vaut [rate] × nombre de producteurs.
                 usage : n2k-mux [config.ini] [--tx FIFO] [--tx-interval SEC]
                         [--no-0183] [-v]
                 --tx : émet les ISO Request (PGN 59904) sur un FIFO relié au
@@ -736,6 +744,7 @@ AIS = em-trak B953 · VER = Veratron GO · DH = DataHub PredictWind · M510 = IC
 | 127250 | Reference (Magnetic/True) | SCX > MAD | HDG, HDT, HDM |
 | 127251 | — | SCX > MAD | ROT |
 | 127257 | — | SCX > MAD | XDR (pitch/roll) |
+| 130842 | — | SCX (Furuno seul) | ROT (lacet) + XDR (RRATE/PRATE/YRATE) |
 | 130306 | Reference (Apparent/True) | MAD | MWV(R) si Apparent ; MWV(T)+MWD si True |
 | 127245 | — | MAD | RSA |
 | 129291 | — | MAD | VDR (courant : set vrai/mag + drift) |
@@ -769,6 +778,25 @@ AIS = em-trak B953 · VER = Veratron GO · DH = DataHub PredictWind · M510 = IC
 - **MTW** = température eau, depuis 130316 (Temperature Extended Range, champ "Temperature") dont Temperature Source = "Sea Temperature". 130312 (déprécié, champ "Actual Temperature") reste accepté en entrée.
 - **XDR** type pression/température/attitude. Pour 127257 : pitch + roll (pas le yaw).
 - **DPT** : profondeur = valeur minimale des deux DST810 (sécurité haut-fond), pas de moyenne.
+- **130842 Furuno « Six Degrees Of Freedom »** : PGN NON documenté par Furuno,
+  partagé avec Maretron (guindeau) et Simnet (AIS) — d'où le garde-fou sur
+  « Manufacturer Code » = Furuno, sans lequel un guindeau sortirait une ROT
+  fantaisiste. canboat ne nomme pas les champs : A, B, C (4 o signés), D (1 o),
+  **E, F, G = vitesses de roulis, tangage et lacet** (4 o signés, **0,001 °/s**
+  par unité) et I (2 o). A, B, C, D et I restent INCONNUS et ne sont pas
+  convertis. L'échelle vient de canboat (issue #756) : intégrer G contre le cap
+  du SCX-20 lui-même donne r = 0,9996, recoupé avec un compas indépendant. Le
+  SIGNE et l'orientation des axes ne sont PAS établis. Intérêt : le 127251 du
+  SCX-20 est AMORTI, ces vitesses sont la mesure brute du gyromètre. Sortie :
+  ROT (lacet, ×60 → deg/min) + `nmea_xdr_rates` (une XDR, trois quadruplets,
+  type « G » générique et unité VIDE — la norme 0183 n'a pas de code d'unité
+  pour une vitesse angulaire, annoncer « D » serait faux).
+  DEUX canboat à gérer : avant #756 le lacet sortait coupé en G (16 bits
+  faibles) + H (16 bits forts signés) ; depuis, G porte les 32 bits et H
+  disparaît. Le mapper lit les deux formes (vérifié sur canboat 6.2.2 : lacet
+  −774 → G −774 / H −1 ; 100000 → G −31072 / H 1). PAS DE MATÉRIEL : aucun
+  SCX-20 sur le banc, tout est validé par le simulateur et par l'aller-retour
+  de la trame N2K dans l'analyzer canboat.
 - **Position et heure** : l'angle est arrondi en dix-millièmes de minute AVANT d'être
   séparé en degrés et minutes, et les secondes sont TRONQUÉES au centième. Arrondir
   les minutes ou les secondes seules sortait `4760.0000` (47,99999999°) et
