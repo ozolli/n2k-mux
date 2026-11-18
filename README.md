@@ -437,6 +437,15 @@ position. Angles to the bow read 0–180° with the side (port/starboard).
   to the table, never extrapolated.
 - **Heel** follows the apparent wind (to leeward, up to 7°) and stays steady when
   the wind does.
+- **Man overboard** — two buttons, two scenarios. *MOB button on board*:
+  **PGN 127233** alone, nothing transmits in the water. *AIS-MOB beacon*: a
+  **129038** at MMSI 972000001, status AIS-SART, alone as well. Either way the
+  position is frozen when you press — the boat sails on, the point stays put.
+  The beacon rides the existing AIS chain, so it also comes out as 0183 on
+  10110; 127233 is N2K only. Like a real one, the beacon transmits at once but
+  needs **15 to 45 s** (random) to get its GNSS fix: until then it is an alert
+  with no position (AIS "not available" values, time stamp 63), then the fix.
+  `n2k-sim --mob-fix SEC` forces that delay (0 = position straight away).
 
 > The simulated boat has **no leeway**. If your navigation software estimates
 > leeway from heel, set its leeway coefficient to **0** while simulating, or it will

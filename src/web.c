@@ -121,6 +121,9 @@ static const char PAGE[] =
 ".sl{display:inline-block;font-size:.82em;white-space:nowrap;margin:0 .35em .1em 0}\n"
 ".arb tr.ign td{opacity:.45}.arb tr.ign td:first-child{opacity:1}\n"
 ".dead{color:var(--errfg);font-weight:600}\n"
+".btn.mob{background:var(--btn);color:var(--fg);border:1px solid var(--border)}\n"
+".btn.mob.on{background:var(--errbg);color:var(--errfg);border-color:var(--errfg);font-weight:600}\n"
+".err{color:var(--errfg)}\n"
 "</style></head><body>\n"
 "<header><b>n2k-mux</b>\n"
 "<nav><button data-t='sources' class='on' data-i18n='tab_sources'>Sources</button>"
@@ -213,6 +216,11 @@ static const char PAGE[] =
 "sim_polar_help:'STW = polaire(TWA eau, TWS eau), interpolée entre les lignes et colonnes du fichier. Le vent « eau » est le vent vrai moins le courant : c’est celui dans lequel le bateau avance.',\n"
 "sim_polar_dir:'Dossier : ',sim_polar_nodir:'dossier introuvable',sim_polar_bad:'illisible',\n"
 "sim_twa_w:'TWA eau',sim_tws_w:'TWS eau',sim_twd_base:'TWD de base',sim_tws_base:'TWS de base',\n"
+"sim_mob:'Homme à la mer',sim_mob_pos:'Position du MOB : ',\n"
+"sim_mob_b1:'Bouton MOB du bord',sim_mob_b2:'Balise AIS-MOB',sim_mob_stop:'Annuler',\n"
+"sim_mob_on1:'MOB DÉCLARÉ — bouton du bord',sim_mob_on2:'MOB DÉCLARÉ — balise AIS',\n"
+"sim_mob_nofix:'Balise sans point GNSS : position non émise',\n"
+"sim_mob_help:'Deux scénarios distincts, la position étant figée à l’instant de l’appui. Bouton du bord : PGN 127233 seul, personne n’émet à l’eau. Balise AIS-MOB : un 129038 au MMSI 972000001, statut AIS-SART, qui ressort aussi en 0183 sur le 10110. La balise met 15 à 45 s à accrocher son GNSS : d’abord une alerte sans position, puis le point.',\n"
 "sim_rand_lbl:'aléatoire',sim_polar_lbl:'polaire',sim_port:'bâbord',sim_stbd:'tribord'\n"
 "},en:{\n"
 "tab_sources:'Sources',tab_arb:'Arbitration',save_names:'Save names',save_arb:'Save arbitration',refresh:'Refresh',\n"
@@ -264,6 +272,11 @@ static const char PAGE[] =
 "sim_polar_help:'STW = polar(water TWA, water TWS), interpolated between the file rows and columns. The water wind is the true wind minus the current: the wind the boat actually sails in.',\n"
 "sim_polar_dir:'Folder: ',sim_polar_nodir:'folder not found',sim_polar_bad:'unreadable',\n"
 "sim_twa_w:'Water TWA',sim_tws_w:'Water TWS',sim_twd_base:'Base TWD',sim_tws_base:'Base TWS',\n"
+"sim_mob:'Man overboard',sim_mob_pos:'MOB position: ',\n"
+"sim_mob_b1:'MOB button on board',sim_mob_b2:'AIS-MOB beacon',sim_mob_stop:'Cancel',\n"
+"sim_mob_on1:'MOB DECLARED — button on board',sim_mob_on2:'MOB DECLARED — AIS beacon',\n"
+"sim_mob_nofix:'Beacon with no GNSS fix: position not transmitted',\n"
+"sim_mob_help:'Two distinct scenarios; either way the position is frozen when you press. Button on board: PGN 127233 alone, nothing transmits in the water. AIS-MOB beacon: a 129038 at MMSI 972000001, status AIS-SART, which also comes out as 0183 on 10110. The beacon takes 15 to 45 s to get its GNSS fix: an alert with no position first, then the fix.',\n"
 "sim_rand_lbl:'random',sim_polar_lbl:'polar',sim_port:'port',sim_stbd:'starboard'\n"
 "}};\n"
 "const T=k=>{const o=L[lang];return (o&&o[k]!=null)?o[k]:k;};\n"
@@ -506,7 +519,12 @@ static const char PAGE[] =
 "  +'<td style=\"width:40%\"><input type=range id=sr_'+k+' min='+f[0]+' max='+f[1]+' step='+f[2]+' value='+cur+(auto?' disabled':'')+' style=\"width:100%\"></td>'\n"
 "  +'<td class=n><input class=ri id=sn_'+k+' type=number min='+f[0]+' max='+f[1]+' step='+f[2]+' value='+cur+(auto?' disabled':'')+'> <small>'+T(f[3])+'</small></td>'\n"
 "  +'<td class=c><label class=sl><input type=checkbox id=sa_'+k+(auto?' checked':'')+'> '+T('sim_auto')+'</label></td></tr>';}\n"
-"function drawSim(){let h='<table><tr><th colspan=4>'+T('sim_boat')+'</th></tr>';\n"
+"function drawSim(){let h='<table><tr><th colspan=4>'+T('sim_mob')+'</th></tr>'\n"
+" +'<tr><td colspan=2><button id=sim_mob1 class=\"btn mob\"></button> '\n"
+" +'<button id=sim_mob2 class=\"btn mob\"></button></td>'\n"
+" +'<td colspan=2 id=sim_mob_pos></td></tr>'\n"
+" +'<tr><td colspan=4><small>'+T('sim_mob_help')+'</small></td></tr>';\n"
+" h+='<tr><th colspan=4>'+T('sim_boat')+'</th></tr>';\n"
 " h+=simRow('hdg')+simRow('stw');\n"
 " h+='<tr><th colspan=4>'+T('sim_cur')+'</th></tr>'+simRow('set')+simRow('drift');\n"
 " h+='<tr><th colspan=4>'+T('sim_wind')+'</th></tr>'+simRow('twd')+simRow('tws');\n"
@@ -527,10 +545,26 @@ static const char PAGE[] =
 " for(const k in SIMR){const r=$('#sr_'+k),nb=$('#sn_'+k);\n"
 "  r.oninput=()=>{nb.value=r.value;pushSim();};\n"
 "  nb.oninput=()=>{r.value=nb.value;pushSim();};}\n"
+" $('#sim_mob1').onclick=()=>{SIM.mob=(SIM.mob===1)?0:1;drawMob();pushSim();};\n"
+" $('#sim_mob2').onclick=()=>{SIM.mob=(SIM.mob===2)?0:2;drawMob();pushSim();};\n"
 " $('#sim_wr').onchange=()=>{simLock();pushSim();};\n"
 " $('#sim_sp').onchange=()=>{simLock();pushSim();};\n"
 " $('#sim_polar').onchange=()=>{if(!$('#sim_polar').value)$('#sim_sp').checked=false;simLock();pushSim();};\n"
-" simLock();}\n"
+" simLock();drawMob();}\n"
+// Deux scénarios : 1 = bouton du bord (127233 seul), 2 = balise AIS-MOB
+"// (129038 seul). Le bouton actif devient « Annuler ». La position affichée est\n"
+"// celle FIGÉE par le simulateur : le bateau continue, le point reste en place.\n"
+"function drawMob(){const b1=$('#sim_mob1'),b2=$('#sim_mob2');if(!b1||!b2)return;\n"
+" const m=(SIM&&SIM.mob)|0;\n"
+" b1.textContent=T(m===1?'sim_mob_stop':'sim_mob_b1');b1.classList.toggle('on',m===1);\n"
+" b2.textContent=T(m===2?'sim_mob_stop':'sim_mob_b2');b2.classList.toggle('on',m===2);\n"
+" const st=(SIM&&SIM.state)||{},p=$('#sim_mob_pos');if(!p)return;\n"
+" if(!(m&&st.mob)){p.innerHTML='';return;}\n"
+" let x='<b class=err>'+T(m===2?'sim_mob_on2':'sim_mob_on1')+'</b><br><small>'\n"
+"  +T('sim_mob_pos')+H(5,st.mob_lat)+'° '+H(5,st.mob_lon)+'°</small>';\n"
+" if(!st.mob_fix)x+='<br><small class=err>'+T('sim_mob_nofix')\n"
+"  +' (~'+Math.round(st.mob_fix_s||0)+' s)</small>';\n"
+" p.innerHTML=x;}\n"
 "// Grise ce qui ne pilote plus rien : la STW quand la polaire la calcule, les\n"
 "// réglages d'aléa quand l'aléa est coupé.\n"
 "function simLock(){const sp=$('#sim_sp').checked&&!!$('#sim_polar').value;\n"
@@ -538,7 +572,7 @@ static const char PAGE[] =
 " const stwAuto=$('#sa_stw').checked;$('#sr_stw').disabled=$('#sn_stw').disabled=sp||stwAuto;$('#sa_stw').disabled=sp;\n"
 " const wr=$('#sim_wr').checked;for(const k in SIMR)$('#sr_'+k).disabled=$('#sn_'+k).disabled=!wr;}\n"
 "// Tableau des valeurs déduites, relu dans l'état publié par le simulateur.\n"
-"function drawState(){const st=(SIM&&SIM.state)||{};\n"
+"function drawState(){drawMob();const st=(SIM&&SIM.state)||{};\n"
 " if(!Object.keys(st).length){$('#sim_state').innerHTML='<small>'+T('sim_nostate')+'</small>';return;}\n"
 " let h='<table>';\n"
 " for(const k of SIMST){if(st[k]===undefined)continue;\n"
@@ -564,6 +598,7 @@ static const char PAGE[] =
 " for(const k in SIMF)\n"
 "  t+=k+' = '+($('#sa_'+k).checked?'auto '+$('#sn_'+k).value:$('#sn_'+k).value)+'\\n';\n"
 " t+='wind_random = '+($('#sim_wr').checked?1:0)+'\\n';\n"
+" t+='mob = '+((SIM&&SIM.mob)|0)+'\\n';\n"
 " for(const k in SIMR)t+=k+' = '+$('#sn_'+k).value+'\\n';\n"
 " const pol=$('#sim_polar').value;\n"
 " t+='stw_polar = '+($('#sim_sp').checked&&pol?1:0)+'\\n';\n"
@@ -851,7 +886,8 @@ static const char *SIM_KEYS[] = {
 static const char *SIM_STATE_KEYS[] = {
     "hdg", "stw", "cog", "sog", "set", "drift",
     "twd", "tws", "twa", "awa", "aws", "twa_w", "tws_w",
-    "twd_base", "tws_base", "wind_random", "stw_polar", "polar_ok", "lat", "lon"
+    "twd_base", "tws_base", "wind_random", "stw_polar", "polar_ok", "lat", "lon",
+    "mob", "mob_lat", "mob_lon", "mob_fix", "mob_fix_s"
 };
 #define SIM_NSTATE ((int)(sizeof SIM_STATE_KEYS / sizeof *SIM_STATE_KEYS))
 
@@ -1074,6 +1110,8 @@ static void serve_sim(int fd)
     {
         double v;
         int    wr = sim_get(buf, "wind_random", &v) ? (v != 0) : 0;
+        int    mob = sim_get(buf, "mob", &v) ? (int)v : 0;
+        if (mob < 0 || mob > 2) mob = 0;
         int    sp = sim_get(buf, "stw_polar", &v) ? (v != 0) : 0;
         double tv = sim_get(buf, "tws_var", &v) ? v : 10.0;
         double dv = sim_get(buf, "twd_var", &v) ? v : 20.0;
@@ -1083,8 +1121,10 @@ static void serve_sim(int fd)
         json_escape(base_name(ppath), pname, sizeof pname);
         w = snprintf(out + n, sizeof out - n,
                      ",\"wind_random\":%s,\"tws_var\":%.1f,\"twd_var\":%.1f,"
-                     "\"wind_period\":%.1f,\"stw_polar\":%s,\"polar\":\"%s\"",
-                     wr ? "true" : "false", tv, dv, wp, sp ? "true" : "false", pname);
+                     "\"wind_period\":%.1f,\"stw_polar\":%s,\"polar\":\"%s\","
+                     "\"mob\":%d",
+                     wr ? "true" : "false", tv, dv, wp, sp ? "true" : "false", pname,
+                     mob);
         if (w < 0 || (size_t)w >= sizeof out - n) { send_text(fd, 500, "Error", "application/json", "{}"); return; }
         n += (size_t)w;
     }
@@ -1097,8 +1137,13 @@ static void serve_sim(int fd)
         double v = 0;
         if (!sim_get(sbuf, SIM_STATE_KEYS[i], &v))
             continue;
-        w = snprintf(out + n, sizeof out - n, "%s\"%s\":%.2f",
-                     first ? "" : ",", SIM_STATE_KEYS[i], v);
+        /* Une position à deux décimales ne vaut rien (47,50° = 500 m près) :
+         * les latitudes et longitudes sortent au millionième de degré. */
+        const char *k = SIM_STATE_KEYS[i];
+        size_t kl = strlen(k);
+        int geo = (kl >= 3 && (strcmp(k + kl - 3, "lat") == 0 || strcmp(k + kl - 3, "lon") == 0));
+        w = snprintf(out + n, sizeof out - n, geo ? "%s\"%s\":%.6f" : "%s\"%s\":%.2f",
+                     first ? "" : ",", k, v);
         if (w < 0 || (size_t)w >= sizeof out - n) { send_text(fd, 500, "Error", "application/json", "{}"); return; }
         n += (size_t)w;
         first = 0;
@@ -1155,6 +1200,8 @@ static void handle_sim_post(int fd, const char *body)
     {
         double v;
         int    wr = sim_get(body, "wind_random", &v) ? (v != 0) : 0;
+        int    mob = sim_get(body, "mob", &v) ? (int)v : 0;
+        if (mob < 0 || mob > 2) mob = 0;
         double tv = sim_get(body, "tws_var", &v) ? v : 10.0;
         double dv = sim_get(body, "twd_var", &v) ? v : 20.0;
         double wp = sim_get(body, "wind_period", &v) ? v : 10.0;
@@ -1165,8 +1212,9 @@ static void handle_sim_post(int fd, const char *body)
         if (wp < 0.5) wp = 0.5;
         if (wp > 240) wp = 240;
         w = snprintf(text + n, sizeof text - n,
-                     "wind_random = %d\ntws_var = %.1f\ntwd_var = %.1f\nwind_period = %.1f\n",
-                     wr, tv, dv, wp);
+                     "wind_random = %d\ntws_var = %.1f\ntwd_var = %.1f\nwind_period = %.1f\n"
+                     "mob = %d\n",
+                     wr, tv, dv, wp, mob);
         if (w < 0 || (size_t)w >= sizeof text - n) { send_text(fd, 500, "Error", "application/json", "{}"); return; }
         n += (size_t)w;
     }

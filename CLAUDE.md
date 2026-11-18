@@ -120,6 +120,44 @@ le cap osciller et un courant fictif (constaté le 2026-09-14). En 0183, HDG
 annonce une déviation nulle, cohérente avec HDT (une déviation de 1,5° annoncée
 mais non appliquée décalait les deux de 1,5°).
 
+**Homme à la mer** — clé `mob` du même fichier, DEUX scénarios distincts
+(deux boutons dans l'onglet Simulateur), car ils ne produisent PAS la même
+chose sur le bus :
+  - `mob = 1` **bouton MOB de la table à cartes** : le **PGN 127233** SEUL
+    (statut 1 « bouton MOB », source de position 0 « estimée par le bateau »,
+    COG/SOG absents, MMSI du bord 227000000, 1 Hz). Personne n'émet à l'eau.
+  - `mob = 2` **balise AIS-MOB de l'équipage** (type MOB1) qui se déclenche :
+    la VHF la reçoit, donc un **129038** au MMSI **972000001** — plage
+    972xxxxxx réservée aux balises MOB, ITU-R M.585 — statut de navigation
+    **14 « AIS-SART »**, plus sa fiche statique (129809, « MOB SIM »), et RIEN
+    d'autre. Pas de 127233 : il vient d'un système de surveillance MOB, que le
+    bord n'a pas forcément ; une balise qui émet ne le produit pas toute seule.
+    (Mélanger les deux, comme la 1re version le faisait, racontait deux
+    histoires contradictoires — corrigé le 2026-11-18.)
+Dans les deux cas la position est FIGÉE à l'instant du déclenchement : le
+bateau continue sa route, le point reste là où l'homme est tombé, ce qui est
+tout l'intérêt pour un essai de récupération. Changer de scénario, ou repasser
+par 0, redéclare un MOB à la position courante.
+La voie AIS a un avantage : elle emprunte la chaîne AIS existante et ressort
+donc AUSSI en 0183 sur 10110 (!AIVDM encodé par n2kd, vérifié), là où le 127233
+n'a pas de phrase 0183 que qtVlm sache lire — il n'est donc PAS converti,
+seulement relayé en N2K sur le 2700. `--no-ais` coupe la balise, pas le 127233.
+**Acquisition GNSS de la balise** (2026-11-18) : comme une vraie, elle émet
+TOUT DE SUITE mais son GNSS part à froid ; pendant un délai tiré au hasard dans
+[15 s, 45 s] (suite de hasard propre, graine `seed` : reproductible, et sans
+toucher à la suite du vent), le 129038 sort SANS Latitude/Longitude/COG/SOG/
+Heading — champs omis, comme canboat omet un champ N2K non disponible — et
+Time Stamp 63 « Positioning system is inoperative ». n2kd met alors ses valeurs
+par défaut, qui sont les sentinelles AIS : lat 91°, lon 181°, SOG 1023, COG 360,
+cap 511 (vérifié en décodant le !AIVDM). Les trames N2K (`--actisense`) portent
+0x7FFFFFFF / 0xFFFF et l'analyzer les relit en champs absents : même flux des
+deux côtés. Le nom (129809) part dès le début. `--mob-fix SEC` impose le délai
+(0 = position d'emblée ; sert aux tests). L'état publie `mob_fix` (0/1) et
+`mob_fix_s` (secondes restantes) : l'UI affiche « balise sans point GNSS ».
+L'état publié ajoute `mob` (le scénario), `mob_lat`, `mob_lon` ; l'API web sort
+les latitudes et longitudes au MILLIONIÈME de degré (deux décimales valaient
+500 m, inutilisable pour un point MOB).
+
 **Vent aléatoire** — clés du même fichier :
 
 ```
@@ -231,7 +269,8 @@ VIDES dans /etc/default/n2k-mux rendent l'ancien rôle (muet/parlant).
 
 Options : `--once` (couverture : un de chaque PGN puis sort), `--duration SEC`,
 `--no-ais`, `--tick MS`, `--control FICHIER`, `--state FICHIER`,
-`--actisense-out FICHIER` (trames N2K en parallèle du JSON), `--wind-trace SEC`. La config compagnon **`n2k-sim.ini`** porte les Model
+`--actisense-out FICHIER` (trames N2K en parallèle du JSON), `--wind-trace SEC`,
+`--mob-fix SEC` (délai d'acquisition GNSS de la balise AIS-MOB). La config compagnon **`n2k-sim.ini`** porte les Model
 Serial Code émis par le simulateur (SCX/VER/MAD/DST_BB/DST_TB/AIS/DH) → arbitrage
 résolu d'emblée, toute la table de conversion sort. Sert de test bout-en-bout
 (daemon, --ais-json, web) sans bus ni passerelle réels.

@@ -157,8 +157,14 @@ static struct {
  * en m/s ici, comme le reste du simulateur. */
 #define KN_TO_MS 0.514444
 
+/* Scénarios d'homme à la mer (clé « mob » du fichier de pilotage) ; détaillés
+ * plus bas, à mob_update(). */
+#define MOB_BUTTON 1   /* bouton MOB de la table à cartes */
+#define MOB_AIS    2   /* balise AIS-MOB de l'équipage qui se déclenche */
+
 typedef struct {
     int    enabled;
+    int    mob;                         /* 0 = aucun, 1 = bouton du bord, 2 = balise AIS */
     double hdg, stw, set, drift;        /* bateau et courant */
     double twd, tws;                    /* vent VRAI (TWA/AWA/AWS en découlent) */
     /* vent aléatoire (cf. wseq_t) */
@@ -178,7 +184,7 @@ typedef struct {
 
 /* Valeurs par défaut de l'aléa : 10 % de force (plage 0-20 %), 20° de direction, séquences
  * d'environ 10 minutes, comme on l'observe sur l'eau. */
-#define CTL_INIT { 1, NAN, NAN, NAN, NAN, NAN, NAN, 0, 10.0, 20.0, 10.0, 0, 0, "", \
+#define CTL_INIT { 1, 0, NAN, NAN, NAN, NAN, NAN, NAN, 0, 10.0, 20.0, 10.0, 0, 0, "", \
                    NAN, NAN, NAN, NAN, NAN, NAN }
 
 /* Base du vent quand l'aléa est actif et twd/tws laissés à « auto ». */
@@ -241,6 +247,8 @@ static void ctl_load(const char *path)
         if      (strcmp(key, "enabled") == 0)
             c.enabled = (strcmp(val, "0") && strcmp(val, "false") &&
                          strcmp(val, "off") && strcmp(val, "no"));
+        else if (strcmp(key, "mob") == 0)
+            c.mob = isnan(v) ? 0 : (v < 0 ? 0 : (v > MOB_AIS ? MOB_AIS : (int)v));
         else if (strcmp(key, "hdg") == 0)   c.hdg = v;
         else if (strcmp(key, "stw") == 0)   c.stw = isnan(v) ? v : v * KN_TO_MS;
         else if (strcmp(key, "set") == 0)   c.set = v;
@@ -434,6 +442,92 @@ static void dir_of(double n, double e, double *dir_deg, double *mag)
     *dir_deg = (*mag < 1e-9) ? 0.0 : norm360(atan2(e, n) * 180.0 / M_PI);
 }
 
+/* --- Homme à la mer ---------------------------------------------------------
+ * DEUX scénarios distincts, car ils ne produisent PAS la même chose sur le bus :
+ *
+ *   MOB_BUTTON (1) — bouton MOB de la table à cartes. Personne n'émet à l'eau :
+ *     seul le PGN 127233 part, statut 1 « bouton MOB », position source 0
+ *     « estimée par le bateau ».
+ *   MOB_AIS (2)    — balise AIS-MOB portée par l'équipage (type MOB1) qui se
+ *     déclenche. La VHF la reçoit : c'est un 129038 au MMSI 972xxxxxx, statut
+ *     AIS-SART, et RIEN D'AUTRE. Le 127233 vient d'un système de surveillance
+ *     MOB, que le bord n'a pas forcément : une balise qui émet ne le produit
+ *     pas toute seule.
+ *
+ * Dans les deux cas la position est FIGÉE à l'instant du déclenchement : le
+ * bateau continue sa route, le point reste là où l'homme est tombé. Changer de
+ * scénario, ou repasser par 0, redéclare un MOB à la position courante. */
+static struct {
+    int    mode;       /* 0, MOB_BUTTON ou MOB_AIS */
+    double lat, lon;
+    double act_s;      /* secondes depuis minuit UTC */
+    long   act_day;    /* jours depuis le 1er janvier 1970 */
+    double fix_t;      /* t à partir duquel la balise a son point GNSS */
+} g_mob;
+
+/* --- Acquisition GNSS de la balise AIS-MOB ----------------------------------
+ * Une balise qui se déclenche émet TOUT DE SUITE, mais son récepteur GNSS
+ * part à froid : il met quelques dizaines de secondes à accrocher. Pendant ce
+ * temps la balise émet SANS POSITION (sentinelles AIS : latitude 91°,
+ * longitude 181°, COG 360°, SOG 102,3 nds ; Time Stamp 63 « positioning
+ * system is inoperative »). C'est exactement ce qu'on veut éprouver : un
+ * traceur doit afficher la cible d'alerte même sans point, et ne pas la placer
+ * au large de l'Afrique. Durée tirée au hasard dans [15 s, 45 s]. */
+#define MOB_FIX_MIN 15.0
+#define MOB_FIX_MAX 45.0
+static double g_mob_fix_forced = -1.0;   /* --mob-fix SEC : délai imposé */
+
+/* Suite de hasard SÉPARÉE de celle du vent : le vent aléatoire doit rester
+ * reproductible à la graine près, qu'un MOB soit déclaré ou non. */
+static double mob_rnd01(void)
+{
+    static uint64_t s;
+    static int seeded;
+    if (!seeded) {
+        s = g_ctl.seed ? (uint64_t)g_ctl.seed * 0x2545F4914F6CDD1Dull
+                       : (uint64_t)now_ms();
+        seeded = 1;
+    }
+    uint64_t z = (s += 0x9E3779B97F4A7C15ull);
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    z ^= z >> 31;
+    return (double)(z >> 11) / 9007199254740992.0;
+}
+
+/* 1 = la balise a son point GNSS et émet sa position. Sans objet pour le
+ * bouton du bord : c'est le GPS du bateau qui donne le point. */
+static int mob_has_fix(double t) { return t >= g_mob.fix_t; }
+
+/* Secondes restantes avant le point GNSS de la balise (0 sinon) : publié dans
+ * l'état pour que l'interface dise « position dans N s » au lieu de laisser
+ * croire à une panne. */
+static double mob_fix_wait(void)
+{
+    if (g_mob.mode != MOB_AIS)
+        return 0.0;
+    double r = g_mob.fix_t - boat.last_t;
+    return r > 0.0 ? r : 0.0;
+}
+
+static void mob_update(double t)
+{
+    if (g_ctl.mob == g_mob.mode)
+        return;                         /* rien de neuf : la position ne bouge pas */
+    g_mob.mode = g_ctl.mob;
+    if (!g_mob.mode)
+        return;
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    g_mob.lat     = boat.lat;
+    g_mob.lon     = boat.lon;
+    g_mob.act_day = (long)(ts.tv_sec / 86400);
+    g_mob.act_s   = (double)(ts.tv_sec % 86400) + ts.tv_nsec / 1e9;
+    g_mob.fix_t   = t + (g_mob_fix_forced >= 0.0
+                         ? g_mob_fix_forced
+                         : MOB_FIX_MIN + (MOB_FIX_MAX - MOB_FIX_MIN) * mob_rnd01());
+}
+
 static void boat_update(double t)
 {
     if (!boat.init) { boat.lat = 47.5000; boat.lon = -3.0000; boat.last_t = t; boat.init = 1; }
@@ -527,6 +621,8 @@ static void boat_update(double t)
     /* avance le long du COG (1° lat ≈ 111320 m) */
     boat.lat += (gn * dt) / 111320.0;
     boat.lon += (ge * dt) / (111320.0 * cos(boat.lat * M_PI / 180.0));
+
+    mob_update(t);
 }
 
 /* Publie l'état DÉDUIT (--state) : même format « clé = valeur », unités de
@@ -547,13 +643,17 @@ static void state_write(void)
             "set = %.1f\ndrift = %.2f\ntwd = %.1f\ntws = %.2f\ntwa = %.1f\n"
             "awa = %.1f\naws = %.2f\ntwa_w = %.1f\ntws_w = %.2f\n"
             "twd_base = %.1f\ntws_base = %.2f\nwind_random = %d\n"
-            "stw_polar = %d\npolar_ok = %d\nlat = %.6f\nlon = %.6f\n",
+            "stw_polar = %d\npolar_ok = %d\nlat = %.6f\nlon = %.6f\n"
+            "mob = %d\nmob_lat = %.6f\nmob_lon = %.6f\n"
+            "mob_fix = %d\nmob_fix_s = %.0f\n",
             g_ctl.enabled, boat.hdg, boat.stw / KN_TO_MS, boat.cog,
             boat.sog / KN_TO_MS, boat.set, boat.drift / KN_TO_MS,
             boat.twd, boat.tws / KN_TO_MS, boat.twa, boat.awa,
             boat.aws / KN_TO_MS, boat.twa_w, boat.tws_w / KN_TO_MS,
             boat.twd_base, boat.tws_base / KN_TO_MS, g_ctl.wind_random,
-            boat.stw_from_polar, g_polar_ok, boat.lat, boat.lon);
+            boat.stw_from_polar, g_polar_ok, boat.lat, boat.lon,
+            g_mob.mode, g_mob.mode ? g_mob.lat : 0.0, g_mob.mode ? g_mob.lon : 0.0,
+            g_mob.mode != MOB_AIS || mob_has_fix(boat.last_t), mob_fix_wait());
     fclose(f);
     if (rename(tmp, g_state_path) != 0)
         unlink(tmp);
@@ -886,26 +986,47 @@ static void ais_class_b(int src, unsigned mmsi, double lat, double lon,
     emit(4, src, 129039, "AIS Class B Position Report", f);
 }
 
+/* `nav` : statut de navigation AIS. 0 = en route au moteur, 14 = AIS-SART,
+ * le statut que porte une balise MOB ou SART.
+ * `fix` : 0 = l'émetteur n'a PAS de position (récepteur GNSS pas encore
+ * accroché). canboat n'imprime pas un champ N2K « non disponible » : on OMET
+ * donc position, COG, SOG et cap, exactement comme l'analyzer le ferait d'une
+ * trame réelle, et n2kd met alors les sentinelles AIS (latitude 91°,
+ * longitude 181°, COG 360°, SOG 102,3 nds, cap 511 — valeurs par défaut de son
+ * aisFloat()). Le Time Stamp passe à 63 « Positioning system is inoperative »,
+ * le code que porte une balise sans point. */
 static void ais_class_a(int src, unsigned mmsi, double lat, double lon,
-                        double cog, double sog)
+                        double cog, double sog, int nav, const char *nav_name,
+                        int fix)
 {
+    char pos[160] = "", mot[96] = "", hd[48] = "";
+    if (fix) {
+        snprintf(pos, sizeof pos, "\"Longitude\":%.6f,\"Latitude\":%.6f,", lon, lat);
+        snprintf(mot, sizeof mot, "\"COG\":%.1f,\"SOG\":%.2f,", cog, sog);
+        snprintf(hd,  sizeof hd,  "\"Heading\":%.1f,", cog);
+    }
     char f[1024];
     snprintf(f, sizeof f,
         "\"Message ID\":{\"value\":1,\"name\":\"Scheduled Class A position report\"},"
         "\"Repeat Indicator\":{\"value\":0,\"name\":\"Initial\"},"
         "\"User ID\":{\"value\":\"%u\",\"key\":true},"
-        "\"Longitude\":%.6f,\"Latitude\":%.6f,"
+        "%s"
         "\"Position Accuracy\":{\"value\":0,\"name\":\"Low\"},"
         "\"RAIM\":{\"value\":0,\"name\":\"not in use\"},"
-        "\"Time Stamp\":{\"value\":5},"
-        "\"COG\":%.1f,\"SOG\":%.2f,"
+        "\"Time Stamp\":%s,"
+        "%s"
         "\"Communication State\":\"FF FF 07\","
         "\"AIS Transceiver information\":{\"value\":0,\"name\":\"Channel A VDL reception\"},"
-        "\"Heading\":%.1f,\"Rate of Turn\":0.000,"
-        "\"Nav Status\":{\"value\":0,\"name\":\"Under way using engine\"},"
+        "%s\"Rate of Turn\":0.000,"
+        "\"Nav Status\":{\"value\":%d,\"name\":\"%s\"},"
         "\"Special Maneuver Indicator\":{\"value\":0,\"name\":\"Not available\"},"
         "\"Spare\":\"04\"",
-        mmsi, lon, lat, cog, sog, cog);
+        mmsi, pos,
+        /* canboat n'ajoute « name » que si la valeur est dans sa table de
+         * correspondance : 5 (une seconde UTC) n'y est pas, 63 y est. */
+        fix ? "{\"value\":5}"
+            : "{\"value\":63,\"name\":\"Positioning system is inoperative\"}",
+        mot, hd, nav, nav_name);
     emit(4, src, 129038, "AIS Class A Position Report", f);
 }
 
@@ -950,10 +1071,63 @@ static void e_ais(double t)
     ais_class_b(DH_SRC,  227000002, 47.512 + dl, -3.020, 120.0, 3.0);
     /* 227000001 em-trak seule ; 227000003 DataHub seule (union, classe A) */
     ais_class_b(AIS_SRC, 227000001, 47.505 + dl, -3.010,  90.0, 4.0);
-    ais_class_a(DH_SRC,  227000003, 47.490 + dl, -2.995, 200.0, 6.0);
+    ais_class_a(DH_SRC,  227000003, 47.490 + dl, -2.995, 200.0, 6.0, 0,
+                "Under way using engine", 1);
     /* statiques (noms/types) pour la cible 227000002 */
     ais_static_a(AIS_SRC, 227000002, "SIM CLASSB");
     ais_static_b(AIS_SRC, 227000002);
+}
+
+/* --- Homme à la mer : PGN 127233 OU balise AIS-MOB ---------------------------
+ * DEUX scénarios, un bouton chacun (cf. mob_update) :
+ *   - 127233 « Man Overboard Notification », le PGN normalisé d'un système MOB ;
+ *   - une balise AIS-MOB : position AIS classe A (129038) au MMSI 972xxxxxx
+ *     (plage réservée aux balises MOB, ITU-R M.585) et statut 14 « AIS-SART ».
+ * La voie AIS a un avantage décisif : elle emprunte la chaîne AIS existante et
+ * ressort donc AUSSI en 0183 sur 10110 (!AIVDM par n2kd), là où le 127233 n'a
+ * pas de phrase 0183 que qtVlm sache lire. */
+#define MOB_MMSI      972000001u   /* 972xxxxxx = balise MOB (ITU-R M.585) */
+#define MOB_EMITTER   1u
+#define OWN_MMSI      227000000u   /* MMSI du bateau simulé */
+
+static void e_mob(double t)   /* 127233 Man Overboard Notification */
+{
+    (void)t;
+    if (g_mob.mode != MOB_BUTTON)
+        return;
+    char f[640];
+    int  h  = (int)(g_mob.act_s / 3600) % 24;
+    int  mi = (int)(g_mob.act_s / 60) % 60;
+    double se = g_mob.act_s - (int)(g_mob.act_s / 60) * 60;
+    time_t day = (time_t)g_mob.act_day * 86400;
+    struct tm tmv; gmtime_r(&day, &tmv);
+    snprintf(f, sizeof f,
+             "\"SID\":255,\"MOB Emitter ID\":%u,"
+             "\"Man Overboard Status\":{\"value\":1,\"name\":\"Manual on-board MOB Button Activation\"},"
+             "\"Activation Time\":\"%02d:%02d:%06.3f\","
+             "\"Position Source\":{\"value\":0,\"name\":\"Position estimated by the vessel\"},"
+             "\"Position Date\":\"%04d.%02d.%02d\",\"Position Time\":\"%02d:%02d:%06.3f\","
+             "\"Latitude\":%.7f,\"Longitude\":%.7f,"
+             "\"COG Reference\":{\"value\":0,\"name\":\"True\"},"
+             "\"MMSI of vessel of origin\":{\"value\":\"%u\",\"key\":true},"
+             "\"MOB Emitter Battery Low Status\":{\"value\":0,\"name\":\"Good\"}",
+             MOB_EMITTER, h, mi, se,
+             (tmv.tm_year + 1900) % 10000, (tmv.tm_mon + 1) % 100, tmv.tm_mday % 100,
+             h, mi, se, g_mob.lat, g_mob.lon, OWN_MMSI);
+    /* COG et SOG absents : l'homme à la mer ne fait pas route. */
+    emit(3, SCX_SRC, 127233, "Man Overboard Notification", f);
+}
+
+static void e_mob_ais(double t)   /* balise AIS-MOB vue par le récepteur AIS */
+{
+    if (g_mob.mode != MOB_AIS)
+        return;
+    /* Les premières dizaines de secondes, la balise émet sans position : son
+     * GNSS n'a pas encore accroché. Elle s'annonce quand même — c'est l'alerte
+     * qui compte — et le nom (129809) part dès le début. */
+    ais_class_a(AIS_SRC, MOB_MMSI, g_mob.lat, g_mob.lon, 0.0, 0.0, 14, "AIS-SART",
+                mob_has_fix(t));
+    ais_static_a(AIS_SRC, MOB_MMSI, "MOB SIM");
 }
 
 /* ===== Mode --actisense : trames N2K binaires single-frame (pour ydraw-bridge) =====
@@ -1297,25 +1471,29 @@ static void a_ais_class_b(int src, unsigned mmsi, double lat, double lon,
     emit_frame(4, src, 129039, b, 27);
 }
 
+/* `fix` : 0 = émetteur sans position. Les champs portent alors la sentinelle
+ * N2K « non disponible » (0x7FFFFFFF pour la position, 0xFFFF pour les
+ * angles et vitesses) et le Time Stamp vaut 63 — ce que l'analyzer canboat
+ * relit comme des champs absents, donc le même flux que la voie JSON. */
 static void a_ais_class_a(int src, unsigned mmsi, double lat, double lon,
-                          double cog, double sog, double hdg)
+                          double cog, double sog, double hdg, int nav, int fix)
 {
     uint8_t b[28]; memset(b, 0, sizeof b); int p = 0;
     putbits(b,&p, 1, 6);                                    /* Message ID (sched A) */
     putbits(b,&p, 0, 2);
     putbits(b,&p, mmsi, 32);
-    putbits(b,&p, b32(lon), 32);
-    putbits(b,&p, b32(lat), 32);
+    putbits(b,&p, fix ? b32(lon) : 0x7fffffffu, 32);
+    putbits(b,&p, fix ? b32(lat) : 0x7fffffffu, 32);
     putbits(b,&p, 0, 1);                                    /* Position Accuracy */
     putbits(b,&p, 0, 1);                                    /* RAIM */
-    putbits(b,&p, 5, 6);                                    /* Time Stamp */
-    putbits(b,&p, (uint64_t)lround(DEG2RAD(cog)/1e-4), 16); /* COG */
-    putbits(b,&p, (uint64_t)lround(sog/0.01), 16);          /* SOG */
+    putbits(b,&p, fix ? 5 : 63, 6);                         /* Time Stamp */
+    putbits(b,&p, fix ? (uint64_t)lround(DEG2RAD(cog)/1e-4) : 0xffffu, 16); /* COG */
+    putbits(b,&p, fix ? (uint64_t)lround(sog/0.01) : 0xffffu, 16);          /* SOG */
     putbits(b,&p, 0x7ffff, 19);                             /* Communication State */
     putbits(b,&p, 0, 5);                                    /* Transceiver (Channel A) */
-    putbits(b,&p, (uint64_t)lround(DEG2RAD(hdg)/1e-4), 16); /* Heading */
+    putbits(b,&p, fix ? (uint64_t)lround(DEG2RAD(hdg)/1e-4) : 0xffffu, 16); /* Heading */
     putbits(b,&p, 0, 16);                                   /* Rate of Turn = 0 */
-    putbits(b,&p, 0, 4);                                    /* Nav Status (under way) */
+    putbits(b,&p, (uint64_t)nav, 4);                        /* Nav Status */
     putbits(b,&p, 0, 2);                                    /* Special Maneuver */
     putbits(b,&p, 0x3, 2);                                  /* Reserved */
     putbits(b,&p, 0x7, 3);                                  /* Spare */
@@ -1360,13 +1538,45 @@ static void a_ais_static_b(int src, unsigned mmsi)
     emit_frame(6, src, 129810, b, 35);
 }
 
+static void a_mob(void)            /* 127233 MOB Notification (fast-packet) */
+{
+    if (g_mob.mode != MOB_BUTTON)
+        return;
+    uint8_t b[35];
+    memset(b, 0, sizeof b);
+    b[0] = 0xff;                                        /* SID */
+    p32(b, 1, (long)MOB_EMITTER);
+    b[5] = (uint8_t)(0xf8 | 1);                         /* statut 1 : bouton MOB */
+    p32(b, 6, lround(g_mob.act_s / 0.0001));            /* heure d'activation */
+    b[10] = 0xf8;                                       /* source 0 : estimée par le bateau */
+    p16(b, 11, (int)g_mob.act_day);                     /* date de la position */
+    p32(b, 13, lround(g_mob.act_s / 0.0001));           /* heure de la position */
+    p32(b, 17, lround(g_mob.lat / 1e-7));
+    p32(b, 21, lround(g_mob.lon / 1e-7));
+    b[25] = 0xfc;                                       /* référence COG : vraie */
+    p16(b, 26, 0xffff);                                 /* COG non disponible */
+    p16(b, 28, 0xffff);                                 /* SOG non disponible */
+    p32(b, 30, (long)OWN_MMSI);
+    b[34] = 0xf8;                                       /* batterie : bonne */
+    emit_frame(3, SCX_SRC, 127233, b, 35);
+}
+
+static void a_mob_ais(double t)    /* balise AIS-MOB en trames N2K */
+{
+    if (g_mob.mode != MOB_AIS)
+        return;
+    a_ais_class_a(AIS_SRC, MOB_MMSI, g_mob.lat, g_mob.lon, 0.0, 0.0, 0.0, 14,
+                  mob_has_fix(t));
+    a_ais_static_a(AIS_SRC, MOB_MMSI, "MOB SIM");
+}
+
 static void a_ais(double t)
 {
     double dl = 0.0010 * sin(t / 30.0);
     a_ais_class_b(AIS_SRC, 227000002, 47.512 + dl, -3.020, 120.0, 3.0, 120.0);
     a_ais_class_b(DH_SRC,  227000002, 47.512 + dl, -3.020, 120.0, 3.0, 120.0);
     a_ais_class_b(AIS_SRC, 227000001, 47.505 + dl, -3.010,  90.0, 4.0,  90.0);
-    a_ais_class_a(DH_SRC,  227000003, 47.490 + dl, -2.995, 200.0, 6.0, 200.0);
+    a_ais_class_a(DH_SRC,  227000003, 47.490 + dl, -2.995, 200.0, 6.0, 200.0, 0, 1);
     a_ais_static_a(AIS_SRC, 227000002, "SIM CLASSB");
     a_ais_static_b(AIS_SRC, 227000002);
 }
@@ -1377,7 +1587,7 @@ static struct { int id; double iv, next; } ACT_SCHED[] = {
     {0,250,0},{1,250,0},{2,200,0},{3,500,0},{4,200,0},
     {5,250,0},{6,500,0},{7,500,0},{8,2000,0},{9,2000,0},{10,1000,0},
     {11,2000,0},{12,200,0},{13,1000,0},{14,5000,0},{15,2000,0},
-    {16,2000,0},{17,3000,0},{18,1000,0},{19,200,0},
+    {16,2000,0},{17,3000,0},{18,1000,0},{19,200,0},{20,1000,0},{21,3000,0},
 };
 
 /* Émet les trames dues à l'instant el (ms depuis le départ). */
@@ -1407,6 +1617,8 @@ static void act_tick(double el, double t, int once, int no_ais)
             case 17: if (!no_ais) a_ais(t); break;
             case 18: a_setdrift(); break;
             case 19: a_sixdof(t); break;
+            case 20: a_mob(); break;
+            case 21: if (!no_ais) a_mob_ais(t); break;
         }
         /* sans dérive : on avance l'échéance d'une période, pas « maintenant +
          * période » ; très en retard (reprise après désactivation), on recale */
@@ -1478,6 +1690,8 @@ static sched_t SCHED[] = {
     { e_press,        2000, 0, 0, "130314 → MDA" },
     { e_depth,         500, 0, 0, "128267 → DPT" },
     { e_ais,          3000, 0, 1, "AIS 129039/794/809" },
+    { e_mob,          1000, 0, 0, "127233 → MOB (si déclaré)" },
+    { e_mob_ais,      3000, 0, 1, "balise AIS-MOB (si déclaré)" },
 };
 static const int N_SCHED = (int)(sizeof SCHED / sizeof *SCHED);
 
@@ -1504,6 +1718,8 @@ static void usage(const char *p)
         "  --wind-trace S  déroule S secondes de temps SIMULÉ sans attendre et imprime\n"
         "                  « t;twd;tws;stw » toutes les 10 s (réglage de l'aléa et de\n"
         "                  la polaire, tests). Utilise --control ; puis s'arrête.\n"
+        "  --mob-fix SEC   délai d'acquisition GNSS de la balise AIS-MOB (défaut : tiré\n"
+        "                  au hasard entre 15 et 45 s). 0 = position émise d'emblée.\n"
         "\nÉmet du JSON façon `analyzer -json` pour tous les PGN compris par\n"
         "n2k-mux + l'identité. Exemple : %s | ./n2k-mux n2k-sim.ini -v\n",
         p, p);
@@ -1526,6 +1742,7 @@ int main(int argc, char **argv)
         else if (strcmp(argv[i], "--control") == 0 && i + 1 < argc)  g_ctl_path = argv[++i];
         else if (strcmp(argv[i], "--state") == 0 && i + 1 < argc)    g_state_path = argv[++i];
         else if (strcmp(argv[i], "--wind-trace") == 0 && i + 1 < argc) wind_trace = atof(argv[++i]);
+        else if (strcmp(argv[i], "--mob-fix") == 0 && i + 1 < argc)  g_mob_fix_forced = atof(argv[++i]);
         else if (strcmp(argv[i], "--actisense-out") == 0 && i + 1 < argc) act_out = argv[++i];
         else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) { usage(argv[0]); return 0; }
         else { fprintf(stderr, "option inconnue : %s\n", argv[i]); usage(argv[0]); return 2; }

@@ -189,6 +189,119 @@ else
   rm -rf "$GD"
 fi
 
+# ---- 3 quater. Homme à la mer (127233 + balise AIS-MOB) --------------------
+say "== homme à la mer (MOB) =="
+if [ ! -x ./n2k-sim ]; then
+  ko "n2k-sim absent (make d'abord)"
+else
+  MD=$(mktemp -d)
+  printf 'enabled = 1\nmob = 0\nhdg = 90\nstw = 10\nset = 0\ndrift = 0\ntwd = 60\ntws = 12\n' > "$MD/m.ctl"
+  n=$(./n2k-sim --duration 2 --control "$MD/m.ctl" 2>/dev/null | grep -c '"pgn":127233' || true)
+  if [ "$n" = "0" ]; then ok "MOB non déclaré : aucune notification"
+  else ko "MOB non déclaré : $n notifications émises"; fi
+  # Scénario 1, bouton du bord : le 127233 SEUL, personne n'émet à l'eau.
+  printf 'enabled = 1\nmob = 1\nhdg = 90\nstw = 10\nset = 0\ndrift = 0\ntwd = 60\ntws = 12\n' > "$MD/m.ctl"
+  ./n2k-sim --duration 5 --control "$MD/m.ctl" --state "$MD/m.state" 2>/dev/null > "$MD/out.json"
+  n=$(grep -c '"pgn":127233' "$MD/out.json" || true)
+  if [ "$n" -ge 3 ] && grep -q '"Man Overboard Status":{"value":1' "$MD/out.json" &&
+     grep -q '"Position Source":{"value":0' "$MD/out.json"; then
+    ok "bouton du bord : $n notifications 127233 (statut bouton, position du bateau)"
+  else ko "bouton du bord : 127233 absent ou mal qualifié ($n)"; fi
+  if grep -q '972000001' "$MD/out.json"; then
+    ko "bouton du bord : une balise AIS est émise alors que personne n'émet à l'eau"
+  else ok "bouton du bord : aucune balise AIS"; fi
+  # Scénario 2, balise AIS-MOB : le 129038 SEUL, pas de 127233 (il viendrait
+  # d'un système de surveillance MOB que le bord n'a pas forcément).
+  printf 'enabled = 1\nmob = 2\nhdg = 90\nstw = 10\nset = 0\ndrift = 0\ntwd = 60\ntws = 12\n' > "$MD/ais.ctl"
+  ./n2k-sim --duration 5 --control "$MD/ais.ctl" 2>/dev/null > "$MD/ais.json"
+  if grep -q '"User ID":{"value":"972000001"' "$MD/ais.json" &&
+     grep -q '"Nav Status":{"value":14,"name":"AIS-SART"}' "$MD/ais.json"; then
+    ok "balise AIS-MOB (MMSI 972xxxxxx, AIS-SART)"
+  else ko "balise AIS-MOB absente ou mal formée"; fi
+  if grep -q '"pgn":127233' "$MD/ais.json"; then
+    ko "balise AIS-MOB : un 127233 est émis en plus"
+  else ok "balise AIS-MOB : pas de 127233"; fi
+  # Le point reste FIGÉ pendant que le bateau avance : c'est tout l'intérêt.
+  if python3 -I - "$MD/out.json" "$MD/m.state" <<'PYMOB'
+import json, sys
+pos = []
+for l in open(sys.argv[1]):
+    d = json.loads(l)
+    if d.get("pgn") == 127233:
+        pos.append((d["fields"]["Latitude"], d["fields"]["Longitude"]))
+st = dict(x.split(" = ") for x in open(sys.argv[2]) if " = " in x)
+if len(set(pos)) != 1:
+    print("le point MOB a bougé :", set(pos)); sys.exit(1)
+if abs(float(st["lon"]) - float(st["mob_lon"])) < 1e-5:
+    print("le bateau n'a pas quitté le point MOB"); sys.exit(1)
+PYMOB
+  then ok "point MOB figé, bateau qui s'en éloigne"
+  else ko "point MOB : figé/éloignement non vérifiés"; fi
+  # --no-ais coupe la balise, mais pas le 127233 du bouton (il n'est pas AIS).
+  ./n2k-sim --duration 2 --no-ais --control "$MD/ais.ctl" 2>/dev/null > "$MD/noais.json"
+  if ! grep -q '972000001' "$MD/noais.json"; then ok "--no-ais : balise coupée"
+  else ko "--no-ais : balise encore émise"; fi
+  ./n2k-sim --duration 2 --no-ais --control "$MD/m.ctl" 2>/dev/null > "$MD/noais2.json"
+  if grep -q '"pgn":127233' "$MD/noais2.json"; then ok "--no-ais : bouton du bord gardé"
+  else ko "--no-ais : 127233 du bouton perdu"; fi
+  # ACQUISITION GNSS DE LA BALISE : elle émet tout de suite, mais son récepteur
+  # part à froid (15 à 45 s). Phase sans point : pas de Latitude/Longitude (champ
+  # N2K non disponible, que canboat n'imprime pas) et Time Stamp 63. Le run de
+  # 5 s ci-dessus est entièrement dans cette phase, le tirage valant au moins 15 s.
+  if grep '"User ID":{"value":"972000001"' "$MD/ais.json" \
+     | grep -q '"Time Stamp":{"value":63' &&
+     ! grep '"User ID":{"value":"972000001"' "$MD/ais.json" | grep -q '"Latitude"'; then
+    ok "balise sans point GNSS : alerte émise, position absente"
+  else ko "balise sans point GNSS : position ou Time Stamp inattendus"; fi
+  # Le délai tiré tient dans [15 s, 45 s] et ne dépend que de la graine.
+  bad=""
+  for sd in 1 2 3 7 42 999; do
+    printf 'enabled = 1\nmob = 2\nhdg = 90\nstw = 10\nset = 0\ndrift = 0\ntwd = 60\ntws = 12\nseed = %s\n' "$sd" > "$MD/s.ctl"
+    ./n2k-sim --duration 1 --control "$MD/s.ctl" --state "$MD/s.state" >/dev/null 2>&1
+    w=$(sed -n 's/^mob_fix_s = //p' "$MD/s.state")
+    case "$w" in ''|*[!0-9]*) bad="$bad $sd(=$w)" ;;
+      *) [ "$w" -ge 14 ] && [ "$w" -le 45 ] || bad="$bad $sd(=$w)" ;;
+    esac
+  done
+  if [ -z "$bad" ]; then ok "délai d'acquisition dans [15 s, 45 s] (6 graines)"
+  else ko "délai d'acquisition hors bornes :$bad"; fi
+  # --mob-fix impose le délai : on voit les DEUX phases dans un run court, et la
+  # position émise après le point est bien celle, figée, du déclenchement.
+  ./n2k-sim --duration 4 --mob-fix 1 --control "$MD/ais.ctl" --state "$MD/f.state" \
+            2>/dev/null | grep '"User ID":{"value":"972000001"' | grep '"pgn":129038' > "$MD/fix.json"
+  if head -1 "$MD/fix.json" | grep -q '"Time Stamp":{"value":63' &&
+     tail -1 "$MD/fix.json" | grep -q '"Time Stamp":{"value":5}' &&
+     tail -1 "$MD/fix.json" | grep -q '"Latitude":47.5'; then
+    ok "--mob-fix : sans point puis avec, position du déclenchement"
+  else ko "--mob-fix : les deux phases ne sortent pas comme attendu"; fi
+  if grep -q '^mob_fix = 1' "$MD/f.state"; then ok "état : point GNSS de la balise publié"
+  else ko "état : mob_fix non publié ou faux"; fi
+  # Trame N2K relue par l'analyzer canboat, s'il est installé.
+  AZ="${ANALYZER:-$HOME/canboat/rel/linux-x86_64/analyzer}"
+  if [ -x "$AZ" ]; then
+    got=$(./n2k-sim --once --actisense --control "$MD/m.ctl" </dev/null \
+          | grep ',127233,' | "$AZ" -json -nv 2>/dev/null \
+          | grep -c '"Man Overboard Status":{"value":1' || true)
+    if [ "${got:-0}" -ge 1 ]; then ok "trame N2K 127233 relue par l'analyzer"
+    else ko "trame N2K 127233 non décodée par l'analyzer"; fi
+    # Les trames N2K de la balise portent la MÊME absence de position que le
+    # JSON : sentinelles 0x7FFFFFFF / 0xFFFF, que l'analyzer relit en champs
+    # absents. Sans cela, qtVlm en N2K natif placerait la cible à 214° Est.
+    got=$(./n2k-sim --duration 2 --actisense --control "$MD/ais.ctl" 2>/dev/null \
+          | "$AZ" -format FAST -json -nv 2>/dev/null \
+          | grep '"User ID":{"value":"972000001"' | head -1)
+    case "$got" in
+      *'"Time Stamp":{"value":63'*) [ -z "${got##*Latitude*}" ] \
+          && ko "trame N2K de la balise : une position sort sans point GNSS" \
+          || ok "trame N2K de la balise : position absente sans point GNSS" ;;
+      *) ko "trame N2K de la balise : Time Stamp inattendu" ;;
+    esac
+  else
+    say "  (analyzer canboat absent : aller-retour N2K non vérifié)"
+  fi
+  rm -rf "$MD"
+fi
+
 # ---- 4. simulateur piloté (fichier de contrôle) ---------------------------
 say "== simulateur piloté (--control) =="
 if [ ! -x ./n2k-sim ]; then
@@ -451,6 +564,38 @@ PYTRUNC
   fi
   kill "$WPID" 2>/dev/null; wait "$WPID" 2>/dev/null
   rm -rf "$WD"
+  # MOB : la bascule écrit le fichier de pilotage et l'API republie l'état.
+  MW=$(mktemp -d)
+  printf '[output]\ntalker = II\n' > "$MW/w.ini"
+  printf 'enabled = 1\nhdg = 90\nstw = 6\n' > "$MW/sim.ctl"
+  ./n2k-mux-web "$MW/w.ini" --port "$PORT" --sim-control "$MW/sim.ctl" --sim-state "$MW/sim.state" >/dev/null 2>&1 &
+  WPID=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    curl -s -o /dev/null "http://127.0.0.1:$PORT/" && break
+  done
+  curl -s -X POST -H 'X-N2K-Mux: 1' --data-binary 'enabled = 1
+hdg = 90
+stw = 6
+mob = 1
+' "http://127.0.0.1:$PORT/api/sim" > /dev/null
+  if grep -q '^mob = 1' "$MW/sim.ctl"; then ok "MOB : bascule écrite dans le pilotage"
+  else ko "MOB : bascule non écrite"; fi
+  ./n2k-sim --once --control "$MW/sim.ctl" --state "$MW/sim.state" </dev/null >/dev/null 2>&1
+  got=$(curl -s "http://127.0.0.1:$PORT/api/sim")
+  case "$got" in *'"mob":1'*) ok "MOB : scénario republié par l'API" ;;
+    *) ko "MOB : scénario absent de l'API" ;; esac
+  # Une position à deux décimales ne vaut rien : 6 décimales exigées.
+  case "$got" in *'"mob_lat":47.5000'*) ok "MOB : position au millionième de degré" ;;
+    *) ko "MOB : position imprécise dans l'API" ;; esac
+  # Balise AIS : l'API doit dire que le point GNSS n'est pas encore accroché,
+  # sinon l'interface affiche une position que la balise n'émet pas.
+  printf 'enabled = 1\nhdg = 90\nstw = 6\nmob = 2\n' > "$MW/sim.ctl"
+  ./n2k-sim --once --control "$MW/sim.ctl" --state "$MW/sim.state" </dev/null >/dev/null 2>&1
+  got=$(curl -s "http://127.0.0.1:$PORT/api/sim")
+  case "$got" in *'"mob_fix":0.00'*) ok "MOB : attente du point GNSS publiée par l'API" ;;
+    *) ko "MOB : état du point GNSS absent de l'API" ;; esac
+  kill "$WPID" 2>/dev/null; wait "$WPID" 2>/dev/null
+  rm -rf "$MW"
   # Connexion : page de login (plus de popup), cookie de session, curl -u.
   WD=$(mktemp -d)
   printf '[output]\ntalker = II\n' > "$WD/c.ini"

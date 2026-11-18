@@ -443,6 +443,16 @@ angles à l'étrave se lisent de 0 à 180° avec le bord (bâbord/tribord).
   le TWS eau, bornée à la table, jamais extrapolée.
 - **La gîte** suit le vent apparent (sous le vent, jusqu'à 7°) et reste stable
   quand le vent l'est.
+- **Homme à la mer** — deux boutons, deux scénarios. *Bouton MOB du bord* :
+  le **PGN 127233** seul, personne n'émet à l'eau. *Balise AIS-MOB* : un
+  **129038** au MMSI 972000001, statut AIS-SART, seul lui aussi. Dans les deux
+  cas la position est figée à l'instant de l'appui — le bateau continue sa
+  route, le point reste en place. La balise emprunte la chaîne AIS, donc elle
+  arrive aussi en 0183 sur le 10110 ; le 127233 n'existe qu'en N2K. Comme une
+  vraie, la balise émet tout de suite mais met **15 à 45 s** (au hasard) à
+  accrocher son GNSS : d'abord une alerte sans position (valeurs AIS « non
+  disponible », time stamp 63), puis le point. `n2k-sim --mob-fix SEC` impose
+  ce délai (0 = position d'emblée).
 
 > Le bateau simulé **ne dérive pas**. Si votre logiciel de navigation estime la
 > dérive par la gîte, mettez son coefficient de dérive à **0** pendant la
